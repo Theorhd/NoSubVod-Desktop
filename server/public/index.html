@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/x-icon" href="icon.png">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>NoSubVod</title>
+    <style>
+        :root {
+            --bg: #0e0e10;
+            --surface: #18181b;
+            --surface-hover: #1f1f23;
+            --primary: #9146ff;
+            --primary-hover: #a970ff;
+            --text: #efeff1;
+            --text-muted: #adadb8;
+            --border: #3a3a3d;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            background-color: var(--surface);
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .top-bar h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            color: var(--primary);
+        }
+        .add-btn {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            font-size: 1.5rem;
+            line-height: 1;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: background-color 0.2s;
+        }
+        .add-btn:hover { background-color: var(--primary-hover); }
+
+        .container {
+            padding: 20px;
+            flex-grow: 1;
+            max-width: 600px;
+            margin: 0 auto;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        /* Search Section */
+        .card {
+            background-color: var(--surface);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            margin-bottom: 25px;
+        }
+        label { display: block; margin-bottom: 8px; font-weight: 600; font-size: 0.95rem; }
+        .input-row { display: flex; gap: 10px; }
+        input {
+            flex-grow: 1;
+            padding: 12px;
+            background-color: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: white;
+            font-size: 1rem;
+            outline: none;
+        }
+        input:focus { border-color: var(--primary); }
+        button.action-btn {
+            padding: 12px 20px;
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        button.action-btn:hover { background-color: var(--primary-hover); }
+
+        /* Subs List */
+        h2 { font-size: 1.2rem; margin-bottom: 15px; color: var(--text); }
+        .sub-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .sub-item {
+            display: flex;
+            align-items: center;
+            background-color: var(--surface);
+            padding: 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            text-decoration: none;
+            color: var(--text);
+            border: 1px solid transparent;
+        }
+        .sub-item:hover {
+            background-color: var(--surface-hover);
+            border-color: var(--border);
+        }
+        .sub-item img {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            margin-right: 15px;
+            background-color: var(--bg);
+            object-fit: cover;
+        }
+        .sub-item .name {
+            font-size: 1.1rem;
+            font-weight: bold;
+            flex-grow: 1;
+        }
+        .sub-item .delete-btn {
+            background: none;
+            border: none;
+            color: #ff4f4d;
+            font-size: 1.2rem;
+            cursor: pointer;
+            padding: 5px;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+        .modal {
+            background-color: var(--surface);
+            padding: 25px;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 400px;
+        }
+        .modal h3 { margin-top: 0; margin-bottom: 15px; }
+        .modal .btn-row { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+        .modal button.cancel { background-color: transparent; color: var(--text); border: 1px solid var(--border); }
+        .modal button.cancel:hover { background-color: var(--bg); }
+        
+        #errorMsg { color: #ff4f4d; margin-top: 10px; font-size: 0.9rem; display: none; }
+        #modalError { color: #ff4f4d; margin-top: 10px; font-size: 0.9rem; display: none; }
+    </style>
+</head>
+<body>
+
+    <div class="top-bar">
+        <h1>NoSubVod</h1>
+        <button class="add-btn" id="addBtn">+</button>
+    </div>
+
+    <div class="container">
+        <!-- Direct VOD Input -->
+        <div class="card">
+            <form id="vodForm">
+                <label for="vodInput">Direct VOD ID or URL</label>
+                <div class="input-row">
+                    <input type="text" id="vodInput" placeholder="e.g. 2012345678" autocomplete="off">
+                    <button type="submit" class="action-btn">Play</button>
+                </div>
+                <div id="errorMsg">Please enter a valid VOD ID.</div>
+            </form>
+        </div>
+
+        <!-- Subscribed Streamers -->
+        <h2>My Subs</h2>
+        <div class="sub-list" id="subList">
+            <!-- Items will be injected here -->
+        </div>
+    </div>
+
+    <!-- Search Modal -->
+    <div class="modal-overlay" id="searchModal">
+        <div class="modal">
+            <h3>Sub to a Streamer</h3>
+            <label for="streamerInput">Twitch Username</label>
+            <input type="text" id="streamerInput" placeholder="e.g. zerator" autocomplete="off">
+            <div id="modalError"></div>
+            <div class="btn-row">
+                <button class="action-btn cancel" id="cancelBtn">Cancel</button>
+                <button class="action-btn" id="searchBtn">Add</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Data Management
+        let subs = JSON.parse(localStorage.getItem('nsv_subs') || '[]');
+
+        function saveSubs() {
+            localStorage.setItem('nsv_subs', JSON.stringify(subs));
+        }
+
+        function renderSubs() {
+            const list = document.getElementById('subList');
+            list.innerHTML = '';
+            
+            if (subs.length === 0) {
+                list.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 20px;">No subs yet. Click the + button to add one!</div>';
+                return;
+            }
+
+            subs.forEach(sub => {
+                const item = document.createElement('a');
+                item.href = `/channel.html?user=${encodeURIComponent(sub.login)}`;
+                item.className = 'sub-item';
+                
+                item.innerHTML = `
+                    <img src="${sub.profileImageURL}" alt="${sub.displayName}">
+                    <div class="name">${sub.displayName}</div>
+                    <button class="delete-btn" onclick="deleteSub(event, '${sub.login}')">&times;</button>
+                `;
+                list.appendChild(item);
+            });
+        }
+
+        globalThis.deleteSub = function(event, login) {
+            event.preventDefault(); // Prevent navigating to channel
+            event.stopPropagation();
+            if (confirm('Remove this streamer?')) {
+                subs = subs.filter(s => s.login !== login);
+                saveSubs();
+                renderSubs();
+            }
+        }
+
+        // Direct VOD Form
+        document.getElementById('vodForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const input = document.getElementById('vodInput').value.trim();
+            const errorMsg = document.getElementById('errorMsg');
+            
+            let vodId = input;
+            const match = input.match(/videos\/(\d+)/) || input.match(/^(\d+)$/);
+            
+            if (match && match[1]) {
+                vodId = match[1];
+                globalThis.location.href = `/player.html?vod=${vodId}`;
+            } else {
+                errorMsg.style.display = 'block';
+            }
+        });
+
+        // Modal Logic
+        const modal = document.getElementById('searchModal');
+        const streamerInput = document.getElementById('streamerInput');
+        const modalError = document.getElementById('modalError');
+        const searchBtn = document.getElementById('searchBtn');
+
+        document.getElementById('addBtn').addEventListener('click', () => {
+            streamerInput.value = '';
+            modalError.style.display = 'none';
+            modal.style.display = 'flex';
+            setTimeout(() => streamerInput.focus(), 100);
+        });
+
+        document.getElementById('cancelBtn').addEventListener('click', () => {
+            modal.style.display = 'none';
+        });
+
+        searchBtn.addEventListener('click', async () => {
+            const username = streamerInput.value.trim().toLowerCase();
+            if (!username) return;
+
+            if (subs.some(s => s.login === username)) {
+                modalError.innerText = 'Already subbed to this user.';
+                modalError.style.display = 'block';
+                return;
+            }
+
+            searchBtn.innerText = 'Searching...';
+            searchBtn.disabled = true;
+            modalError.style.display = 'none';
+
+            try {
+                const res = await fetch(`/api/user/${username}`);
+                if (!res.ok) throw new Error('User not found');
+                const user = await res.json();
+                
+                subs.push({
+                    login: user.login,
+                    displayName: user.displayName,
+                    profileImageURL: user.profileImageURL
+                });
+                saveSubs();
+                renderSubs();
+                modal.style.display = 'none';
+            } catch (err) {
+                modalError.innerText = err.message || 'Error finding user.';
+                modalError.style.display = 'block';
+            } finally {
+                searchBtn.innerText = 'Add';
+                searchBtn.disabled = false;
+            }
+        });
+
+        // Initial Render
+        renderSubs();
+    </script>
+</body>
+</html>

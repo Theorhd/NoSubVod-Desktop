@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/x-icon" href="icon.png">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>NoSubVod Player</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            background-color: #18181b;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid #3a3a3d;
+        }
+        .back-btn {
+            color: #efeff1;
+            text-decoration: none;
+            font-family: sans-serif;
+            font-size: 14px;
+            font-weight: bold;
+            padding: 5px 10px;
+            background-color: #3a3a3d;
+            border-radius: 4px;
+            margin-right: 15px;
+        }
+        .title {
+            color: white;
+            font-family: sans-serif;
+            font-size: 16px;
+            margin: 0;
+            flex-grow: 1;
+        }
+        .video-container {
+            flex-grow: 1;
+            position: relative;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            max-height: 100%;
+            outline: none;
+        }
+        .error-message {
+            position: absolute;
+            font-family: sans-serif;
+            color: #000;
+            background: rgba(255, 0, 0, 0.8);
+            padding: 10px 20px;
+            border-radius: 4px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <a href="/" class="back-btn">&larr; Back</a>
+        <h2 class="title" id="vodTitle">Loading VOD...</h2>
+    </div>
+    <div class="video-container">
+        <video id="video" controls playsinline></video>
+        <div id="errorMsg" class="error-message"></div>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(globalThis.location.search);
+        const vodId = urlParams.get('vod');
+        const video = document.getElementById('video');
+        const title = document.getElementById('vodTitle');
+        const errorMsg = document.getElementById('errorMsg');
+
+        if (!vodId) {
+            title.innerText = 'Error';
+            errorMsg.innerText = 'No VOD ID provided in URL';
+            errorMsg.style.display = 'block';
+        } else {
+            title.innerText = `VOD: ${vodId}`;
+            const streamUrl = `/api/vod/${vodId}/master.m3u8`;
+
+            // Check for native HLS support (Safari / iOS)
+            if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = streamUrl;
+                video.addEventListener('loadedmetadata', function() {
+                    video.play().catch(e => console.log("Auto-play prevented", e));
+                });
+                video.addEventListener('error', function() {
+                    errorMsg.innerText = 'Error loading native stream.';
+                    errorMsg.style.display = 'block';
+                });
+            } 
+            // Fallback to HLS.js for other browsers (Chrome, Firefox, etc.)
+            else if (Hls.isSupported()) {
+                const hls = new Hls({
+                    maxBufferLength: 30,
+                    maxMaxBufferLength: 600,
+                });
+                hls.loadSource(streamUrl);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    video.play().catch(e => console.log("Auto-play prevented", e));
+                });
+                hls.on(Hls.Events.ERROR, function (event, data) {
+                    if (data.fatal) {
+                        errorMsg.innerText = `HLS Error: ${data.type} - ${data.details}`;
+                        errorMsg.style.display = 'block';
+                    }
+                });
+            } else {
+                errorMsg.innerText = 'Your browser does not support HLS video playback.';
+                errorMsg.style.display = 'block';
+            }
+        }
+    </script>
+</body>
+</html>

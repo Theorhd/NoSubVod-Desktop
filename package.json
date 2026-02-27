@@ -1,0 +1,45 @@
+{
+  "name": "nosubvod-desktop",
+  "version": "1.0.0",
+  "description": "Bypass sub-only VODs and stream to local network with streamer subscriptions",
+  "author": "Theorhd",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder -w"
+  },
+  "build": {
+    "appId": "com.nosubvod.desktop",
+    "productName": "NoSubVOD",
+    "mac": {
+      "category": "public.app-category.video"
+    },
+    "win": {
+      "icon": "icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "files": [
+      "main.js",
+      "server/**/*",
+      "renderer/**/*",
+      "icon.ico"
+    ]
+  },
+  "keywords": [],
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "ip": "^2.0.1",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "electron": "^40.6.1",
+    "electron-builder": "^26.8.1"
+  }
+}

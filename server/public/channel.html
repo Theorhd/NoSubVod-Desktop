@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/x-icon" href="icon.png">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Channel VODs - NoSubVod</title>
+    <style>
+        :root {
+            --bg: #0e0e10;
+            --surface: #18181b;
+            --surface-hover: #1f1f23;
+            --primary: #9146ff;
+            --text: #efeff1;
+            --text-muted: #adadb8;
+            --border: #3a3a3d;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        .header {
+            display: flex;
+            align-items: center;
+            padding: 15px 20px;
+            background-color: var(--surface);
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .back-btn {
+            color: var(--text);
+            text-decoration: none;
+            font-size: 1.2rem;
+            margin-right: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background-color: var(--border);
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 1.2rem;
+            color: var(--text);
+        }
+
+        .container {
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .vod-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+        }
+
+        .vod-card {
+            background-color: var(--surface);
+            border-radius: 8px;
+            overflow: hidden;
+            text-decoration: none;
+            color: var(--text);
+            transition: transform 0.2s, box-shadow 0.2s;
+            display: block;
+        }
+        .vod-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.5);
+            background-color: var(--surface-hover);
+        }
+
+        .thumbnail {
+            width: 100%;
+            aspect-ratio: 16/9;
+            background-color: #000;
+            position: relative;
+        }
+        .thumbnail img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .duration {
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            background-color: rgba(0,0,0,0.8);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+
+        .info {
+            padding: 12px;
+        }
+        .title {
+            font-weight: bold;
+            font-size: 1rem;
+            margin-bottom: 5px;
+            display: -webkit-box;
+            line-clamp: 2;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            line-height: 1.3;
+        }
+        .meta {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .game {
+            color: var(--primary);
+        }
+
+        .loading { text-align: center; padding: 40px; color: var(--text-muted); }
+        .error { text-align: center; padding: 40px; color: #ff4f4d; }
+
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <a href="/" class="back-btn">&larr;</a>
+        <h1 id="channelName">Loading...</h1>
+    </div>
+
+    <div class="container">
+        <div id="status" class="loading">Loading VODs...</div>
+        <div class="vod-grid" id="vodGrid" style="display: none;">
+            <!-- VOD cards will be injected here -->
+        </div>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(globalThis.location.search);
+        const username = urlParams.get('user');
+        
+        const channelNameEl = document.getElementById('channelName');
+        const statusEl = document.getElementById('status');
+        const gridEl = document.getElementById('vodGrid');
+
+        function formatDuration(seconds) {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = seconds % 60;
+            if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+            return `${m}:${s.toString().padStart(2, '0')}`;
+        }
+
+        function timeAgo(dateString) {
+            const date = new Date(dateString);
+            const seconds = Math.floor((Date.now() - date) / 1000);
+            
+            let interval = seconds / 31536000;
+            if (interval > 1) return Math.floor(interval) + " years ago";
+            interval = seconds / 2592000;
+            if (interval > 1) return Math.floor(interval) + " months ago";
+            interval = seconds / 86400;
+            if (interval > 1) return Math.floor(interval) + " days ago";
+            interval = seconds / 3600;
+            if (interval > 1) return Math.floor(interval) + " hours ago";
+            interval = seconds / 60;
+            if (interval > 1) return Math.floor(interval) + " minutes ago";
+            return Math.floor(seconds) + " seconds ago";
+        }
+
+        function formatViews(views) {
+            if (views >= 1000000) return (views / 1000000).toFixed(1) + 'M views';
+            if (views >= 1000) return (views / 1000).toFixed(1) + 'K views';
+            return views + ' views';
+        }
+
+        async function loadVods() {
+            if (!username) {
+                statusEl.className = 'error';
+                statusEl.innerText = 'No user specified.';
+                return;
+            }
+
+            channelNameEl.innerText = username + "'s VODs";
+
+            try {
+                const res = await fetch(`/api/user/${username}/vods`);
+                if (!res.ok) throw new Error('Failed to load VODs');
+                const vods = await res.json();
+
+                if (vods.length === 0) {
+                    statusEl.innerText = 'No recent VODs found.';
+                    return;
+                }
+
+                vods.forEach(vod => {
+                    const card = document.createElement('a');
+                    card.className = 'vod-card';
+                    card.href = `/player.html?vod=${vod.id}`;
+
+                    const gameName = vod.game && vod.game.name ? vod.game.name : 'Unknown Game';
+                    
+                    card.innerHTML = `
+                        <div class="thumbnail">
+                            <img src="${vod.previewThumbnailURL}" alt="Thumbnail">
+                            <div class="duration">${formatDuration(vod.lengthSeconds)}</div>
+                        </div>
+                        <div class="info">
+                            <div class="title" title="${vod.title}">${vod.title}</div>
+                            <div class="meta">
+                                <span class="game">${gameName}</span>
+                                <span>${formatViews(vod.viewCount)} &bull; ${timeAgo(vod.createdAt)}</span>
+                            </div>
+                        </div>
+                    `;
+                    gridEl.appendChild(card);
+                });
+
+                statusEl.style.display = 'none';
+                gridEl.style.display = 'grid';
+
+            } catch (err) {
+                statusEl.className = 'error';
+                statusEl.innerText = err.message;
+            }
+        }
+
+        loadVods();
+    </script>
+</body>
+</html>
