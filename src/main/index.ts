@@ -1,5 +1,5 @@
 import { app, BrowserWindow, Tray, Menu } from 'electron';
-import path from 'path';
+import path from 'node:path';
 import { startServer } from '../server/index';
 import ip from 'ip';
 import QRCode from 'qrcode';
@@ -9,7 +9,7 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 
-const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+const isDev = process.argv.includes('--dev');
 const RENDERER_DEV_SERVER_URL = 'http://localhost:5174'; // Vite default is 5173, but we might have 2 vite servers running (portal and renderer). Let's define it.
 
 function createWindow() {

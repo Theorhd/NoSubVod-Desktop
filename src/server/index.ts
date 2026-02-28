@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import path from 'path';
+import path from 'node:path';
 import apiRoutes from './routes/api';
 import pino from 'pino';
 
@@ -27,7 +27,7 @@ export function startServer(port: number, isDev: boolean) {
     const portalPath = path.join(__dirname, 'portal');
     app.use(express.static(portalPath));
     // Catch-all route for SPA
-    app.get('*', (req, res, next) => {
+    app.get(/.*/, (req, res, next) => {
       if (req.path.startsWith('/api')) return next();
       res.sendFile(path.join(portalPath, 'index.html'));
     });

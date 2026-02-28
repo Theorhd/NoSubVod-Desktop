@@ -1,6 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 
+function formatTime(seconds: number) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
+
+function formatViews(views: number) {
+  if (views >= 1000000) return (views / 1000000).toFixed(1) + 'M views';
+  if (views >= 1000) return (views / 1000).toFixed(1) + 'K views';
+  return views + ' views';
+}
+
 export default function Channel() {
   const [searchParams] = useSearchParams();
   const user = searchParams.get('user');
@@ -32,26 +45,22 @@ export default function Channel() {
       });
   }, [user]);
 
-  function formatTime(seconds: number) {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  }
-
-  function formatViews(views: number) {
-    if (views >= 1000000) return (views / 1000000).toFixed(1) + 'M views';
-    if (views >= 1000) return (views / 1000).toFixed(1) + 'K views';
-    return views + ' views';
-  }
-
   return (
     <>
       <div className="top-bar">
         <div style={{ display: 'flex', alignItems: 'center' }}>
-          <button onClick={() => navigate('/')} style={{ background: 'none', border: 'none', color: 'var(--text)', fontSize: '1.2rem', cursor: 'pointer', marginRight: '15px' }}>&larr;</button>
-          <h1 onClick={() => navigate('/')}>{user}'s VODs</h1>
-        </div>
+            <button onClick={() => navigate('/')} style={{ background: 'none', border: 'none', color: 'var(--text)', fontSize: '1.2rem', cursor: 'pointer', marginRight: '15px' }}>&larr;</button>
+            <h1 style={{ margin: 0 }}>
+              <button
+                type="button"
+                onClick={() => navigate('/')}
+                aria-label={`Go to home`}
+                style={{ background: 'none', border: 'none', color: 'var(--text)', fontSize: '1.2rem', cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}
+              >
+                {user}'s VODs
+              </button>
+            </h1>
+          </div>
       </div>
 
       <div className="container" style={{ maxWidth: '800px' }}>
@@ -64,7 +73,16 @@ export default function Channel() {
               <div style={{ gridColumn: '1 / -1', textAlign: 'center', color: 'var(--text-muted)' }}>No VODs found.</div>
             ) : (
               vods.map(vod => (
-                <div key={vod.id} style={{ backgroundColor: 'var(--surface)', borderRadius: '8px', overflow: 'hidden', cursor: 'pointer', transition: 'transform 0.2s' }} onClick={() => navigate(`/player?vod=${vod.id}`)} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
+                <button
+                  key={vod.id}
+                  type="button"
+                  onClick={() => navigate(`/player?vod=${vod.id}`)}
+                  onMouseOver={(e) => (e.currentTarget.style.transform = 'scale(1.02)')}
+                  onMouseOut={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+                  onFocus={(e) => (e.currentTarget.style.transform = 'scale(1.02)')}
+                  onBlur={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+                  style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left', width: '100%', backgroundColor: 'var(--surface)', borderRadius: '8px', overflow: 'hidden', cursor: 'pointer', transition: 'transform 0.2s' }}
+                >
                   <div style={{ position: 'relative' }}>
                     <img src={vod.previewThumbnailURL} alt={vod.title} style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover' }} />
                     <div style={{ position: 'absolute', bottom: '8px', right: '8px', backgroundColor: 'rgba(0,0,0,0.8)', padding: '2px 6px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold' }}>
@@ -81,7 +99,7 @@ export default function Channel() {
                       {new Date(vod.createdAt).toLocaleDateString()}
                     </div>
                   </div>
-                </div>
+                </button>
               ))
             )}
           </div>

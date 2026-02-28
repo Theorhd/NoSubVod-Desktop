@@ -33,7 +33,7 @@ export default function Player() {
       const script = document.createElement('script');
       script.src = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
       script.onload = () => {
-        const Hls = (window as any).Hls;
+        const Hls = (globalThis as any).Hls;
         if (Hls.isSupported()) {
           const hls = new Hls({
             maxBufferLength: 30,
@@ -56,7 +56,7 @@ export default function Player() {
       document.body.appendChild(script);
       
       return () => {
-        document.body.removeChild(script);
+        script.remove();
       };
     }
   }, [vodId]);
@@ -68,7 +68,9 @@ export default function Player() {
         <h2 style={{ color: 'white', fontSize: '16px', margin: 0, flexGrow: 1 }}>{vodId ? `VOD: ${vodId}` : 'Error'}</h2>
       </div>
       <div style={{ flexGrow: 1, position: 'relative', background: '#000', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-        <video ref={videoRef} controls playsInline style={{ width: '100%', height: '100%', maxHeight: '100%', outline: 'none' }}></video>
+        <video ref={videoRef} controls playsInline style={{ width: '100%', height: '100%', maxHeight: '100%', outline: 'none' }}>
+          <track kind="captions" src={vodId ? `/api/vod/${vodId}/captions.vtt` : ''} srcLang="en" label="English" default />
+        </video>
         {error && (
           <div style={{ position: 'absolute', color: '#000', background: 'rgba(255, 0, 0, 0.8)', padding: '10px 20px', borderRadius: '4px' }}>
             {error}

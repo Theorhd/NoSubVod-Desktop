@@ -6,7 +6,7 @@
   "main": "dist/main.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:renderer\" \"npm run dev:portal\"",
-    "dev:backend": "tsup --watch --onSuccess \"electron dist/main.js\"",
+    "dev:backend": "tsup --watch --onSuccess \"electron dist/main.js --dev\"",
     "dev:renderer": "vite -c src/renderer/vite.config.ts",
     "dev:portal": "vite -c src/portal/vite.config.ts",
     "build": "npm run build:backend && npm run build:renderer && npm run build:portal",

@@ -71,7 +71,7 @@ export default function Home() {
   const handleDeleteSub = (e: React.MouseEvent, login: string) => {
     e.preventDefault();
     e.stopPropagation();
-    if (window.confirm('Remove this streamer?')) {
+    if (globalThis.confirm('Remove this streamer?')) {
       saveSubs(subs.filter(s => s.login !== login));
     }
   };
@@ -79,7 +79,9 @@ export default function Home() {
   return (
     <>
       <div className="top-bar">
-        <h1 onClick={() => navigate('/')}>NoSubVod</h1>
+        <h1>
+          <button className="logo-btn" onClick={() => navigate('/')} aria-label="Home">NoSubVod</button>
+        </h1>
         <button className="add-btn" onClick={() => setShowModal(true)}>+</button>
       </div>
 
@@ -112,12 +114,22 @@ export default function Home() {
             subs.map(sub => (
               <div 
                 key={sub.login} 
-                className="sub-item" 
-                onClick={() => navigate(`/channel?user=${encodeURIComponent(sub.login)}`)}
+                className="sub-item"
               >
-                <img src={sub.profileImageURL} alt={sub.displayName} />
-                <div className="name">{sub.displayName}</div>
-                <button className="delete-btn" onClick={(e) => handleDeleteSub(e, sub.login)}>&times;</button>
+                <button
+                  type="button"
+                  className="sub-link"
+                  aria-label={`Open ${sub.displayName} channel`}
+                  onClick={() => navigate(`/channel?user=${encodeURIComponent(sub.login)}`)}
+                >
+                  <img src={sub.profileImageURL} alt={sub.displayName} />
+                  <div className="name">{sub.displayName}</div>
+                </button>
+                <button
+                  type="button"
+                  className="delete-btn"
+                  onClick={(e) => handleDeleteSub(e, sub.login)}
+                >&times;</button>
               </div>
             ))
           )}

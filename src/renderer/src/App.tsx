@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ServerInfo } from '../../shared/types';
 
 // Electron IPC is global when contextIsolation is false
-const ipcRenderer = (window as any).require ? (window as any).require('electron').ipcRenderer : null;
+const ipcRenderer = (globalThis as any).require ? (globalThis as any).require('electron').ipcRenderer : null;
 
 export default function App() {
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
