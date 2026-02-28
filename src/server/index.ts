@@ -9,22 +9,22 @@ const logger = pino({
   transport: {
     target: 'pino-pretty',
     options: {
-      colorize: true
-    }
-  }
+      colorize: true,
+    },
+  },
 });
 
 export function startServer(port: number, isDev: boolean, userDataPath: string) {
   const app = express();
 
   // Initialize History Service asynchronously
-  initHistoryService(userDataPath).catch(err => {
+  initHistoryService(userDataPath).catch((err) => {
     logger.error('Failed to initialize history service', err);
   });
 
   app.use(cors());
   app.use(express.json());
-  
+
   // Routes
   app.use('/api', apiRoutes);
 

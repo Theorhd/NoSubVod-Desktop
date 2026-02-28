@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [react()],
   build: {
     outDir: '../../dist/portal',
-    emptyOutDir: true
+    emptyOutDir: true,
   },
   server: {
     port: 5173,
@@ -16,8 +16,8 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:23455',
-        changeOrigin: true
-      }
-    }
-  }
+        changeOrigin: true,
+      },
+    },
+  },
 });

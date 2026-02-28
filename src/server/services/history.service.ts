@@ -28,7 +28,7 @@ async function saveHistoryToFile() {
   try {
     const dataToSave = {
       history: memoryHistory,
-      watchlist: watchlist
+      watchlist: watchlist,
     };
     await fs.writeFile(historyFilePath, JSON.stringify(dataToSave, null, 2), 'utf-8');
   } catch (error) {
@@ -46,14 +46,14 @@ export function getHistoryByVodId(vodId: string): HistoryEntry | null {
 
 export async function updateHistory(vodId: string, timecode: number, duration: number) {
   if (timecode < 0) timecode = 0;
-  
+
   memoryHistory[vodId] = {
     vodId,
     timecode,
     duration,
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
   };
-  
+
   await saveHistoryToFile();
   return memoryHistory[vodId];
 }
@@ -63,7 +63,7 @@ export function getWatchlist(): WatchlistEntry[] {
 }
 
 export async function addToWatchlist(entry: WatchlistEntry) {
-  if (!watchlist.some(item => item.vodId === entry.vodId)) {
+  if (!watchlist.some((item) => item.vodId === entry.vodId)) {
     watchlist.push({ ...entry, addedAt: Date.now() });
     await saveHistoryToFile();
   }
@@ -71,7 +71,7 @@ export async function addToWatchlist(entry: WatchlistEntry) {
 }
 
 export async function removeFromWatchlist(vodId: string) {
-  watchlist = watchlist.filter(item => item.vodId !== vodId);
+  watchlist = watchlist.filter((item) => item.vodId !== vodId);
   await saveHistoryToFile();
   return watchlist;
 }

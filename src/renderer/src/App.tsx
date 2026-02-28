@@ -2,7 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { ServerInfo } from '../../shared/types';
 
 // Electron IPC is global when contextIsolation is false
-const ipcRenderer = (globalThis as any).require ? (globalThis as any).require('electron').ipcRenderer : null;
+const ipcRenderer = (globalThis as any).require
+  ? (globalThis as any).require('electron').ipcRenderer
+  : null;
 
 export default function App() {
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
@@ -22,7 +24,7 @@ export default function App() {
         ip: '192.168.1.100',
         port: 23455,
         url: 'http://192.168.1.100:23455',
-        qrcode: ''
+        qrcode: '',
       });
     }
   }, []);
@@ -34,11 +36,10 @@ export default function App() {
         <div style={styles.status}>Server is running</div>
         <p>Access the portal on your phone:</p>
         <div style={styles.urlBox}>{serverInfo ? serverInfo.url : 'Waiting...'}</div>
-        {serverInfo?.qrcode && (
-          <img style={styles.qrcode} src={serverInfo.qrcode} alt="QR Code" />
-        )}
+        {serverInfo?.qrcode && <img style={styles.qrcode} src={serverInfo.qrcode} alt="QR Code" />}
         <p style={styles.info}>
-          Make sure your phone is connected to the same Wi-Fi network. Scan the QR code or type the address directly into Safari.
+          Make sure your phone is connected to the same Wi-Fi network. Scan the QR code or type the
+          address directly into Safari.
         </p>
       </div>
     </div>
@@ -47,7 +48,8 @@ export default function App() {
 
 const styles: Record<string, React.CSSProperties> = {
   body: {
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    fontFamily:
+      '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
     textAlign: 'center',
     backgroundColor: '#18181b',
     color: '#efeff1',
@@ -58,7 +60,7 @@ const styles: Record<string, React.CSSProperties> = {
     boxSizing: 'border-box',
     display: 'flex',
     justifyContent: 'center',
-    alignItems: 'center'
+    alignItems: 'center',
   },
   container: {
     width: '100%',
@@ -67,17 +69,17 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: '#0e0e10',
     padding: '2rem',
     borderRadius: '8px',
-    boxShadow: '0 4px 6px rgba(0,0,0,0.3)'
+    boxShadow: '0 4px 6px rgba(0,0,0,0.3)',
   },
   h1: {
     color: '#a970ff',
     fontSize: '1.5rem',
-    marginTop: 0
+    marginTop: 0,
   },
   status: {
     fontWeight: 'bold',
     color: '#2ecc71',
-    marginBottom: '1rem'
+    marginBottom: '1rem',
   },
   urlBox: {
     backgroundColor: '#1f1f23',
@@ -87,7 +89,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'monospace',
     fontSize: '1.2rem',
     marginBottom: '1.5rem',
-    userSelect: 'all'
+    userSelect: 'all',
   },
   qrcode: {
     backgroundColor: 'white',
@@ -97,11 +99,11 @@ const styles: Record<string, React.CSSProperties> = {
     height: '250px',
     objectFit: 'contain',
     marginTop: '1rem',
-    display: 'inline-block'
+    display: 'inline-block',
   },
   info: {
     color: '#adadb8',
     fontSize: '0.9rem',
-    marginTop: '2rem'
-  }
+    marginTop: '2rem',
+  },
 };

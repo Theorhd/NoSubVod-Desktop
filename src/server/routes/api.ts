@@ -1,6 +1,23 @@
 import { Router } from 'express';
-import { generateMasterPlaylist, proxyVariantPlaylist, fetchUserInfo, fetchUserVods, searchChannels, fetchTrendingVODs, searchGlobalContent, fetchVideoChat, fetchVideoMarkers } from '../services/twitch.service';
-import { getAllHistory, getHistoryByVodId, updateHistory, getWatchlist, addToWatchlist, removeFromWatchlist } from '../services/history.service';
+import {
+  generateMasterPlaylist,
+  proxyVariantPlaylist,
+  fetchUserInfo,
+  fetchUserVods,
+  searchChannels,
+  fetchTrendingVODs,
+  searchGlobalContent,
+  fetchVideoChat,
+  fetchVideoMarkers,
+} from '../services/twitch.service';
+import {
+  getAllHistory,
+  getHistoryByVodId,
+  updateHistory,
+  getWatchlist,
+  addToWatchlist,
+  removeFromWatchlist,
+} from '../services/history.service';
 
 const router = Router();
 
@@ -102,7 +119,7 @@ router.post('/history', async (req, res) => {
     res.status(400).json({ error: 'Invalid parameters' });
     return;
   }
-  
+
   try {
     const updated = await updateHistory(vodId, timecode, duration || 0);
     res.json(updated);
@@ -116,8 +133,8 @@ router.post('/history', async (req, res) => {
 router.get('/vod/:vodId/master.m3u8', async (req, res) => {
   try {
     const vodId = req.params.vodId;
-    const host = req.get('host') || 'localhost'; 
-    
+    const host = req.get('host') || 'localhost';
+
     const playlist = await generateMasterPlaylist(vodId, host);
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
     res.send(playlist);
@@ -135,7 +152,7 @@ router.get('/proxy/variant.m3u8', async (req, res) => {
       res.status(400).send('Missing url parameter');
       return;
     }
-    
+
     const modifiedVariant = await proxyVariantPlaylist(targetUrl);
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
     res.send(modifiedVariant);

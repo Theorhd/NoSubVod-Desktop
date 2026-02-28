@@ -18,10 +18,10 @@ function createWindow() {
     height: 700,
     webPreferences: {
       nodeIntegration: true,
-      contextIsolation: false
+      contextIsolation: false,
     },
     autoHideMenuBar: true,
-    icon: path.join(__dirname, '../icon.ico') // icon at root in production, or relative to dist
+    icon: path.join(__dirname, '../icon.ico'), // icon at root in production, or relative to dist
   });
 
   if (isDev) {
@@ -42,22 +42,22 @@ function createWindow() {
 function createTray() {
   const iconPath = path.join(__dirname, isDev ? '../../icon.ico' : '../icon.ico');
   tray = new Tray(iconPath);
-  
+
   const contextMenu = Menu.buildFromTemplate([
-    { 
-      label: 'Show App', 
+    {
+      label: 'Show App',
       click: () => {
         if (mainWindow) mainWindow.show();
-      } 
+      },
     },
     { type: 'separator' },
-    { 
-      label: 'Quit NoSubVOD', 
+    {
+      label: 'Quit NoSubVOD',
       click: () => {
         isQuitting = true;
         app.quit();
-      } 
-    }
+      },
+    },
   ]);
 
   tray.setToolTip('NoSubVOD Server');
@@ -100,7 +100,7 @@ app.whenReady().then(() => {
           ip: localIp,
           port: port,
           url: portalUrl,
-          qrcode: qrCodeDataUrl
+          qrcode: qrCodeDataUrl,
         };
         mainWindow?.webContents.send('server-info', serverInfo);
       } catch (err) {
@@ -109,7 +109,7 @@ app.whenReady().then(() => {
           ip: 'Error',
           port: port,
           url: 'Failed to generate URL',
-          qrcode: ''
+          qrcode: '',
         };
         mainWindow?.webContents.send('server-info', serverInfo);
       }

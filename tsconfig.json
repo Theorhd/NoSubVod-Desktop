@@ -13,9 +13,5 @@
       "@shared/*": ["src/shared/*"]
     }
   },
-  "include": [
-    "src/main/**/*",
-    "src/server/**/*",
-    "src/shared/**/*"
-  ]
+  "include": ["src/main/**/*", "src/server/**/*", "src/shared/**/*"]
 }

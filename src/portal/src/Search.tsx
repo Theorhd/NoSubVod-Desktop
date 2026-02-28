@@ -28,14 +28,28 @@ export default function Search() {
     }
   };
 
-  const channels = results.filter(r => r.__typename === 'User');
-  const categories = results.filter(r => r.__typename === 'Game');
+  const channels = results.filter((r) => r.__typename === 'User');
+  const categories = results.filter((r) => r.__typename === 'Game');
 
   return (
     <>
       <div className="top-bar">
         <h1>
-          <button className="logo-btn" onClick={() => navigate('/')} aria-label="Home" style={{ background: 'none', border: 'none', color: 'inherit', font: 'inherit', padding: 0, cursor: 'pointer' }}>Search Twitch</button>
+          <button
+            className="logo-btn"
+            onClick={() => navigate('/')}
+            aria-label="Home"
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'inherit',
+              font: 'inherit',
+              padding: 0,
+              cursor: 'pointer',
+            }}
+          >
+            Search Twitch
+          </button>
         </h1>
       </div>
 
@@ -44,13 +58,13 @@ export default function Search() {
           <form onSubmit={handleSearch}>
             <label htmlFor="globalSearch">Search Channels, Categories...</label>
             <div className="input-row">
-              <input 
-                type="text" 
-                id="globalSearch" 
-                placeholder="What are you looking for?" 
+              <input
+                type="text"
+                id="globalSearch"
+                placeholder="What are you looking for?"
                 value={query}
-                onChange={e => setQuery(e.target.value)}
-                autoComplete="off" 
+                onChange={(e) => setQuery(e.target.value)}
+                autoComplete="off"
                 autoFocus
               />
               <button type="submit" className="action-btn" disabled={isSearching}>
@@ -70,15 +84,29 @@ export default function Search() {
           <div style={{ marginBottom: '30px' }}>
             <h2>Channels</h2>
             <div className="sub-list">
-              {channels.map(user => (
+              {channels.map((user) => (
                 <div key={user.id} className="sub-item">
                   <button
                     type="button"
                     className="sub-link"
                     onClick={() => navigate(`/channel?user=${encodeURIComponent(user.login)}`)}
                   >
-                    <img src={user.profileImageURL} alt={user.displayName} style={{ borderRadius: '50%', width: '50px', height: '50px', objectFit: 'cover' }} />
-                    <div className="name" style={{ marginLeft: '1.5rem', fontWeight: 'bold', fontSize: '1.1rem' }}>{user.displayName}</div>
+                    <img
+                      src={user.profileImageURL}
+                      alt={user.displayName}
+                      style={{
+                        borderRadius: '50%',
+                        width: '50px',
+                        height: '50px',
+                        objectFit: 'cover',
+                      }}
+                    />
+                    <div
+                      className="name"
+                      style={{ marginLeft: '1.5rem', fontWeight: 'bold', fontSize: '1.1rem' }}
+                    >
+                      {user.displayName}
+                    </div>
                   </button>
                 </div>
               ))}
@@ -89,10 +117,28 @@ export default function Search() {
         {categories.length > 0 && (
           <div>
             <h2>Categories</h2>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: '15px' }}>
-              {categories.map(game => (
-                <div key={game.id} style={{ textAlign: 'center', backgroundColor: 'var(--surface)', padding: '10px', borderRadius: '8px' }}>
-                  <img src={game.boxArtURL} alt={game.name} style={{ width: '100%', borderRadius: '4px', marginBottom: '10px' }} />
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+                gap: '15px',
+              }}
+            >
+              {categories.map((game) => (
+                <div
+                  key={game.id}
+                  style={{
+                    textAlign: 'center',
+                    backgroundColor: 'var(--surface)',
+                    padding: '10px',
+                    borderRadius: '8px',
+                  }}
+                >
+                  <img
+                    src={game.boxArtURL}
+                    alt={game.name}
+                    style={{ width: '100%', borderRadius: '4px', marginBottom: '10px' }}
+                  />
                   <div style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>{game.name}</div>
                 </div>
               ))}

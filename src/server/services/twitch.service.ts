@@ -5,16 +5,16 @@ import { UserInfo, VOD } from '../../shared/types';
 const cache = new NodeCache({ stdTTL: 3600 });
 
 async function fetchTwitchDataGQL(vodID: string) {
-  const resp = await fetch("https://gql.twitch.tv/gql", {
+  const resp = await fetch('https://gql.twitch.tv/gql', {
     method: 'POST',
     body: JSON.stringify({
-      query: `query { video(id: "${vodID}") { broadcastType, createdAt, seekPreviewsURL, owner { login } }}`
+      query: `query { video(id: "${vodID}") { broadcastType, createdAt, seekPreviewsURL, owner { login } }}`,
     }),
     headers: {
       'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
-      'Accept': 'application/json',
-      'Content-Type': 'application/json'
-    }
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
   });
   if (!resp.ok) throw new Error('Twitch API request failed: ' + resp.status);
   return resp.json();
@@ -65,7 +65,15 @@ function parseVodUrlInfo(seekPreviewsURL: string): { domain: string; vodSpecialI
   }
 }
 
-function buildStreamUrl(domain: string, vodSpecialID: string, resKey: string, vodId: string, broadcastType: string, daysDiff: number, channelLogin: string): string {
+function buildStreamUrl(
+  domain: string,
+  vodSpecialID: string,
+  resKey: string,
+  vodId: string,
+  broadcastType: string,
+  daysDiff: number,
+  channelLogin: string
+): string {
   if (broadcastType === 'highlight') {
     return `https://${domain}/${vodSpecialID}/${resKey}/highlight-${vodId}.m3u8`;
   }
@@ -78,16 +86,16 @@ function buildStreamUrl(domain: string, vodSpecialID: string, resKey: string, vo
 export async function generateMasterPlaylist(vodId: string, host: string): Promise<string> {
   console.log(`[NSV] Generating Master Playlist for VOD: ${vodId}`);
   const data = await fetchTwitchDataGQL(vodId);
-  
+
   if (!data?.data?.video) {
     throw new Error('Video not found or invalid response');
   }
-  
+
   const vodData = data.data.video;
   if (!vodData.owner || !vodData.seekPreviewsURL) {
     throw new Error('Invalid VOD data (missing owner or seekPreviewsURL)');
   }
-  
+
   const channelData = vodData.owner;
   const resolutions: Record<string, { res: string; fps: number }> = {
     '160p30': { res: '284x160', fps: 30 },
@@ -95,12 +103,12 @@ export async function generateMasterPlaylist(vodId: string, host: string): Promi
     '480p30': { res: '854x480', fps: 30 },
     '720p60': { res: '1280x720', fps: 60 },
     '1080p60': { res: '1920x1080', fps: 60 },
-    chunked: { res: '1920x1080', fps: 60 }
+    chunked: { res: '1920x1080', fps: 60 },
   };
   const keys = Object.keys(resolutions).reverse();
-  
+
   const { domain, vodSpecialID } = parseVodUrlInfo(vodData.seekPreviewsURL);
-  
+
   let fakePlaylist = `#EXTM3U\n#EXT-X-TWITCH-INFO:ORIGIN="s3",B="false",REGION="EU",USER-IP="127.0.0.1",SERVING-ID="${createServingID()}",CLUSTER="cloudfront_vod",USER-COUNTRY="BE",MANIFEST-CLUSTER="cloudfront_vod"`;
 
   const now = new Date();
@@ -110,18 +118,26 @@ export async function generateMasterPlaylist(vodId: string, host: string): Promi
   let startBandwidth = 8534030;
 
   for (const resKey of keys) {
-    const streamUrl = buildStreamUrl(domain, vodSpecialID, resKey, vodId, broadcastType, daysDiff, channelData.login);
-    
+    const streamUrl = buildStreamUrl(
+      domain,
+      vodSpecialID,
+      resKey,
+      vodId,
+      broadcastType,
+      daysDiff,
+      channelData.login
+    );
+
     const valid = await Promise.race([
       isValidQuality(streamUrl),
-      new Promise<{ codec: string } | null>((resolve) => setTimeout(() => resolve(null), 5000))
+      new Promise<{ codec: string } | null>((resolve) => setTimeout(() => resolve(null), 5000)),
     ]);
-    
+
     if (valid) {
       const quality = resKey === 'chunked' ? `${resolutions[resKey].res.split('x')[1]}p` : resKey;
       const enabled = resKey === 'chunked' ? 'YES' : 'NO';
       const proxyUrl = `http://${host}/api/proxy/variant.m3u8?url=${encodeURIComponent(streamUrl)}`;
-      
+
       fakePlaylist += `\n#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID="${quality}",NAME="${quality}",AUTOSELECT=${enabled},DEFAULT=${enabled}\n#EXT-X-STREAM-INF:BANDWIDTH=${startBandwidth},CODECS="${valid.codec},mp4a.40.2",RESOLUTION=${resolutions[resKey].res},VIDEO="${quality}",FRAME-RATE=${resolutions[resKey].fps}\n${proxyUrl}`;
       startBandwidth -= 100;
     }
@@ -136,20 +152,20 @@ export async function proxyVariantPlaylist(targetUrl: string): Promise<string> {
   if (!response.ok) {
     throw new Error(`Failed to fetch variant playlist from Twitch (${response.status})`);
   }
-  
+
   let body = await response.text();
   body = body.replaceAll('-unmuted', '-muted');
-  
+
   const baseUrlMatch = /^(.*\/)/.exec(targetUrl);
   if (!baseUrlMatch) return body;
   const baseUrl = baseUrlMatch[1];
-  
+
   // FIXED regex here:
   const lines = body.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i].trim();
     if (!line) continue;
-    
+
     if (line.startsWith('#') && line.includes('URI="') && !line.includes('URI="http')) {
       line = line.replace(/URI="([^"]+)"/, `URI="${baseUrl}$1"`);
       lines[i] = line;
@@ -160,7 +176,7 @@ export async function proxyVariantPlaylist(targetUrl: string): Promise<string> {
       lines[i] = baseUrl + line;
     }
   }
-  
+
   return lines.join('\n');
 }
 
@@ -169,21 +185,21 @@ export async function fetchUserInfo(username: string): Promise<UserInfo> {
   const cached = cache.get<UserInfo>(cacheKey);
   if (cached) return cached;
 
-  const resp = await fetch("https://gql.twitch.tv/gql", {
+  const resp = await fetch('https://gql.twitch.tv/gql', {
     method: 'POST',
     body: JSON.stringify({
-      query: `query { user(login: "${username}") { id, login, displayName, profileImageURL(width: 300) } }`
+      query: `query { user(login: "${username}") { id, login, displayName, profileImageURL(width: 300) } }`,
     }),
     headers: {
       'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
-      'Accept': 'application/json',
-      'Content-Type': 'application/json'
-    }
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
   });
   if (!resp.ok) throw new Error('Twitch API request failed: ' + resp.status);
   const data: any = await resp.json();
   if (!data?.data?.user) throw new Error('User not found');
-  
+
   const user = data.data.user;
   cache.set(cacheKey, user);
   return user;
@@ -194,42 +210,42 @@ export async function fetchUserVods(username: string): Promise<VOD[]> {
   const cached = cache.get<VOD[]>(cacheKey);
   if (cached) return cached;
 
-  const resp = await fetch("https://gql.twitch.tv/gql", {
+  const resp = await fetch('https://gql.twitch.tv/gql', {
     method: 'POST',
     body: JSON.stringify({
-      query: `query { user(login: "${username}") { videos(first: 30) { edges { node { id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, game { name } } } } } }`
+      query: `query { user(login: "${username}") { videos(first: 30) { edges { node { id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, game { name } } } } } }`,
     }),
     headers: {
       'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
-      'Accept': 'application/json',
-      'Content-Type': 'application/json'
-    }
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
   });
   if (!resp.ok) throw new Error('Twitch API request failed: ' + resp.status);
   const data: any = await resp.json();
   if (!data?.data?.user) throw new Error('User not found');
-  
+
   const vods = data.data.user.videos.edges.map((e: any) => e.node);
   cache.set(cacheKey, vods, 600); // 10 minutes cache for VODs
   return vods;
 }
 
 export async function searchChannels(query: string): Promise<UserInfo[]> {
-  const resp = await fetch("https://gql.twitch.tv/gql", {
+  const resp = await fetch('https://gql.twitch.tv/gql', {
     method: 'POST',
     body: JSON.stringify({
-      query: `query { searchFor(userQuery: "${query}", platform: "web") { channels { edges { item { ... on User { id, login, displayName, profileImageURL(width: 300) } } } } } }`
+      query: `query { searchFor(userQuery: "${query}", platform: "web") { channels { edges { item { ... on User { id, login, displayName, profileImageURL(width: 300) } } } } } }`,
     }),
     headers: {
       'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
-      'Accept': 'application/json',
-      'Content-Type': 'application/json'
-    }
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
   });
   if (!resp.ok) throw new Error('Twitch API request failed: ' + resp.status);
   const data: any = await resp.json();
   if (!data?.data?.searchFor?.channels) return [];
-  
+
   return data.data.searchFor.channels.edges.map((e: any) => e.item).filter((n: any) => n?.login);
 }
 
@@ -240,16 +256,16 @@ export async function fetchTrendingVODs(): Promise<VOD[]> {
 
   const fetchVods = async (langs?: string[]) => {
     const langFilter = langs ? `, languages: ${JSON.stringify(langs)}` : '';
-    const resp = await fetch("https://gql.twitch.tv/gql", {
+    const resp = await fetch('https://gql.twitch.tv/gql', {
       method: 'POST',
       body: JSON.stringify({
-        query: `query { game(name: "Just Chatting") { videos(first: 20, sort: VIEWS${langFilter}) { edges { node { id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, game { name }, owner { login, displayName, profileImageURL(width: 50) } } } } } }`
+        query: `query { game(name: "Just Chatting") { videos(first: 20, sort: VIEWS${langFilter}) { edges { node { id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, game { name }, owner { login, displayName, profileImageURL(width: 50) } } } } } }`,
       }),
       headers: {
         'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-      }
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
     });
     if (!resp.ok) return [];
     const data: any = await resp.json();
@@ -258,10 +274,7 @@ export async function fetchTrendingVODs(): Promise<VOD[]> {
   };
 
   try {
-    const [frVods, globalVods] = await Promise.all([
-      fetchVods(["fr"]),
-      fetchVods()
-    ]);
+    const [frVods, globalVods] = await Promise.all([fetchVods(['fr']), fetchVods()]);
 
     const seenIds = new Set<string>();
     const combined: VOD[] = [];
@@ -293,64 +306,66 @@ export async function fetchTrendingVODs(): Promise<VOD[]> {
 }
 
 export async function searchGlobalContent(query: string): Promise<any> {
-  const resp = await fetch("https://gql.twitch.tv/gql", {
+  const resp = await fetch('https://gql.twitch.tv/gql', {
     method: 'POST',
     body: JSON.stringify({
-      query: `query { searchFor(userQuery: "${query}", platform: "web") { channels { edges { item { ... on User { id, login, displayName, profileImageURL(width: 300), __typename } } } }, games { edges { item { ... on Game { id, name, boxArtURL(width: 150, height: 200), __typename } } } } } }`
+      query: `query { searchFor(userQuery: "${query}", platform: "web") { channels { edges { item { ... on User { id, login, displayName, profileImageURL(width: 300), __typename } } } }, games { edges { item { ... on Game { id, name, boxArtURL(width: 150, height: 200), __typename } } } } } }`,
     }),
     headers: {
       'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
-      'Accept': 'application/json',
-      'Content-Type': 'application/json'
-    }
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
   });
   if (!resp.ok) throw new Error('Twitch API request failed: ' + resp.status);
   const data: any = await resp.json();
   if (!data?.data?.searchFor) return [];
-  
+
   const channels = data.data.searchFor.channels?.edges?.map((e: any) => e.item) || [];
   const games = data.data.searchFor.games?.edges?.map((e: any) => e.item) || [];
-  
-    return [...channels, ...games].filter(Boolean);
-  }
-  
-  export async function fetchVideoChat(vodId: string, contentOffsetSeconds: number = 0): Promise<any> {
-    const resp = await fetch("https://gql.twitch.tv/gql", {
-      method: 'POST',
-      body: JSON.stringify({
-        query: `query { video(id: "${vodId}") { comments(contentOffsetSeconds: ${Math.floor(contentOffsetSeconds)}) { edges { node { id, commenter { displayName, login, profileImageURL(width: 50) }, message { fragments { text, emote { id, setID } } }, contentOffsetSeconds, createdAt } }, pageInfo { hasNextPage } } } }`
-      }),
-      headers: {
-        'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-      }
-    });
-    if (!resp.ok) throw new Error('Twitch API request failed: ' + resp.status);
-    const data: any = await resp.json();
-    if (!data?.data?.video?.comments) return { messages: [], hasNextPage: false };
-    
-    return {
-      messages: data.data.video.comments.edges.map((e: any) => e.node),
-      hasNextPage: data.data.video.comments.pageInfo.hasNextPage
-    };
-  }  
-  export async function fetchVideoMarkers(vodId: string): Promise<any[]> {
-    const resp = await fetch("https://gql.twitch.tv/gql", {
-      method: 'POST',
-      body: JSON.stringify({
-        query: `query { video(id: "${vodId}") { markers { id, displayTime, description, type } } }`
-      }),
-      headers: {
-        'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-      }
-    });
-    if (!resp.ok) throw new Error('Twitch API request failed: ' + resp.status);
-    const data: any = await resp.json();
-    if (!data?.data?.video?.markers) return [];
-    
-    return data.data.video.markers;
-  }
-  
+
+  return [...channels, ...games].filter(Boolean);
+}
+
+export async function fetchVideoChat(
+  vodId: string,
+  contentOffsetSeconds: number = 0
+): Promise<any> {
+  const resp = await fetch('https://gql.twitch.tv/gql', {
+    method: 'POST',
+    body: JSON.stringify({
+      query: `query { video(id: "${vodId}") { comments(contentOffsetSeconds: ${Math.floor(contentOffsetSeconds)}) { edges { node { id, commenter { displayName, login, profileImageURL(width: 50) }, message { fragments { text, emote { id, setID } } }, contentOffsetSeconds, createdAt } }, pageInfo { hasNextPage } } } }`,
+    }),
+    headers: {
+      'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+  });
+  if (!resp.ok) throw new Error('Twitch API request failed: ' + resp.status);
+  const data: any = await resp.json();
+  if (!data?.data?.video?.comments) return { messages: [], hasNextPage: false };
+
+  return {
+    messages: data.data.video.comments.edges.map((e: any) => e.node),
+    hasNextPage: data.data.video.comments.pageInfo.hasNextPage,
+  };
+}
+export async function fetchVideoMarkers(vodId: string): Promise<any[]> {
+  const resp = await fetch('https://gql.twitch.tv/gql', {
+    method: 'POST',
+    body: JSON.stringify({
+      query: `query { video(id: "${vodId}") { markers { id, displayTime, description, type } } }`,
+    }),
+    headers: {
+      'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+  });
+  if (!resp.ok) throw new Error('Twitch API request failed: ' + resp.status);
+  const data: any = await resp.json();
+  if (!data?.data?.video?.markers) return [];
+
+  return data.data.video.markers;
+}

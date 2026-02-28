@@ -10,26 +10,26 @@ function BottomNav() {
   const location = useLocation();
   const navigate = useNavigate();
   const hiddenRoutes = ['/player', '/channel'];
-  
-  if (hiddenRoutes.some(r => location.pathname.startsWith(r))) {
+
+  if (hiddenRoutes.some((r) => location.pathname.startsWith(r))) {
     return null;
   }
 
   return (
     <div className="bottom-nav">
-      <button 
+      <button
         className={`nav-btn ${location.pathname === '/trends' ? 'active' : ''}`}
         onClick={() => navigate('/trends')}
       >
         Trends
       </button>
-      <button 
+      <button
         className={`nav-btn ${location.pathname === '/' ? 'active' : ''}`}
         onClick={() => navigate('/')}
       >
         Home
       </button>
-      <button 
+      <button
         className={`nav-btn ${location.pathname === '/search' ? 'active' : ''}`}
         onClick={() => navigate('/search')}
       >

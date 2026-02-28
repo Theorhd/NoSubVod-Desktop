@@ -16,11 +16,11 @@ export default function Home() {
   useEffect(() => {
     const saved = localStorage.getItem('nsv_subs');
     if (saved) setSubs(JSON.parse(saved));
-    
+
     fetch('/api/watchlist')
-      .then(res => res.json())
-      .then(data => setWatchlist(data))
-      .catch(e => console.error('Failed to fetch watchlist', e));
+      .then((res) => res.json())
+      .then((data) => setWatchlist(data))
+      .catch((e) => console.error('Failed to fetch watchlist', e));
   }, []);
 
   const saveSubs = (newSubs: any[]) => {
@@ -32,7 +32,9 @@ export default function Home() {
     try {
       const res = await fetch(`/api/watchlist/${vodId}`, { method: 'DELETE' });
       if (res.ok) setWatchlist(await res.json());
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const handleChannelSearch = async (e: React.FormEvent) => {
@@ -58,7 +60,7 @@ export default function Home() {
     const username = streamerInput.trim().toLowerCase();
     if (!username) return;
 
-    if (subs.some(s => s.login === username)) {
+    if (subs.some((s) => s.login === username)) {
       setModalError('Already subbed to this user.');
       return;
     }
@@ -70,12 +72,15 @@ export default function Home() {
       const res = await fetch(`/api/user/${username}`);
       if (!res.ok) throw new Error('User not found');
       const user = await res.json();
-      
-      saveSubs([...subs, {
-        login: user.login,
-        displayName: user.displayName,
-        profileImageURL: user.profileImageURL
-      }]);
+
+      saveSubs([
+        ...subs,
+        {
+          login: user.login,
+          displayName: user.displayName,
+          profileImageURL: user.profileImageURL,
+        },
+      ]);
       setShowModal(false);
       setStreamerInput('');
     } catch (err: any) {
@@ -89,7 +94,7 @@ export default function Home() {
     e.preventDefault();
     e.stopPropagation();
     if (globalThis.confirm('Remove this streamer?')) {
-      saveSubs(subs.filter(s => s.login !== login));
+      saveSubs(subs.filter((s) => s.login !== login));
     }
   };
 
@@ -97,9 +102,25 @@ export default function Home() {
     <>
       <div className="top-bar">
         <h1>
-          <button className="logo-btn" onClick={() => navigate('/')} aria-label="Home" style={{ background: 'none', border: 'none', color: 'inherit', font: 'inherit', padding: 0, cursor: 'pointer' }}>NoSubVod</button>
+          <button
+            className="logo-btn"
+            onClick={() => navigate('/')}
+            aria-label="Home"
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'inherit',
+              font: 'inherit',
+              padding: 0,
+              cursor: 'pointer',
+            }}
+          >
+            NoSubVod
+          </button>
         </h1>
-        <button className="add-btn" onClick={() => setShowModal(true)}>+</button>
+        <button className="add-btn" onClick={() => setShowModal(true)}>
+          +
+        </button>
       </div>
 
       <div className="container">
@@ -107,25 +128,25 @@ export default function Home() {
           <form onSubmit={handleChannelSearch}>
             <label htmlFor="channelSearch">Search Twitch Channels</label>
             <div className="input-row">
-              <input 
-                type="text" 
-                id="channelSearch" 
-                placeholder="e.g. Domingo" 
+              <input
+                type="text"
+                id="channelSearch"
+                placeholder="e.g. Domingo"
                 value={channelSearch}
-                onChange={e => setChannelSearch(e.target.value)}
-                autoComplete="off" 
+                onChange={(e) => setChannelSearch(e.target.value)}
+                autoComplete="off"
               />
               <button type="submit" className="action-btn" disabled={isSearchingChannels}>
                 {isSearchingChannels ? '...' : 'Search'}
               </button>
             </div>
           </form>
-          
+
           {searchResults.length > 0 && (
             <div className="search-results" style={{ marginTop: '20px' }}>
               <h3 style={{ fontSize: '1rem', marginTop: 0 }}>Results:</h3>
               <div className="sub-list">
-                {searchResults.map(user => (
+                {searchResults.map((user) => (
                   <div key={user.id} className="sub-item">
                     <button
                       type="button"
@@ -145,21 +166,68 @@ export default function Home() {
         {watchlist.length > 0 && (
           <div style={{ marginBottom: '30px' }}>
             <h2>Ma Liste (Watch Later)</h2>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '15px' }}>
-              {watchlist.map(vod => (
-                <div key={vod.vodId} style={{ position: 'relative', backgroundColor: 'var(--surface)', borderRadius: '8px', overflow: 'hidden' }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+                gap: '15px',
+              }}
+            >
+              {watchlist.map((vod) => (
+                <div
+                  key={vod.vodId}
+                  style={{
+                    position: 'relative',
+                    backgroundColor: 'var(--surface)',
+                    borderRadius: '8px',
+                    overflow: 'hidden',
+                  }}
+                >
                   <button
                     onClick={() => navigate(`/player?vod=${vod.vodId}`)}
-                    style={{ background: 'none', border: 'none', padding: 0, width: '100%', textAlign: 'left', cursor: 'pointer' }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      width: '100%',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                    }}
                   >
-                    <img src={vod.previewThumbnailURL} alt={vod.title} style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover' }} />
+                    <img
+                      src={vod.previewThumbnailURL}
+                      alt={vod.title}
+                      style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover' }}
+                    />
                     <div style={{ padding: '8px' }}>
-                      <div style={{ fontSize: '0.85rem', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text)' }}>{vod.title}</div>
+                      <div
+                        style={{
+                          fontSize: '0.85rem',
+                          fontWeight: 'bold',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          color: 'var(--text)',
+                        }}
+                      >
+                        {vod.title}
+                      </div>
                     </div>
                   </button>
-                  <button 
+                  <button
                     onClick={() => removeFromWatchlist(vod.vodId)}
-                    style={{ position: 'absolute', top: '5px', right: '5px', backgroundColor: 'rgba(0,0,0,0.6)', color: 'white', border: 'none', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer', fontSize: '0.8rem' }}
+                    style={{
+                      position: 'absolute',
+                      top: '5px',
+                      right: '5px',
+                      backgroundColor: 'rgba(0,0,0,0.6)',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      padding: '2px 6px',
+                      cursor: 'pointer',
+                      fontSize: '0.8rem',
+                    }}
                   >
                     &times;
                   </button>
@@ -176,11 +244,8 @@ export default function Home() {
               No subs yet. Click the + button to add one!
             </div>
           ) : (
-            subs.map(sub => (
-              <div 
-                key={sub.login} 
-                className="sub-item"
-              >
+            subs.map((sub) => (
+              <div key={sub.login} className="sub-item">
                 <button
                   type="button"
                   className="sub-link"
@@ -194,7 +259,9 @@ export default function Home() {
                   type="button"
                   className="delete-btn"
                   onClick={(e) => handleDeleteSub(e, sub.login)}
-                >&times;</button>
+                >
+                  &times;
+                </button>
               </div>
             ))
           )}
@@ -206,19 +273,21 @@ export default function Home() {
           <div className="modal">
             <h3>Sub to a Streamer</h3>
             <label htmlFor="streamerInput">Twitch Username</label>
-            <input 
-              type="text" 
-              id="streamerInput" 
-              placeholder="e.g. zerator" 
+            <input
+              type="text"
+              id="streamerInput"
+              placeholder="e.g. zerator"
               value={streamerInput}
-              onChange={e => setStreamerInput(e.target.value)}
-              autoComplete="off" 
+              onChange={(e) => setStreamerInput(e.target.value)}
+              autoComplete="off"
               autoFocus
-              onKeyDown={e => e.key === 'Enter' && handleAddSub()}
+              onKeyDown={(e) => e.key === 'Enter' && handleAddSub()}
             />
             {modalError && <div className="error-text">{modalError}</div>}
             <div className="btn-row">
-              <button className="action-btn cancel" onClick={() => setShowModal(false)}>Cancel</button>
+              <button className="action-btn cancel" onClick={() => setShowModal(false)}>
+                Cancel
+              </button>
               <button className="action-btn" onClick={handleAddSub} disabled={isSearching}>
                 {isSearching ? 'Searching...' : 'Add'}
               </button>
