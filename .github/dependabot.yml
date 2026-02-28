@@ -8,10 +8,10 @@ updates:
     groups:
       dependencies:
         patterns:
-          - "*"
+          - '*'
     ignore:
-      - dependency-name: "eslint"
-        versions: [">= 10.0.0"]
+      - dependency-name: 'eslint'
+        versions: ['>= 10.0.0']
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:
