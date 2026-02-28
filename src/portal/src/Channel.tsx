@@ -49,6 +49,24 @@ export default function Channel() {
       });
   }, [user]);
 
+  const addToWatchlist = async (e: React.MouseEvent, vod: any) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      await fetch('/api/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vodId: vod.id,
+          title: vod.title,
+          previewThumbnailURL: vod.previewThumbnailURL,
+          lengthSeconds: vod.lengthSeconds
+        })
+      });
+      alert('VOD ajoutée à Ma Liste !');
+    } catch (e) { console.error(e); }
+  };
+
   return (
     <>
       <div className="top-bar">
@@ -96,6 +114,12 @@ export default function Channel() {
                     <div style={{ position: 'absolute', bottom: '8px', right: '8px', backgroundColor: 'rgba(0,0,0,0.8)', padding: '2px 6px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold' }}>
                       {formatTime(vod.lengthSeconds)}
                     </div>
+                    <button 
+                      onClick={(e) => addToWatchlist(e, vod)}
+                      style={{ position: 'absolute', top: '8px', right: '8px', backgroundColor: 'rgba(0,0,0,0.8)', color: 'white', border: 'none', borderRadius: '50%', width: '30px', height: '30px', cursor: 'pointer', zIndex: 10 }}
+                    >
+                      +
+                    </button>
                     {progress > 0 && (
                       <div style={{ position: 'absolute', bottom: 0, left: 0, width: '100%', height: '4px', backgroundColor: 'rgba(255,255,255,0.2)' }}>
                         <div style={{ width: `${progress}%`, height: '100%', backgroundColor: '#e91e63' }} />

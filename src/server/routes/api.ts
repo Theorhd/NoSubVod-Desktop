@@ -1,8 +1,51 @@
 import { Router } from 'express';
-import { generateMasterPlaylist, proxyVariantPlaylist, fetchUserInfo, fetchUserVods, searchChannels, fetchTrendingVODs, searchGlobalContent } from '../services/twitch.service';
-import { getAllHistory, getHistoryByVodId, updateHistory } from '../services/history.service';
+import { generateMasterPlaylist, proxyVariantPlaylist, fetchUserInfo, fetchUserVods, searchChannels, fetchTrendingVODs, searchGlobalContent, fetchVideoChat, fetchVideoMarkers } from '../services/twitch.service';
+import { getAllHistory, getHistoryByVodId, updateHistory, getWatchlist, addToWatchlist, removeFromWatchlist } from '../services/history.service';
 
 const router = Router();
+
+// Video Data
+router.get('/vod/:vodId/chat', async (req, res) => {
+  try {
+    const offset = Number.parseInt(req.query.offset as string, 10) || 0;
+    const chatData = await fetchVideoChat(req.params.vodId, offset);
+    res.json(chatData);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/vod/:vodId/markers', async (req, res) => {
+  try {
+    const markers = await fetchVideoMarkers(req.params.vodId);
+    res.json(markers);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Watchlist
+router.get('/watchlist', (req, res) => {
+  res.json(getWatchlist());
+});
+
+router.post('/watchlist', async (req, res) => {
+  try {
+    const list = await addToWatchlist(req.body);
+    res.json(list);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/watchlist/:vodId', async (req, res) => {
+  try {
+    const list = await removeFromWatchlist(req.params.vodId);
+    res.json(list);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Search & Trends
 router.get('/search/channels', async (req, res) => {

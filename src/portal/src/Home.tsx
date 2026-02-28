@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 export default function Home() {
   const navigate = useNavigate();
   const [subs, setSubs] = useState<any[]>([]);
+  const [watchlist, setWatchlist] = useState<any[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [streamerInput, setStreamerInput] = useState('');
   const [modalError, setModalError] = useState('');
@@ -15,11 +16,23 @@ export default function Home() {
   useEffect(() => {
     const saved = localStorage.getItem('nsv_subs');
     if (saved) setSubs(JSON.parse(saved));
+    
+    fetch('/api/watchlist')
+      .then(res => res.json())
+      .then(data => setWatchlist(data))
+      .catch(e => console.error('Failed to fetch watchlist', e));
   }, []);
 
   const saveSubs = (newSubs: any[]) => {
     setSubs(newSubs);
     localStorage.setItem('nsv_subs', JSON.stringify(newSubs));
+  };
+
+  const removeFromWatchlist = async (vodId: string) => {
+    try {
+      const res = await fetch(`/api/watchlist/${vodId}`, { method: 'DELETE' });
+      if (res.ok) setWatchlist(await res.json());
+    } catch (e) { console.error(e); }
   };
 
   const handleChannelSearch = async (e: React.FormEvent) => {
@@ -128,6 +141,33 @@ export default function Home() {
             </div>
           )}
         </div>
+
+        {watchlist.length > 0 && (
+          <div style={{ marginBottom: '30px' }}>
+            <h2>Ma Liste (Watch Later)</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '15px' }}>
+              {watchlist.map(vod => (
+                <div key={vod.vodId} style={{ position: 'relative', backgroundColor: 'var(--surface)', borderRadius: '8px', overflow: 'hidden' }}>
+                  <button
+                    onClick={() => navigate(`/player?vod=${vod.vodId}`)}
+                    style={{ background: 'none', border: 'none', padding: 0, width: '100%', textAlign: 'left', cursor: 'pointer' }}
+                  >
+                    <img src={vod.previewThumbnailURL} alt={vod.title} style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover' }} />
+                    <div style={{ padding: '8px' }}>
+                      <div style={{ fontSize: '0.85rem', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text)' }}>{vod.title}</div>
+                    </div>
+                  </button>
+                  <button 
+                    onClick={() => removeFromWatchlist(vod.vodId)}
+                    style={{ position: 'absolute', top: '5px', right: '5px', backgroundColor: 'rgba(0,0,0,0.6)', color: 'white', border: 'none', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer', fontSize: '0.8rem' }}
+                  >
+                    &times;
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <h2>My Subs</h2>
         <div className="sub-list">

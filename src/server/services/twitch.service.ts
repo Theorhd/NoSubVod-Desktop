@@ -50,11 +50,36 @@ async function isValidQuality(url: string): Promise<{ codec: string } | null> {
   return null;
 }
 
+function parseVodUrlInfo(seekPreviewsURL: string): { domain: string; vodSpecialID: string } {
+  try {
+    const currentURL = new URL(seekPreviewsURL);
+    const domain = currentURL.host;
+    const paths = currentURL.pathname.split('/');
+    const storyboardIndex = paths.findIndex((el: string) => el.includes('storyboards'));
+    if (storyboardIndex === -1) throw new Error('Cannot find storyboards in URL');
+    const vodSpecialID = paths[storyboardIndex - 1];
+    if (!vodSpecialID) throw new Error('Cannot extract vodSpecialID');
+    return { domain, vodSpecialID };
+  } catch (error: any) {
+    throw new Error('Failed to parse seekPreviewsURL: ' + error.message);
+  }
+}
+
+function buildStreamUrl(domain: string, vodSpecialID: string, resKey: string, vodId: string, broadcastType: string, daysDiff: number, channelLogin: string): string {
+  if (broadcastType === 'highlight') {
+    return `https://${domain}/${vodSpecialID}/${resKey}/highlight-${vodId}.m3u8`;
+  }
+  if (broadcastType === 'upload' && daysDiff > 7) {
+    return `https://${domain}/${channelLogin}/${vodId}/${vodSpecialID}/${resKey}/index-dvr.m3u8`;
+  }
+  return `https://${domain}/${vodSpecialID}/${resKey}/index-dvr.m3u8`;
+}
+
 export async function generateMasterPlaylist(vodId: string, host: string): Promise<string> {
   console.log(`[NSV] Generating Master Playlist for VOD: ${vodId}`);
   const data = await fetchTwitchDataGQL(vodId);
   
-  if (!data || !data.data || !data.data.video) {
+  if (!data?.data?.video) {
     throw new Error('Video not found or invalid response');
   }
   
@@ -74,18 +99,7 @@ export async function generateMasterPlaylist(vodId: string, host: string): Promi
   };
   const keys = Object.keys(resolutions).reverse();
   
-  let domain, vodSpecialID;
-  try {
-    const currentURL = new URL(vodData.seekPreviewsURL);
-    domain = currentURL.host;
-    const paths = currentURL.pathname.split('/');
-    const storyboardIndex = paths.findIndex((el: string) => el.includes('storyboards'));
-    if (storyboardIndex === -1) throw new Error('Cannot find storyboards in URL');
-    vodSpecialID = paths[storyboardIndex - 1];
-    if (!vodSpecialID) throw new Error('Cannot extract vodSpecialID');
-  } catch (error: any) {
-    throw new Error('Failed to parse seekPreviewsURL: ' + error.message);
-  }
+  const { domain, vodSpecialID } = parseVodUrlInfo(vodData.seekPreviewsURL);
   
   let fakePlaylist = `#EXTM3U\n#EXT-X-TWITCH-INFO:ORIGIN="s3",B="false",REGION="EU",USER-IP="127.0.0.1",SERVING-ID="${createServingID()}",CLUSTER="cloudfront_vod",USER-COUNTRY="BE",MANIFEST-CLUSTER="cloudfront_vod"`;
 
@@ -96,14 +110,7 @@ export async function generateMasterPlaylist(vodId: string, host: string): Promi
   let startBandwidth = 8534030;
 
   for (const resKey of keys) {
-    let streamUrl;
-    if (broadcastType === 'highlight') {
-      streamUrl = `https://${domain}/${vodSpecialID}/${resKey}/highlight-${vodId}.m3u8`;
-    } else if (broadcastType === 'upload' && daysDiff > 7) {
-      streamUrl = `https://${domain}/${channelData.login}/${vodId}/${vodSpecialID}/${resKey}/index-dvr.m3u8`;
-    } else {
-      streamUrl = `https://${domain}/${vodSpecialID}/${resKey}/index-dvr.m3u8`;
-    }
+    const streamUrl = buildStreamUrl(domain, vodSpecialID, resKey, vodId, broadcastType, daysDiff, channelData.login);
     
     const valid = await Promise.race([
       isValidQuality(streamUrl),
@@ -131,9 +138,9 @@ export async function proxyVariantPlaylist(targetUrl: string): Promise<string> {
   }
   
   let body = await response.text();
-  body = body.replace(/-unmuted/g, '-muted');
+  body = body.replaceAll('-unmuted', '-muted');
   
-  const baseUrlMatch = targetUrl.match(/^(.*\/)/);
+  const baseUrlMatch = /^(.*\/)/.exec(targetUrl);
   if (!baseUrlMatch) return body;
   const baseUrl = baseUrlMatch[1];
   
@@ -175,7 +182,7 @@ export async function fetchUserInfo(username: string): Promise<UserInfo> {
   });
   if (!resp.ok) throw new Error('Twitch API request failed: ' + resp.status);
   const data: any = await resp.json();
-  if (!data || !data.data || !data.data.user) throw new Error('User not found');
+  if (!data?.data?.user) throw new Error('User not found');
   
   const user = data.data.user;
   cache.set(cacheKey, user);
@@ -200,7 +207,7 @@ export async function fetchUserVods(username: string): Promise<VOD[]> {
   });
   if (!resp.ok) throw new Error('Twitch API request failed: ' + resp.status);
   const data: any = await resp.json();
-  if (!data || !data.data || !data.data.user) throw new Error('User not found');
+  if (!data?.data?.user) throw new Error('User not found');
   
   const vods = data.data.user.videos.edges.map((e: any) => e.node);
   cache.set(cacheKey, vods, 600); // 10 minutes cache for VODs
@@ -221,9 +228,9 @@ export async function searchChannels(query: string): Promise<UserInfo[]> {
   });
   if (!resp.ok) throw new Error('Twitch API request failed: ' + resp.status);
   const data: any = await resp.json();
-  if (!data || !data.data || !data.data.searchFor || !data.data.searchFor.channels) return [];
+  if (!data?.data?.searchFor?.channels) return [];
   
-  return data.data.searchFor.channels.edges.map((e: any) => e.item).filter((n: any) => n && n.login);
+  return data.data.searchFor.channels.edges.map((e: any) => e.item).filter((n: any) => n?.login);
 }
 
 export async function fetchTrendingVODs(): Promise<VOD[]> {
@@ -246,7 +253,7 @@ export async function fetchTrendingVODs(): Promise<VOD[]> {
     });
     if (!resp.ok) return [];
     const data: any = await resp.json();
-    if (!data || !data.data || !data.data.game || !data.data.game.videos) return [];
+    if (!data?.data?.game?.videos) return [];
     return data.data.game.videos.edges.map((e: any) => e.node);
   };
 
@@ -299,10 +306,51 @@ export async function searchGlobalContent(query: string): Promise<any> {
   });
   if (!resp.ok) throw new Error('Twitch API request failed: ' + resp.status);
   const data: any = await resp.json();
-  if (!data || !data.data || !data.data.searchFor) return [];
+  if (!data?.data?.searchFor) return [];
   
   const channels = data.data.searchFor.channels?.edges?.map((e: any) => e.item) || [];
   const games = data.data.searchFor.games?.edges?.map((e: any) => e.item) || [];
   
-  return [...channels, ...games].filter((n: any) => n);
-}
+    return [...channels, ...games].filter(Boolean);
+  }
+  
+  export async function fetchVideoChat(vodId: string, contentOffsetSeconds: number = 0): Promise<any> {
+    const resp = await fetch("https://gql.twitch.tv/gql", {
+      method: 'POST',
+      body: JSON.stringify({
+        query: `query { video(id: "${vodId}") { comments(contentOffsetSeconds: ${Math.floor(contentOffsetSeconds)}) { edges { node { id, commenter { displayName, login, profileImageURL(width: 50) }, message { fragments { text, emote { id, setID } } }, contentOffsetSeconds, createdAt } }, pageInfo { hasNextPage } } } }`
+      }),
+      headers: {
+        'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      }
+    });
+    if (!resp.ok) throw new Error('Twitch API request failed: ' + resp.status);
+    const data: any = await resp.json();
+    if (!data?.data?.video?.comments) return { messages: [], hasNextPage: false };
+    
+    return {
+      messages: data.data.video.comments.edges.map((e: any) => e.node),
+      hasNextPage: data.data.video.comments.pageInfo.hasNextPage
+    };
+  }  
+  export async function fetchVideoMarkers(vodId: string): Promise<any[]> {
+    const resp = await fetch("https://gql.twitch.tv/gql", {
+      method: 'POST',
+      body: JSON.stringify({
+        query: `query { video(id: "${vodId}") { markers { id, displayTime, description, type } } }`
+      }),
+      headers: {
+        'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      }
+    });
+    if (!resp.ok) throw new Error('Twitch API request failed: ' + resp.status);
+    const data: any = await resp.json();
+    if (!data?.data?.video?.markers) return [];
+    
+    return data.data.video.markers;
+  }
+  

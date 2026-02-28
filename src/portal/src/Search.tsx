@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 export default function Search() {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
-  const [results, setSearchResults] = useState<any[]>([]);
+  const [results, setResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
 
@@ -19,10 +19,10 @@ export default function Search() {
       const res = await fetch(`/api/search/global?q=${encodeURIComponent(q)}`);
       if (!res.ok) throw new Error('Failed to search');
       const data = await res.json();
-      setSearchResults(data);
+      setResults(data);
     } catch (err: any) {
       console.error(err);
-      setSearchResults([]);
+      setResults([]);
     } finally {
       setIsSearching(false);
     }

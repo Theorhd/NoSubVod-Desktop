@@ -28,3 +28,33 @@ export interface HistoryEntry {
   duration: number;
   updatedAt: number;
 }
+
+export interface ChatMessage {
+  id: string;
+  commenter: {
+    displayName: string;
+    login: string;
+    profileImageURL: string;
+  };
+  content: {
+    text: string;
+    fragments: Array<{ text: string; emote: { id: string } | null }>;
+  };
+  contentOffsetSeconds: number;
+  createdAt: string;
+}
+
+export interface VideoMarker {
+  id: string;
+  displayTime: number;
+  description: string;
+  type: string;
+}
+
+export interface WatchlistEntry {
+  vodId: string;
+  title: string;
+  previewThumbnailURL: string;
+  lengthSeconds: number;
+  addedAt: number;
+}
