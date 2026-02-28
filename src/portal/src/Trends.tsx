@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
 function formatTime(seconds: number) {
   const h = Math.floor(seconds / 3600);
@@ -9,78 +9,52 @@ function formatTime(seconds: number) {
 }
 
 function formatViews(views: number) {
+  if (!views) return '0 views';
   if (views >= 1000000) return (views / 1000000).toFixed(1) + 'M views';
   if (views >= 1000) return (views / 1000).toFixed(1) + 'K views';
   return views + ' views';
 }
 
-export default function Channel() {
-  const [searchParams] = useSearchParams();
-  const user = searchParams.get('user');
+export default function Trends() {
   const navigate = useNavigate();
-  
   const [vods, setVods] = useState<any[]>([]);
-  const [history, setHistory] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!user) {
-      setError('No user specified');
-      setLoading(false);
-      return;
-    }
-
-    Promise.all([
-      fetch(`/api/user/${user}/vods`).then(res => {
-        if (!res.ok) throw new Error('Failed to fetch VODs');
+    fetch(`/api/trends`)
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to fetch trending VODs');
         return res.json();
-      }),
-      fetch('/api/history').then(res => res.json()).catch(() => ({}))
-    ])
-      .then(([vodsData, historyData]) => {
-        setVods(vodsData);
-        setHistory(historyData);
+      })
+      .then(data => {
+        setVods(data);
         setLoading(false);
       })
       .catch(err => {
         setError(err.message);
         setLoading(false);
       });
-  }, [user]);
+  }, []);
 
   return (
     <>
       <div className="top-bar">
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-            <button onClick={() => navigate('/')} style={{ background: 'none', border: 'none', color: 'var(--text)', fontSize: '1.2rem', cursor: 'pointer', marginRight: '15px' }}>&larr;</button>
-            <h1 style={{ margin: 0 }}>
-              <button
-                type="button"
-                onClick={() => navigate('/')}
-                aria-label={`Go to home`}
-                style={{ background: 'none', border: 'none', color: 'var(--text)', fontSize: '1.2rem', cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}
-              >
-                {user}'s VODs
-              </button>
-            </h1>
-          </div>
+        <h1>
+          <button className="logo-btn" onClick={() => navigate('/')} aria-label="Home" style={{ background: 'none', border: 'none', color: 'inherit', font: 'inherit', padding: 0, cursor: 'pointer' }}>Trending VODs</button>
+        </h1>
       </div>
 
       <div className="container" style={{ maxWidth: '800px' }}>
-        {loading && <div style={{ textAlign: 'center', marginTop: '50px' }}>Loading VODs...</div>}
+        {loading && <div style={{ textAlign: 'center', marginTop: '50px' }}>Loading Trending VODs...</div>}
         {error && <div className="error-text" style={{ textAlign: 'center', marginTop: '50px' }}>{error}</div>}
         
         {!loading && !error && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
             {vods.length === 0 ? (
-              <div style={{ gridColumn: '1 / -1', textAlign: 'center', color: 'var(--text-muted)' }}>No VODs found.</div>
+              <div style={{ gridColumn: '1 / -1', textAlign: 'center', color: 'var(--text-muted)' }}>No trends available right now.</div>
             ) : (
-              vods.map(vod => {
-                const hist = history[vod.id];
-                const progress = hist && hist.duration > 0 ? Math.min(100, (hist.timecode / hist.duration) * 100) : 0;
-                
-                return (
+              vods.map(vod => (
                 <button
                   key={vod.id}
                   type="button"
@@ -96,13 +70,20 @@ export default function Channel() {
                     <div style={{ position: 'absolute', bottom: '8px', right: '8px', backgroundColor: 'rgba(0,0,0,0.8)', padding: '2px 6px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold' }}>
                       {formatTime(vod.lengthSeconds)}
                     </div>
-                    {progress > 0 && (
-                      <div style={{ position: 'absolute', bottom: 0, left: 0, width: '100%', height: '4px', backgroundColor: 'rgba(255,255,255,0.2)' }}>
-                        <div style={{ width: `${progress}%`, height: '100%', backgroundColor: '#e91e63' }} />
-                      </div>
-                    )}
                   </div>
                   <div style={{ padding: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
+                      {vod.owner && vod.owner.profileImageURL && (
+                        <img 
+                          src={vod.owner.profileImageURL} 
+                          alt={vod.owner.displayName} 
+                          style={{ width: '30px', height: '30px', borderRadius: '50%', marginRight: '10px', objectFit: 'cover' }}
+                        />
+                      )}
+                      <div style={{ fontSize: '0.9rem', fontWeight: 'bold', color: 'var(--text)' }}>
+                        {vod.owner ? vod.owner.displayName : 'Unknown Streamer'}
+                      </div>
+                    </div>
                     <h3 style={{ margin: '0 0 5px 0', fontSize: '1rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={vod.title}>{vod.title}</h3>
                     <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between' }}>
                       <span>{vod.game?.name || 'No Category'}</span>
@@ -113,8 +94,7 @@ export default function Channel() {
                     </div>
                   </div>
                 </button>
-              )
-            })
+              ))
             )}
           </div>
         )}

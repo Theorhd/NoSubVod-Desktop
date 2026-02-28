@@ -21,3 +21,10 @@ export interface ServerInfo {
   url: string;
   qrcode: string;
 }
+
+export interface HistoryEntry {
+  vodId: string;
+  timecode: number;
+  duration: number;
+  updatedAt: number;
+}

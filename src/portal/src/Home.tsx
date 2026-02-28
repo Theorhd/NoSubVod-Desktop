@@ -8,8 +8,9 @@ export default function Home() {
   const [streamerInput, setStreamerInput] = useState('');
   const [modalError, setModalError] = useState('');
   const [isSearching, setIsSearching] = useState(false);
-  const [vodInput, setVodInput] = useState('');
-  const [vodError, setVodError] = useState(false);
+  const [channelSearch, setChannelSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearchingChannels, setIsSearchingChannels] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem('nsv_subs');
@@ -21,19 +22,22 @@ export default function Home() {
     localStorage.setItem('nsv_subs', JSON.stringify(newSubs));
   };
 
-  const handleVodSubmit = (e: React.FormEvent) => {
+  const handleChannelSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    const input = vodInput.trim();
-    setVodError(false);
-    
-    let vodId = input;
-    const match = input.match(/videos\/(\d+)/) || input.match(/^(\d+)$/);
-    
-    if (match && match[1]) {
-      vodId = match[1];
-      navigate(`/player?vod=${vodId}`);
-    } else {
-      setVodError(true);
+    const query = channelSearch.trim();
+    if (!query) return;
+
+    setIsSearchingChannels(true);
+    try {
+      const res = await fetch(`/api/search/channels?q=${encodeURIComponent(query)}`);
+      if (!res.ok) throw new Error('Failed to search');
+      const data = await res.json();
+      setSearchResults(data);
+    } catch (err: any) {
+      console.error(err);
+      setSearchResults([]);
+    } finally {
+      setIsSearchingChannels(false);
     }
   };
 
@@ -80,28 +84,49 @@ export default function Home() {
     <>
       <div className="top-bar">
         <h1>
-          <button className="logo-btn" onClick={() => navigate('/')} aria-label="Home">NoSubVod</button>
+          <button className="logo-btn" onClick={() => navigate('/')} aria-label="Home" style={{ background: 'none', border: 'none', color: 'inherit', font: 'inherit', padding: 0, cursor: 'pointer' }}>NoSubVod</button>
         </h1>
         <button className="add-btn" onClick={() => setShowModal(true)}>+</button>
       </div>
 
       <div className="container">
         <div className="card">
-          <form onSubmit={handleVodSubmit}>
-            <label htmlFor="vodInput">Direct VOD ID or URL</label>
+          <form onSubmit={handleChannelSearch}>
+            <label htmlFor="channelSearch">Search Twitch Channels</label>
             <div className="input-row">
               <input 
                 type="text" 
-                id="vodInput" 
-                placeholder="e.g. 2012345678" 
-                value={vodInput}
-                onChange={e => setVodInput(e.target.value)}
+                id="channelSearch" 
+                placeholder="e.g. Domingo" 
+                value={channelSearch}
+                onChange={e => setChannelSearch(e.target.value)}
                 autoComplete="off" 
               />
-              <button type="submit" className="action-btn">Play</button>
+              <button type="submit" className="action-btn" disabled={isSearchingChannels}>
+                {isSearchingChannels ? '...' : 'Search'}
+              </button>
             </div>
-            {vodError && <div className="error-text">Please enter a valid VOD ID.</div>}
           </form>
+          
+          {searchResults.length > 0 && (
+            <div className="search-results" style={{ marginTop: '20px' }}>
+              <h3 style={{ fontSize: '1rem', marginTop: 0 }}>Results:</h3>
+              <div className="sub-list">
+                {searchResults.map(user => (
+                  <div key={user.id} className="sub-item">
+                    <button
+                      type="button"
+                      className="sub-link"
+                      onClick={() => navigate(`/channel?user=${encodeURIComponent(user.login)}`)}
+                    >
+                      <img src={user.profileImageURL} alt={user.displayName} />
+                      <div className="name">{user.displayName}</div>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <h2>My Subs</h2>

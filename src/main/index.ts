@@ -84,7 +84,7 @@ app.whenReady().then(() => {
   // Start the Express Server
   const port = 23455;
   try {
-    startServer(port, isDev);
+    startServer(port, isDev, app.getPath('userData'));
   } catch (err) {
     console.error('Failed to start server:', err);
   }

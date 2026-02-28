@@ -3,6 +3,7 @@ import cors from 'cors';
 import path from 'node:path';
 import apiRoutes from './routes/api';
 import pino from 'pino';
+import { initHistoryService } from './services/history.service';
 
 const logger = pino({
   transport: {
@@ -13,8 +14,13 @@ const logger = pino({
   }
 });
 
-export function startServer(port: number, isDev: boolean) {
+export function startServer(port: number, isDev: boolean, userDataPath: string) {
   const app = express();
+
+  // Initialize History Service asynchronously
+  initHistoryService(userDataPath).catch(err => {
+    logger.error('Failed to initialize history service', err);
+  });
 
   app.use(cors());
   app.use(express.json());

@@ -17,48 +17,90 @@ export default function Player() {
     const video = videoRef.current;
     if (!video) return;
 
-    const streamUrl = `/api/vod/${vodId}/master.m3u8`;
+    let initialTime = 0;
 
-    // Check for native HLS support (Safari / iOS)
-    if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = streamUrl;
-      video.addEventListener('loadedmetadata', () => {
-        video.play().catch(e => console.log("Auto-play prevented", e));
-      });
-      video.addEventListener('error', () => {
-        setError('Error loading native stream.');
-      });
-    } else {
-      // Fallback to Hls.js for other browsers dynamically
-      const script = document.createElement('script');
-      script.src = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
-      script.onload = () => {
-        const Hls = (globalThis as any).Hls;
-        if (Hls.isSupported()) {
-          const hls = new Hls({
-            maxBufferLength: 30,
-            maxMaxBufferLength: 600,
-          });
-          hls.loadSource(streamUrl);
-          hls.attachMedia(video);
-          hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            video.play().catch(e => console.log("Auto-play prevented", e));
-          });
-          hls.on(Hls.Events.ERROR, (_event: any, data: any) => {
-            if (data.fatal) {
-              setError(`HLS Error: ${data.type} - ${data.details}`);
-            }
-          });
-        } else {
-          setError('Your browser does not support HLS video playback.');
+    const initPlayer = async () => {
+      try {
+        const histRes = await fetch(`/api/history/${vodId}`);
+        if (histRes.ok) {
+          const hist = await histRes.json();
+          if (hist && hist.timecode) {
+            initialTime = Math.max(0, hist.timecode - 5);
+          }
         }
-      };
-      document.body.appendChild(script);
-      
-      return () => {
-        script.remove();
-      };
-    }
+      } catch (e) {
+        console.error('Failed to fetch history', e);
+      }
+
+      const streamUrl = `/api/vod/${vodId}/master.m3u8`;
+
+      // Check for native HLS support (Safari / iOS)
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = streamUrl;
+        video.addEventListener('loadedmetadata', () => {
+          if (initialTime > 0) video.currentTime = initialTime;
+          video.play().catch(e => console.log("Auto-play prevented", e));
+        });
+        video.addEventListener('error', () => {
+          setError('Error loading native stream.');
+        });
+      } else {
+        // Fallback to Hls.js for other browsers dynamically
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
+        script.onload = () => {
+          const Hls = (globalThis as any).Hls;
+          if (Hls.isSupported()) {
+            const hls = new Hls({
+              maxBufferLength: 30,
+              maxMaxBufferLength: 600,
+            });
+            hls.loadSource(streamUrl);
+            hls.attachMedia(video);
+            hls.on(Hls.Events.MANIFEST_PARSED, () => {
+              if (initialTime > 0) video.currentTime = initialTime;
+              video.play().catch(e => console.log("Auto-play prevented", e));
+            });
+            hls.on(Hls.Events.ERROR, (_event: any, data: any) => {
+              if (data.fatal) {
+                setError(`HLS Error: ${data.type} - ${data.details}`);
+              }
+            });
+          } else {
+            setError('Your browser does not support HLS video playback.');
+          }
+        };
+        document.body.appendChild(script);
+      }
+    };
+
+    initPlayer();
+
+    // Progress saving
+    const saveProgress = () => {
+      if (video.currentTime > 0) {
+        fetch('/api/history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vodId, timecode: video.currentTime, duration: video.duration || 0 })
+        }).catch(e => console.error('Failed to save history', e));
+      }
+    };
+
+    const intervalId = setInterval(() => {
+      if (!video.paused) saveProgress();
+    }, 10000);
+
+    const handlePause = () => saveProgress();
+    video.addEventListener('pause', handlePause);
+
+    return () => {
+      clearInterval(intervalId);
+      video.removeEventListener('pause', handlePause);
+      saveProgress();
+      const script = document.querySelector('script[src="https://cdn.jsdelivr.net/npm/hls.js@latest"]');
+      if (script) script.remove();
+    };
   }, [vodId]);
 
   return (
