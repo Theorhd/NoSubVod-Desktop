@@ -295,7 +295,7 @@ router.get('/vod/:vodId/master.m3u8', async (req, res) => {
     res.send(playlist);
   } catch (err: any) {
     console.error(err);
-    res.status(500).send('Error generating master playlist: ' + err.message);
+    res.status(500).send('Failed to generate master playlist');
   }
 });
 
@@ -331,7 +331,7 @@ router.get('/proxy/variant.m3u8', async (req, res) => {
     res.send(modifiedVariant);
   } catch (err: any) {
     console.error(err);
-    res.status(500).send('Error proxying variant: ' + err.message);
+    res.status(500).send('Failed to proxy variant playlist');
   }
 });
 
