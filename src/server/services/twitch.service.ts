@@ -417,8 +417,17 @@ function rewriteMasterWithProxy(master: string, host: string, sourceMasterUrl: s
 }
 
 export async function generateMasterPlaylist(vodId: string, host: string): Promise<string> {
-  console.log(`[NSV] Generating Master Playlist for VOD: ${vodId}`);
-  const data = await fetchTwitchDataGQL(vodId);
+  const safeVodId = (() => {
+    const trimmed = (vodId || '').trim();
+    // Allow only URL-safe, simple VOD IDs (letters, numbers, underscore, hyphen)
+    if (!/^[a-zA-Z0-9_-]+$/.test(trimmed)) {
+      throw new Error('Invalid VOD identifier');
+    }
+    return trimmed;
+  })();
+
+  console.log(`[NSV] Generating Master Playlist for VOD: ${safeVodId}`);
+  const data = await fetchTwitchDataGQL(safeVodId);
 
   if (!data?.data?.video) {
     throw new Error('Video not found or invalid response');
@@ -455,7 +464,7 @@ export async function generateMasterPlaylist(vodId: string, host: string): Promi
       domain,
       vodSpecialID,
       resKey,
-      vodId,
+      safeVodId,
       broadcastType,
       daysDiff,
       channelData.login
