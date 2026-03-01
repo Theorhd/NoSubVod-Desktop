@@ -507,9 +507,9 @@ function validateVariantTargetUrl(targetUrl: string): string {
 
   const hostname = parsed.hostname.toLowerCase();
 
-  // Allow only Twitch-related hostnames to prevent SSRF to arbitrary hosts.
-  const allowedHostSuffixes = ['.ttvnw.net', '.twitch.tv'];
-  const allowedExactHosts = ['ttvnw.net', 'twitch.tv'];
+  // Allow only Twitch-related hostnames/CDN domains to prevent SSRF to arbitrary hosts.
+  const allowedHostSuffixes = ['.ttvnw.net', '.twitch.tv', '.jtvnw.net', '.cloudfront.net'];
+  const allowedExactHosts = ['ttvnw.net', 'twitch.tv', 'jtvnw.net', 'cloudfront.net'];
 
   const isExactAllowed = allowedExactHosts.includes(hostname);
   const hasAllowedSuffix = allowedHostSuffixes.some((suffix) => hostname.endsWith(suffix));
@@ -521,15 +521,29 @@ function validateVariantTargetUrl(targetUrl: string): string {
   // Further restrict the path to known-safe Twitch HLS/VOD endpoints.
   const pathname = parsed.pathname;
 
-  // Allowed patterns (simplified):
+  // Allowed patterns:
   //  - /api/channel/hls/<login>.m3u8                 (live playlists)
-  //  - /vod/                                         (VOD segments/playlists)
-  //  - /chunked/                                     (older VOD segment scheme)
+  //  - /vod/ and /chunked/                           (legacy VOD endpoints)
+  //  - /<vodSpecialId>/<quality>/index-dvr.m3u8      (modern VOD endpoint)
+  //  - /<channel>/<vodId>/<vodSpecialId>/<quality>/index-dvr.m3u8 (upload variant)
+  //  - /<vodSpecialId>/<quality>/highlight-<id>.m3u8 (highlight variant)
   const isLiveHlsApi = /^\/api\/channel\/hls\/[^/]+\.m3u8$/i.test(pathname);
   const isVodPath = pathname.toLowerCase().startsWith('/vod/');
   const isChunkedVodPath = pathname.toLowerCase().startsWith('/chunked/');
+  const isModernVodPlaylist = /^\/[^/]+\/[^/]+\/index-dvr\.m3u8$/i.test(pathname);
+  const isUploadVodPlaylist = /^\/[^/]+\/[^/]+\/[^/]+\/[^/]+\/index-dvr\.m3u8$/i.test(pathname);
+  const isHighlightVodPlaylist = /^\/[^/]+\/[^/]+\/highlight-[^/]+\.m3u8$/i.test(pathname);
+  const isGenericM3u8Path = /\.m3u8$/i.test(pathname);
 
-  if (!isLiveHlsApi && !isVodPath && !isChunkedVodPath) {
+  if (
+    !isLiveHlsApi &&
+    !isVodPath &&
+    !isChunkedVodPath &&
+    !isModernVodPlaylist &&
+    !isUploadVodPlaylist &&
+    !isHighlightVodPlaylist &&
+    !isGenericM3u8Path
+  ) {
     throw new Error('Disallowed target path');
   }
 
