@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   root: __dirname,
   base: '/',
+  cacheDir: '../../node_modules/.vite-portal',
   plugins: [react()],
   build: {
     outDir: '../../dist/portal',

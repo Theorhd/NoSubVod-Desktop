@@ -1,14 +1,16 @@
-name: CI
+name: Security Audit
 
 on:
   push:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+  schedule:
+    - cron: '0 6 * * 1' # Weekly on Monday at 6:00 AM
 
 jobs:
-  quality:
-    name: Code Quality
+  npm-audit:
+    name: NPM Dependency Audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,14 +24,27 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Lint
-        run: npm run lint
+      - name: Run npm audit
+        run: npm audit --audit-level=moderate
 
-      - name: Type Check
-        run: npm run type-check
+  cargo-audit:
+    name: Cargo Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-  build:
-    name: Build
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo audit
+        run: cargo audit
+        working-directory: src-tauri
+
+  cargo-clippy:
+    name: Rust Linting (Clippy)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,16 +55,14 @@ jobs:
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - name: Cache Rust
         uses: actions/cache@v4
@@ -60,16 +73,8 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
+      - name: Run Clippy
+        run: cargo clippy -- -D warnings
+        working-directory: src-tauri

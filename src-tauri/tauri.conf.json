@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "NoSubVOD",
+  "version": "0.1.0",
+  "identifier": "com.nosubvod.desktop",
+  "build": {
+    "frontendDist": "../dist/renderer",
+    "devUrl": "http://localhost:5174",
+    "beforeDevCommand": "npm run dev:renderer",
+    "beforeBuildCommand": "npm run build:renderer"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "NoSubVOD",
+        "width": 600,
+        "height": 700,
+        "resizable": false,
+        "fullscreen": false,
+        "backgroundColor": "#18181b"
+      }
+    ],
+    "trayIcon": {
+      "iconPath": "icons/icon.ico",
+      "iconAsTemplate": false
+    },
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.ico"],
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}
