@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Tray, Menu } from 'electron';
 import path from 'node:path';
+import os from 'node:os';
 import { startServer } from '../server/index';
-import ip from 'ip';
 import QRCode from 'qrcode';
 import { ServerInfo } from '../shared/types';
 
@@ -11,6 +11,21 @@ let isQuitting = false;
 
 const isDev = process.argv.includes('--dev');
 const RENDERER_DEV_SERVER_URL = 'http://localhost:5174'; // Vite default is 5173, but we might have 2 vite servers running (portal and renderer). Let's define it.
+
+function getLocalIPv4Address(): string {
+  const interfaces = os.networkInterfaces();
+
+  for (const details of Object.values(interfaces)) {
+    if (!details) continue;
+    for (const detail of details) {
+      if (detail.family === 'IPv4' && !detail.internal) {
+        return detail.address;
+      }
+    }
+  }
+
+  return '127.0.0.1';
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -93,7 +108,7 @@ app.whenReady().then(() => {
   if (mainWindow) {
     mainWindow.webContents.on('did-finish-load', async () => {
       try {
-        const localIp = ip.address();
+        const localIp = getLocalIPv4Address();
         const portalUrl = isDev ? `http://${localIp}:5173` : `http://${localIp}:${port}`;
         const qrCodeDataUrl = await QRCode.toDataURL(portalUrl);
         const serverInfo: ServerInfo = {
