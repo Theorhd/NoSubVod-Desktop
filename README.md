@@ -53,7 +53,6 @@ NoSubVOD Desktop est une application locale qui permet de regarder des VODs Twit
 - `src/server/` : API locale + services Twitch + persistance
 - `src/portal/` : portail web utilisateur (LAN)
 - `src/renderer/` : UI desktop d’état serveur (IP, URL, QR)
-- `releasenotes/` : notes de version
 
 ---
 
@@ -99,12 +98,6 @@ npm start
 
 ---
 
-## 📄 Releases
-
-- Pre-release: `releasenotes/pre0.1.0.md`
-- Stable initiale: `releasenotes/0.1.0.md`
-
----
 
 ## 👤 Auteur
 
