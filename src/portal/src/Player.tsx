@@ -99,8 +99,7 @@ export default function Player() {
     const userAgent = navigator.userAgent || '';
     const isIPadOS = /Macintosh/i.test(userAgent) && navigator.maxTouchPoints > 1;
     const isMobileDevice =
-      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent) ||
-      isIPadOS;
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent) || isIPadOS;
 
     return !isMobileDevice;
   }, []);
@@ -112,7 +111,8 @@ export default function Player() {
   const visibleChat = useMemo(() => {
     return chatMessages.filter(
       (message) =>
-        message.contentOffsetSeconds <= currentTime && message.contentOffsetSeconds > currentTime - 60
+        message.contentOffsetSeconds <= currentTime &&
+        message.contentOffsetSeconds > currentTime - 60
     );
   }, [chatMessages, currentTime]);
 
@@ -711,7 +711,11 @@ export default function Player() {
               value={canSeek ? Math.min(currentTime, duration) : 0}
               disabled={!canSeek}
               onChange={(event) => handleSeek(Number(event.target.value))}
-              style={{ width: '100%', accentColor: '#8f57ff', cursor: canSeek ? 'pointer' : 'default' }}
+              style={{
+                width: '100%',
+                accentColor: '#8f57ff',
+                cursor: canSeek ? 'pointer' : 'default',
+              }}
             />
 
             <div
@@ -729,12 +733,12 @@ export default function Player() {
                 type="button"
                 style={{
                   border: '1px solid #3a3a3d',
-                    background: '#1b1e2b',
+                  background: '#1b1e2b',
                   color: '#fff',
-                    borderRadius: '8px',
-                    padding: '7px 12px',
+                  borderRadius: '8px',
+                  padding: '7px 12px',
                   cursor: 'pointer',
-                    fontWeight: 600,
+                  fontWeight: 600,
                 }}
               >
                 {isPlaying ? 'Pause' : 'Play'}
@@ -749,12 +753,12 @@ export default function Player() {
                 type="button"
                 style={{
                   border: '1px solid #3a3a3d',
-                    background: '#1b1e2b',
+                  background: '#1b1e2b',
                   color: '#fff',
-                    borderRadius: '8px',
-                    padding: '7px 12px',
+                  borderRadius: '8px',
+                  padding: '7px 12px',
                   cursor: 'pointer',
-                    fontWeight: 600,
+                  fontWeight: 600,
                 }}
               >
                 {isMuted ? 'Unmute' : 'Mute'}
@@ -767,7 +771,7 @@ export default function Player() {
                 step={0.01}
                 value={isMuted ? 0 : volume}
                 onChange={(event) => handleVolume(Number(event.target.value))}
-                  style={{ width: '120px', accentColor: '#8f57ff', cursor: 'pointer' }}
+                style={{ width: '120px', accentColor: '#8f57ff', cursor: 'pointer' }}
               />
 
               <select
@@ -775,12 +779,12 @@ export default function Player() {
                 onChange={(event) => changeSpeed(Number(event.target.value))}
                 style={{
                   border: '1px solid #3a3a3d',
-                    background: '#1b1e2b',
+                  background: '#1b1e2b',
                   color: '#fff',
-                    borderRadius: '8px',
-                    padding: '7px 10px',
+                  borderRadius: '8px',
+                  padding: '7px 10px',
                   cursor: 'pointer',
-                    fontWeight: 600,
+                  fontWeight: 600,
                 }}
               >
                 {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((rate) => (
@@ -796,12 +800,12 @@ export default function Player() {
                   onChange={(event) => changeQuality(Number(event.target.value))}
                   style={{
                     border: '1px solid #3a3a3d',
-                      background: '#1b1e2b',
+                    background: '#1b1e2b',
                     color: '#fff',
-                      borderRadius: '8px',
-                      padding: '7px 10px',
+                    borderRadius: '8px',
+                    padding: '7px 10px',
                     cursor: 'pointer',
-                      fontWeight: 600,
+                    fontWeight: 600,
                   }}
                 >
                   <option value={-1}>Auto</option>
@@ -821,12 +825,12 @@ export default function Player() {
                 style={{
                   marginLeft: 'auto',
                   border: '1px solid #3a3a3d',
-                    background: '#1b1e2b',
+                  background: '#1b1e2b',
                   color: '#fff',
-                    borderRadius: '8px',
-                    padding: '7px 12px',
+                  borderRadius: '8px',
+                  padding: '7px 12px',
                   cursor: 'pointer',
-                    fontWeight: 600,
+                  fontWeight: 600,
                 }}
               >
                 {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
@@ -902,7 +906,9 @@ export default function Player() {
                       {message.commenter?.displayName || 'Unknown'}:{' '}
                     </span>
                     <span style={{ color: '#efeff1' }}>
-                      {(message as any).message?.fragments?.map((fragment: any) => fragment.text).join('')}
+                      {(message as any).message?.fragments
+                        ?.map((fragment: any) => fragment.text)
+                        .join('')}
                     </span>
                   </div>
                 ))}

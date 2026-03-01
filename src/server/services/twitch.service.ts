@@ -479,7 +479,10 @@ export async function generateMasterPlaylist(vodId: string, host: string): Promi
   return fakePlaylist;
 }
 
-export async function generateLiveMasterPlaylist(channelLogin: string, host: string): Promise<string> {
+export async function generateLiveMasterPlaylist(
+  channelLogin: string,
+  host: string
+): Promise<string> {
   const token = await fetchLivePlaybackToken(channelLogin);
   const randomValue = Math.floor(Math.random() * 1_000_000).toString();
   const params = new URLSearchParams({
