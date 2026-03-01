@@ -6,6 +6,15 @@ import Player from './Player';
 import Trends from './Trends';
 import Search from './Search';
 import Settings from './Settings';
+import History from './History';
+
+const navItems = [
+  { path: '/trends', label: 'Trends', icon: '↗' },
+  { path: '/', label: 'Home', icon: '⌂' },
+  { path: '/search', label: 'Search', icon: '⌕' },
+  { path: '/history', label: 'History', icon: '◷' },
+  { path: '/settings', label: 'Settings', icon: '⚙' },
+];
 
 function BottomNav() {
   const location = useLocation();
@@ -17,32 +26,23 @@ function BottomNav() {
   }
 
   return (
-    <div className="bottom-nav">
-      <button
-        className={`nav-btn ${location.pathname === '/trends' ? 'active' : ''}`}
-        onClick={() => navigate('/trends')}
-      >
-        Trends
-      </button>
-      <button
-        className={`nav-btn ${location.pathname === '/' ? 'active' : ''}`}
-        onClick={() => navigate('/')}
-      >
-        Home
-      </button>
-      <button
-        className={`nav-btn ${location.pathname === '/search' ? 'active' : ''}`}
-        onClick={() => navigate('/search')}
-      >
-        Search
-      </button>
-      <button
-        className={`nav-btn ${location.pathname === '/settings' ? 'active' : ''}`}
-        onClick={() => navigate('/settings')}
-      >
-        Settings
-      </button>
-    </div>
+    <nav className="bottom-nav" aria-label="Main Navigation">
+      {navItems.map((item) => {
+        const isActive =
+          item.path === '/' ? location.pathname === '/' : location.pathname === item.path;
+        return (
+          <button
+            key={item.path}
+            className={`nav-btn ${isActive ? 'active' : ''}`}
+            onClick={() => navigate(item.path)}
+            type="button"
+          >
+            <span className="nav-icon">{item.icon}</span>
+            <span className="nav-label">{item.label}</span>
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -55,6 +55,7 @@ export default function App() {
             <Route path="/" element={<Home />} />
             <Route path="/trends" element={<Trends />} />
             <Route path="/search" element={<Search />} />
+            <Route path="/history" element={<History />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/channel" element={<Channel />} />
             <Route path="/player" element={<Player />} />

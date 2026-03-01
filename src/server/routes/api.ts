@@ -7,6 +7,8 @@ import {
   searchChannels,
   fetchTrendingVODs,
   searchGlobalContent,
+  fetchGameVodsByName,
+  fetchVodsByIds,
   fetchVideoChat,
   fetchVideoMarkers,
 } from '../services/twitch.service';
@@ -153,6 +155,22 @@ router.get('/search/global', async (req, res) => {
   }
 });
 
+router.get('/search/category-vods', async (req, res) => {
+  try {
+    const name = (req.query.name as string) || '';
+    if (!name.trim()) {
+      res.json([]);
+      return;
+    }
+
+    const results = await fetchGameVodsByName(name.trim(), 36);
+    res.json(results);
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/trends', async (req, res) => {
   try {
     const results = await fetchTrendingVODs(getAllHistory(), getSubs());
@@ -166,6 +184,32 @@ router.get('/trends', async (req, res) => {
 // History
 router.get('/history', (req, res) => {
   res.json(getAllHistory());
+});
+
+router.get('/history/list', async (req, res) => {
+  try {
+    const requestedLimit = Number.parseInt((req.query.limit as string) || '', 10);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.max(1, Math.min(requestedLimit, 100))
+      : undefined;
+
+    const orderedHistory = Object.values(getAllHistory()).sort(
+      (left, right) => right.updatedAt - left.updatedAt
+    );
+    const entries = typeof limit === 'number' ? orderedHistory.slice(0, limit) : orderedHistory;
+    const metadata = await fetchVodsByIds(entries.map((entry) => entry.vodId));
+    const byVodId = new Map(metadata.map((vod) => [vod.id, vod]));
+
+    const enriched = entries.map((entry) => ({
+      ...entry,
+      vod: byVodId.get(entry.vodId) || null,
+    }));
+
+    res.json(enriched);
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.get('/history/:vodId', (req, res) => {

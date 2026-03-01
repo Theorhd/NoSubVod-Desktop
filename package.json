@@ -16,7 +16,7 @@
     "start": "electron dist/main.js",
     "lint": "eslint . && prettier --check .",
     "lint:fix": "eslint . --fix && prettier --write .",
-    "type-check": "tsc --noEmit",
+    "type-check": "tsc --noEmit && tsc -p src/portal/tsconfig.json && tsc -p src/renderer/tsconfig.json",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder -w"
   },

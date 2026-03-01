@@ -41,6 +41,10 @@ export interface HistoryEntry {
   updatedAt: number;
 }
 
+export interface HistoryVodEntry extends HistoryEntry {
+  vod: VOD | null;
+}
+
 export interface ChatMessage {
   id: string;
   commenter: {

@@ -89,6 +89,22 @@ async function fetchGameVods(
   return data.data.game.videos.edges.map((edge: any) => edge.node).filter(Boolean);
 }
 
+export async function fetchGameVodsByName(gameName: string, first: number = 24): Promise<VOD[]> {
+  const [frenchFirst, globalPool] = await Promise.all([
+    fetchGameVods(gameName, ['fr'], first),
+    fetchGameVods(gameName, undefined, first),
+  ]);
+
+  const deduped = new Map<string, VOD>();
+  for (const vod of [...frenchFirst, ...globalPool]) {
+    if (vod?.id && !deduped.has(vod.id)) {
+      deduped.set(vod.id, vod);
+    }
+  }
+
+  return [...deduped.values()].slice(0, first);
+}
+
 async function fetchWatchedVodMetadata(vodIds: string[]): Promise<VOD[]> {
   if (vodIds.length === 0) return [];
 
@@ -123,6 +139,10 @@ async function fetchWatchedVodMetadata(vodIds: string[]): Promise<VOD[]> {
   const data: any = await resp.json();
   const payload = data?.data || {};
   return Object.values(payload).filter(Boolean) as VOD[];
+}
+
+export async function fetchVodsByIds(vodIds: string[]): Promise<VOD[]> {
+  return fetchWatchedVodMetadata(vodIds);
 }
 
 function buildPreferenceProfile(
