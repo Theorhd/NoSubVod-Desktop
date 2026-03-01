@@ -459,7 +459,7 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         .route("/vod/:vod_id/markers", get(handle_vod_markers))
         .route("/vod/:vod_id/master.m3u8", get(handle_vod_master))
         .route("/live/:login/master.m3u8", get(handle_live_master))
-        .route("/proxy/variant.m3u8", get(handle_proxy_variant))
+        .route("/stream/variant.m3u8", get(handle_proxy_variant))
         // Watchlist
         .route("/watchlist", get(handle_get_watchlist).post(handle_add_watchlist))
         .route("/watchlist/:vod_id", delete(handle_remove_watchlist))

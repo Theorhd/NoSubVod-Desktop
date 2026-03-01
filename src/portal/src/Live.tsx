@@ -224,13 +224,20 @@ export default function Live() {
         {!isInitialLoading && streams.length > 0 && (
           <div className="vod-grid">
             {streams.map((stream) => (
-              <button
+              <div
                 key={stream.id}
-                type="button"
                 onClick={() =>
                   navigate(`/player?live=${encodeURIComponent(stream.broadcaster.login)}`)
                 }
                 className="vod-card live-card"
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    navigate(`/player?live=${encodeURIComponent(stream.broadcaster.login)}`);
+                  }
+                }}
               >
                 <div className="vod-thumb-wrap">
                   <img
@@ -260,7 +267,7 @@ export default function Live() {
                   </div>
                   <div className="vod-date">Uptime: {formatUptime(stream.startedAt)}</div>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         )}

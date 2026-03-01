@@ -67,11 +67,18 @@ export default function Trends() {
         {!loading && !error && vods.length > 0 && (
           <div className="vod-grid">
             {vods.map((vod) => (
-              <button
+              <div
                 key={vod.id}
-                type="button"
                 onClick={() => navigate(`/player?vod=${vod.id}`)}
                 className="vod-card"
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    navigate(`/player?vod=${vod.id}`);
+                  }
+                }}
               >
                 <div className="vod-thumb-wrap">
                   <img src={vod.previewThumbnailURL} alt={vod.title} className="vod-thumb" />
@@ -91,7 +98,7 @@ export default function Trends() {
                   </div>
                   <div className="vod-date">{new Date(vod.createdAt).toLocaleDateString()}</div>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         )}

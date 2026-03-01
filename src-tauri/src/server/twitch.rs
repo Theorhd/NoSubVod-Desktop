@@ -396,7 +396,7 @@ fn rewrite_master_with_proxy(
                         let abs_url = make_absolute_url(uri, source_master_url);
                         let proxy_url = match register_variant_proxy_target(variant_cache, &abs_url) {
                             Ok(pid) => format!(
-                                "http://{host}/api/proxy/variant.m3u8?id={}",
+                                "http://{host}/api/stream/variant.m3u8?id={}",
                                 urlencoding_simple(&pid)
                             ),
                             Err(_) => abs_url.clone(),
@@ -417,7 +417,7 @@ fn rewrite_master_with_proxy(
             let abs_url = make_absolute_url(&line, source_master_url);
             if let Ok(proxy_id) = register_variant_proxy_target(variant_cache, &abs_url) {
                 lines[i] = format!(
-                    "http://{host}/api/proxy/variant.m3u8?id={}",
+                    "http://{host}/api/stream/variant.m3u8?id={}",
                     urlencoding_simple(&proxy_id)
                 );
             }
@@ -1305,7 +1305,7 @@ impl TwitchService {
                     Err(_) => continue,
                 };
                 let proxy_url = format!(
-                    "http://{host}/api/proxy/variant.m3u8?id={}",
+                    "http://{host}/api/stream/variant.m3u8?id={}",
                     urlencoding_simple(&proxy_id)
                 );
 
