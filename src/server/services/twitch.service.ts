@@ -1,5 +1,5 @@
 import NodeCache from 'node-cache';
-import { UserInfo, VOD } from '../../shared/types';
+import { HistoryEntry, SubEntry, UserInfo, VOD } from '../../shared/types';
 
 // TTL of 1 hour for users and VODs
 const cache = new NodeCache({ stdTTL: 3600 });
@@ -25,6 +25,245 @@ function createServingID(): string {
   let id = '';
   for (let i = 0; i < 32; i++) id += w[Math.floor(Math.random() * w.length)];
   return id;
+}
+
+function gqlEscape(value: string): string {
+  return JSON.stringify(value).slice(1, -1);
+}
+
+function createSimpleHash(value: string): string {
+  let hash = 0;
+  for (let index = 0; index < value.length; index++) {
+    hash = (hash << 5) - hash + (value.codePointAt(index) || 0);
+    hash = Math.trunc(hash);
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function normalizeLanguage(language?: string): string {
+  return (language || '').trim().toLowerCase();
+}
+
+function getWatchWeight(entry: HistoryEntry): number {
+  if (!entry.duration || entry.duration <= 0) {
+    return clamp(entry.timecode / 1800, 0.05, 1);
+  }
+  return clamp(entry.timecode / entry.duration, 0.05, 1);
+}
+
+type PreferenceProfile = {
+  gameScores: Map<string, number>;
+  channelScores: Map<string, number>;
+  languageScores: Map<string, number>;
+};
+
+type ScoredVod = VOD & {
+  __score: number;
+};
+
+async function fetchGameVods(
+  gameName: string,
+  languages?: string[],
+  first: number = 20
+): Promise<VOD[]> {
+  const languageFilter = languages ? `, languages: ${JSON.stringify(languages)}` : '';
+  const resp = await fetch('https://gql.twitch.tv/gql', {
+    method: 'POST',
+    body: JSON.stringify({
+      query: `query { game(name: "${gqlEscape(gameName)}") { videos(first: ${first}, sort: VIEWS${languageFilter}) { edges { node { id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, language, game { name }, owner { login, displayName, profileImageURL(width: 50) } } } } } }`,
+    }),
+    headers: {
+      'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!resp.ok) return [];
+  const data: any = await resp.json();
+  if (!data?.data?.game?.videos?.edges) return [];
+  return data.data.game.videos.edges.map((edge: any) => edge.node).filter(Boolean);
+}
+
+async function fetchWatchedVodMetadata(vodIds: string[]): Promise<VOD[]> {
+  if (vodIds.length === 0) return [];
+
+  const safeIds = vodIds
+    .map((vodId) => vodId.trim())
+    .filter(Boolean)
+    .filter((vodId) => /^\d+$/.test(vodId))
+    .slice(0, 30);
+
+  if (safeIds.length === 0) return [];
+
+  const queryBody = safeIds
+    .map(
+      (vodId, index) =>
+        `v${index}: video(id: "${vodId}") { id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, language, game { name }, owner { login, displayName, profileImageURL(width: 50) } }`
+    )
+    .join(' ');
+
+  const resp = await fetch('https://gql.twitch.tv/gql', {
+    method: 'POST',
+    body: JSON.stringify({
+      query: `query { ${queryBody} }`,
+    }),
+    headers: {
+      'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!resp.ok) return [];
+  const data: any = await resp.json();
+  const payload = data?.data || {};
+  return Object.values(payload).filter(Boolean) as VOD[];
+}
+
+function buildPreferenceProfile(
+  history: Record<string, HistoryEntry>,
+  watchedVods: VOD[],
+  subs: SubEntry[]
+): PreferenceProfile {
+  const gameScores = new Map<string, number>();
+  const channelScores = new Map<string, number>();
+  const languageScores = new Map<string, number>();
+
+  const historyByVodId = new Map<string, HistoryEntry>(
+    Object.values(history).map((entry) => [entry.vodId, entry])
+  );
+
+  for (const watchedVod of watchedVods) {
+    const historyEntry = historyByVodId.get(watchedVod.id);
+    if (!historyEntry) continue;
+
+    const watchWeight = getWatchWeight(historyEntry);
+    const recencyPenalty = clamp(
+      1 - (Date.now() - historyEntry.updatedAt) / (1000 * 60 * 60 * 24 * 45),
+      0.35,
+      1
+    );
+    const weighted = watchWeight * recencyPenalty;
+
+    const gameName = watchedVod.game?.name || '';
+    if (gameName) {
+      gameScores.set(gameName, (gameScores.get(gameName) || 0) + weighted);
+    }
+
+    const channelLogin = watchedVod.owner?.login?.toLowerCase() || '';
+    if (channelLogin) {
+      channelScores.set(channelLogin, (channelScores.get(channelLogin) || 0) + weighted);
+    }
+
+    const language = normalizeLanguage(watchedVod.language);
+    if (language) {
+      languageScores.set(language, (languageScores.get(language) || 0) + weighted);
+    }
+  }
+
+  for (const sub of subs) {
+    const login = sub.login.toLowerCase();
+    channelScores.set(login, (channelScores.get(login) || 0) + 1.75);
+  }
+
+  if ((languageScores.get('fr') || 0) < 1.2) {
+    languageScores.set('fr', (languageScores.get('fr') || 0) + 1.2);
+  }
+
+  return {
+    gameScores,
+    channelScores,
+    languageScores,
+  };
+}
+
+function scoreCandidateVod(vod: VOD, profile: PreferenceProfile, subsSet: Set<string>): number {
+  const gameName = vod.game?.name || '';
+  const channelLogin = vod.owner?.login?.toLowerCase() || '';
+  const language = normalizeLanguage(vod.language);
+
+  const popularityScore = Math.log10((vod.viewCount || 0) + 10) * 1.15;
+  const gameAffinity = (profile.gameScores.get(gameName) || 0) * 2.1;
+  const channelAffinity = (profile.channelScores.get(channelLogin) || 0) * 2.4;
+  const languageAffinity = (profile.languageScores.get(language) || 0) * 1.15;
+  const frBoost = language === 'fr' ? 2.3 : 0;
+  const subBoost = subsSet.has(channelLogin) ? 3.2 : 0;
+
+  const vodAgeDays = clamp(
+    (Date.now() - new Date(vod.createdAt).getTime()) / (1000 * 60 * 60 * 24),
+    0,
+    60
+  );
+  const recencyScore = clamp(2.1 - vodAgeDays / 9, 0, 2.1);
+
+  return (
+    popularityScore +
+    gameAffinity +
+    channelAffinity +
+    languageAffinity +
+    frBoost +
+    subBoost +
+    recencyScore
+  );
+}
+
+function interleaveLocalizedFeed(
+  candidates: ScoredVod[],
+  foreignRatio: number,
+  maxItems: number
+): VOD[] {
+  const french = candidates
+    .filter((vod) => normalizeLanguage(vod.language) === 'fr')
+    .sort((left, right) => right.__score - left.__score);
+
+  const foreign = candidates
+    .filter((vod) => normalizeLanguage(vod.language) !== 'fr')
+    .sort((left, right) => right.__score - left.__score);
+
+  const feed: ScoredVod[] = [];
+  let frenchIndex = 0;
+  let foreignIndex = 0;
+  let foreignAdded = 0;
+
+  while (feed.length < maxItems && (frenchIndex < french.length || foreignIndex < foreign.length)) {
+    const lastFour = feed.slice(-4);
+    const frenchStreak = lastFour.every((vod) => normalizeLanguage(vod.language) === 'fr');
+    const foreignStreak =
+      lastFour.length > 0 && lastFour.every((vod) => normalizeLanguage(vod.language) !== 'fr');
+    const targetForeignCount = Math.floor((feed.length + 1) * foreignRatio);
+
+    const shouldPickForeign =
+      !foreignStreak &&
+      foreignIndex < foreign.length &&
+      (foreignAdded < targetForeignCount || frenchIndex >= french.length || frenchStreak);
+
+    if (shouldPickForeign) {
+      feed.push(foreign[foreignIndex++]);
+      foreignAdded++;
+      continue;
+    }
+
+    if (frenchIndex < french.length) {
+      feed.push(french[frenchIndex++]);
+      continue;
+    }
+
+    if (foreignIndex < foreign.length) {
+      feed.push(foreign[foreignIndex++]);
+      foreignAdded++;
+    }
+  }
+
+  return feed.map((vod) => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { __score, ...cleanVod } = vod;
+    return cleanVod as VOD;
+  });
 }
 
 async function isValidQuality(url: string): Promise<{ codec: string } | null> {
@@ -213,7 +452,7 @@ export async function fetchUserVods(username: string): Promise<VOD[]> {
   const resp = await fetch('https://gql.twitch.tv/gql', {
     method: 'POST',
     body: JSON.stringify({
-      query: `query { user(login: "${username}") { videos(first: 30) { edges { node { id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, game { name } } } } } }`,
+      query: `query { user(login: "${username}") { videos(first: 30) { edges { node { id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, language, game { name }, owner { login, displayName, profileImageURL(width: 50) } } } } } }`,
     }),
     headers: {
       'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
@@ -249,56 +488,89 @@ export async function searchChannels(query: string): Promise<UserInfo[]> {
   return data.data.searchFor.channels.edges.map((e: any) => e.item).filter((n: any) => n?.login);
 }
 
-export async function fetchTrendingVODs(): Promise<VOD[]> {
-  const cacheKey = `trending_vods`;
+export async function fetchTrendingVODs(
+  history: Record<string, HistoryEntry> = {},
+  subs: SubEntry[] = []
+): Promise<VOD[]> {
+  const historyEntries = Object.values(history)
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, 35);
+
+  const profileFingerprint = createSimpleHash(
+    JSON.stringify({
+      history: historyEntries.map((entry) => ({
+        vodId: entry.vodId,
+        timecode: Math.floor(entry.timecode),
+        duration: Math.floor(entry.duration),
+        updatedAt: Math.floor(entry.updatedAt / (1000 * 60 * 10)),
+      })),
+      subs: subs
+        .map((sub) => sub.login.toLowerCase())
+        .sort((left, right) => left.localeCompare(right)),
+    })
+  );
+
+  const cacheKey = `trending_vods_${profileFingerprint}`;
   const cached = cache.get<VOD[]>(cacheKey);
   if (cached) return cached;
 
-  const fetchVods = async (langs?: string[]) => {
-    const langFilter = langs ? `, languages: ${JSON.stringify(langs)}` : '';
-    const resp = await fetch('https://gql.twitch.tv/gql', {
-      method: 'POST',
-      body: JSON.stringify({
-        query: `query { game(name: "Just Chatting") { videos(first: 20, sort: VIEWS${langFilter}) { edges { node { id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, game { name }, owner { login, displayName, profileImageURL(width: 50) } } } } } }`,
-      }),
-      headers: {
-        'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-    });
-    if (!resp.ok) return [];
-    const data: any = await resp.json();
-    if (!data?.data?.game?.videos) return [];
-    return data.data.game.videos.edges.map((e: any) => e.node);
-  };
-
   try {
-    const [frVods, globalVods] = await Promise.all([fetchVods(['fr']), fetchVods()]);
+    const watchedVodIds = historyEntries.map((entry) => entry.vodId);
+    const watchedVods = await fetchWatchedVodMetadata(watchedVodIds);
+    const profile = buildPreferenceProfile(history, watchedVods, subs);
+    const subsSet = new Set(subs.map((sub) => sub.login.toLowerCase()));
 
-    const seenIds = new Set<string>();
-    const combined: VOD[] = [];
+    const topGames = [...profile.gameScores.entries()]
+      .sort((left, right) => right[1] - left[1])
+      .map(([gameName]) => gameName)
+      .slice(0, 3);
 
-    // Prioritize French VODs
-    for (const vod of frVods) {
-      if (!seenIds.has(vod.id)) {
-        combined.push(vod);
-        seenIds.add(vod.id);
-      }
+    if (!topGames.includes('Just Chatting')) {
+      topGames.push('Just Chatting');
     }
 
-    // Add some global VODs
-    let globalAdded = 0;
-    for (const vod of globalVods) {
-      if (!seenIds.has(vod.id) && globalAdded < 10) {
-        combined.push(vod);
-        seenIds.add(vod.id);
-        globalAdded++;
-      }
+    const uniqueTopGames = [...new Set(topGames)].slice(0, 4);
+
+    const gameFetches = uniqueTopGames.flatMap((gameName) => [
+      fetchGameVods(gameName, ['fr'], 18),
+      fetchGameVods(gameName, undefined, 18),
+    ]);
+
+    const subFetches = subs.slice(0, 10).map((sub) => fetchUserVods(sub.login));
+
+    const [gamePools, subPools] = await Promise.all([
+      Promise.all(gameFetches),
+      Promise.all(subFetches).catch(() => []),
+    ]);
+
+    const allCandidates = [...gamePools.flat(), ...subPools.flat()].filter(Boolean);
+    const deduped = new Map<string, VOD>();
+
+    for (const candidate of allCandidates) {
+      if (!candidate?.id || deduped.has(candidate.id)) continue;
+      deduped.set(candidate.id, candidate);
     }
 
-    cache.set(cacheKey, combined, 1800); // 30 minutes cache
-    return combined;
+    const scored: ScoredVod[] = [...deduped.values()]
+      .map((vod) => ({
+        ...vod,
+        __score: scoreCandidateVod(vod, profile, subsSet),
+      }))
+      .sort((left, right) => right.__score - left.__score)
+      .slice(0, 120);
+
+    const languageEntries = [...profile.languageScores.entries()];
+    const totalLangWeight = languageEntries.reduce((sum, [, value]) => sum + value, 0);
+    const foreignWeight = languageEntries
+      .filter(([language]) => language !== 'fr')
+      .reduce((sum, [, value]) => sum + value, 0);
+    const foreignAffinity = totalLangWeight > 0 ? foreignWeight / totalLangWeight : 0;
+
+    const foreignRatio = clamp(0.16 + foreignAffinity * 0.35, 0.16, 0.4);
+    const personalizedFeed = interleaveLocalizedFeed(scored, foreignRatio, 40);
+
+    cache.set(cacheKey, personalizedFeed, 900); // 15 minutes cache per profile
+    return personalizedFeed;
   } catch (err) {
     console.error('Error fetching trending VODs:', err);
     throw new Error('Failed to fetch trending VODs');

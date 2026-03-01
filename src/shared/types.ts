@@ -18,7 +18,13 @@ export interface VOD {
   previewThumbnailURL: string;
   createdAt: string;
   viewCount: number;
+  language?: string;
   game: { name: string } | null;
+  owner?: {
+    login: string;
+    displayName: string;
+    profileImageURL: string;
+  };
 }
 
 export interface ServerInfo {

@@ -155,7 +155,7 @@ router.get('/search/global', async (req, res) => {
 
 router.get('/trends', async (req, res) => {
   try {
-    const results = await fetchTrendingVODs();
+    const results = await fetchTrendingVODs(getAllHistory(), getSubs());
     res.json(results);
   } catch (err: any) {
     console.error(err);
