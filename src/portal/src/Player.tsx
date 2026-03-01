@@ -5,6 +5,7 @@ import { ChatMessage, VideoMarker } from '../../shared/types';
 export default function Player() {
   const [searchParams] = useSearchParams();
   const vodId = searchParams.get('vod');
+  const liveId = searchParams.get('live');
   const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
@@ -238,22 +239,24 @@ export default function Player() {
               textOverflow: 'ellipsis',
             }}
           >
-            {vodId ? `VOD: ${vodId}` : 'Error'}
+            {vodId ? `VOD: ${vodId}` : liveId ? `Live: ${liveId}` : 'Error'}
           </h2>
 
-          <button
-            onClick={() => setShowMarkers(!showMarkers)}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#9146ff',
-              cursor: 'pointer',
-              fontWeight: 'bold',
-              marginRight: '10px',
-            }}
-          >
-            Chapters ({markers.length})
-          </button>
+          {!liveId && (
+            <button
+              onClick={() => setShowMarkers(!showMarkers)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#9146ff',
+                cursor: 'pointer',
+                fontWeight: 'bold',
+                marginRight: '10px',
+              }}
+            >
+              Chapters ({markers.length})
+            </button>
+          )}
           <button
             onClick={() => setShowChat(!showChat)}
             style={{
@@ -277,16 +280,26 @@ export default function Player() {
             alignItems: 'center',
           }}
         >
-          <video
-            ref={videoRef}
-            controls
-            playsInline
-            style={{ width: '100%', height: '100%', outline: 'none' }}
-          >
-            <track kind="captions" />
-          </video>
+          {liveId ? (
+            <iframe
+              src={`https://player.twitch.tv/?channel=${liveId}&parent=localhost&parent=127.0.0.1`}
+              height="100%"
+              width="100%"
+              allowFullScreen
+              style={{ border: 'none' }}
+            />
+          ) : (
+            <video
+              ref={videoRef}
+              controls
+              playsInline
+              style={{ width: '100%', height: '100%', outline: 'none' }}
+            >
+              <track kind="captions" />
+            </video>
+          )}
 
-          {showMarkers && markers.length > 0 && (
+          {!liveId && showMarkers && markers.length > 0 && (
             <div
               style={{
                 position: 'absolute',
@@ -332,30 +345,32 @@ export default function Player() {
             </div>
           )}
 
-          <button
-            onClick={() => setShowSettings(!showSettings)}
-            style={{
-              position: 'absolute',
-              bottom: '60px',
-              right: '20px',
-              backgroundColor: 'rgba(0,0,0,0.6)',
-              border: 'none',
-              borderRadius: '50%',
-              width: '40px',
-              height: '40px',
-              color: 'white',
-              cursor: 'pointer',
-              zIndex: 25,
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              fontSize: '20px',
-            }}
-          >
-            ⚙️
-          </button>
+          {!liveId && (
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              style={{
+                position: 'absolute',
+                bottom: '60px',
+                right: '20px',
+                backgroundColor: 'rgba(0,0,0,0.6)',
+                border: 'none',
+                borderRadius: '50%',
+                width: '40px',
+                height: '40px',
+                color: 'white',
+                cursor: 'pointer',
+                zIndex: 25,
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                fontSize: '20px',
+              }}
+            >
+              ⚙️
+            </button>
+          )}
 
-          {showSettings && (
+          {!liveId && showSettings && (
             <div
               style={{
                 position: 'absolute',
@@ -446,42 +461,53 @@ export default function Player() {
             flexDirection: 'column',
           }}
         >
-          <div
-            style={{
-              padding: '15px',
-              borderBottom: '1px solid #3a3a3d',
-              fontWeight: 'bold',
-              color: '#efeff1',
-              fontSize: '0.9rem',
-            }}
-          >
-            STREAM CHAT REPLAY
-          </div>
-          <div
-            ref={chatScrollRef}
-            style={{ flex: 1, overflowY: 'auto', padding: '10px' }}
-            className="chat-container"
-          >
-            {visibleChat.map((msg) => (
+          {liveId ? (
+            <iframe
+              src={`https://www.twitch.tv/embed/${liveId}/chat?parent=localhost&parent=127.0.0.1&darkpopout`}
+              height="100%"
+              width="100%"
+              style={{ border: 'none' }}
+            />
+          ) : (
+            <>
               <div
-                key={msg.id}
-                style={{ marginBottom: '8px', fontSize: '0.85rem', lineHeight: '1.4' }}
+                style={{
+                  padding: '15px',
+                  borderBottom: '1px solid #3a3a3d',
+                  fontWeight: 'bold',
+                  color: '#efeff1',
+                  fontSize: '0.9rem',
+                }}
               >
-                <span style={{ color: '#adadb8', marginRight: '8px', fontSize: '0.75rem' }}>
-                  {Math.floor(msg.contentOffsetSeconds / 3600)}:
-                  {Math.floor((msg.contentOffsetSeconds % 3600) / 60)
-                    .toString()
-                    .padStart(2, '0')}
-                </span>
-                <span style={{ fontWeight: 'bold', color: '#efeff1' }}>
-                  {msg.commenter?.displayName || 'Unknown'}:{' '}
-                </span>
-                <span style={{ color: '#efeff1' }}>
-                  {(msg as any).message?.fragments?.map((f: any) => f.text).join('')}
-                </span>
+                STREAM CHAT REPLAY
               </div>
-            ))}
-          </div>
+              <div
+                ref={chatScrollRef}
+                style={{ flex: 1, overflowY: 'auto', padding: '10px' }}
+                className="chat-container"
+              >
+                {visibleChat.map((msg) => (
+                  <div
+                    key={msg.id}
+                    style={{ marginBottom: '8px', fontSize: '0.85rem', lineHeight: '1.4' }}
+                  >
+                    <span style={{ color: '#adadb8', marginRight: '8px', fontSize: '0.75rem' }}>
+                      {Math.floor(msg.contentOffsetSeconds / 3600)}:
+                      {Math.floor((msg.contentOffsetSeconds % 3600) / 60)
+                        .toString()
+                        .padStart(2, '0')}
+                    </span>
+                    <span style={{ fontWeight: 'bold', color: '#efeff1' }}>
+                      {msg.commenter?.displayName || 'Unknown'}:{' '}
+                    </span>
+                    <span style={{ color: '#efeff1' }}>
+                      {(msg as any).message?.fragments?.map((f: any) => f.text).join('')}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

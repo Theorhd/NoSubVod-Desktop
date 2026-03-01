@@ -1,5 +1,12 @@
 import NodeCache from 'node-cache';
-import { HistoryEntry, SubEntry, UserInfo, VOD } from '../../shared/types';
+import {
+  HistoryEntry,
+  LiveStream,
+  LiveStreamsPage,
+  SubEntry,
+  UserInfo,
+  VOD,
+} from '../../shared/types';
 
 // TTL of 1 hour for users and VODs
 const cache = new NodeCache({ stdTTL: 3600 });
@@ -601,7 +608,7 @@ export async function searchGlobalContent(query: string): Promise<any> {
   const resp = await fetch('https://gql.twitch.tv/gql', {
     method: 'POST',
     body: JSON.stringify({
-      query: `query { searchFor(userQuery: "${query}", platform: "web") { channels { edges { item { ... on User { id, login, displayName, profileImageURL(width: 300), __typename } } } }, games { edges { item { ... on Game { id, name, boxArtURL(width: 150, height: 200), __typename } } } } } }`,
+      query: `query { searchFor(userQuery: "${query}", platform: "web") { channels { edges { item { ... on User { id, login, displayName, profileImageURL(width: 300), stream { id title viewersCount previewImageURL(width: 640, height: 360) }, __typename } } } }, games { edges { item { ... on Game { id, name, boxArtURL(width: 150, height: 200), __typename } } } } } }`,
     }),
     headers: {
       'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
@@ -660,4 +667,85 @@ export async function fetchVideoMarkers(vodId: string): Promise<any[]> {
   if (!data?.data?.video?.markers) return [];
 
   return data.data.video.markers;
+}
+
+export async function fetchLiveStreams(
+  first: number = 24,
+  after?: string
+): Promise<LiveStreamsPage> {
+  const safeFirst = clamp(Math.floor(first || 24), 8, 48);
+  const safeAfter = (after || '').trim();
+  const cacheKey = `live_streams_${safeFirst}_${safeAfter || 'first'}`;
+  const cached = cache.get<LiveStreamsPage>(cacheKey);
+  if (cached) return cached;
+
+  const paginationArgs = safeAfter ? `, after: ${JSON.stringify(safeAfter)}` : '';
+  const resp = await fetch('https://gql.twitch.tv/gql', {
+    method: 'POST',
+    body: JSON.stringify({
+      query: `query { streams(first: ${safeFirst}${paginationArgs}) { edges { cursor node { id title type viewersCount previewImageURL(width: 640, height: 360) createdAt language game { id name boxArtURL(width: 110, height: 147) } broadcaster { id login displayName profileImageURL(width: 70) } } } pageInfo { hasNextPage } } }`,
+    }),
+    headers: {
+      'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!resp.ok) {
+    throw new Error('Twitch API request failed: ' + resp.status);
+  }
+
+  const data: any = await resp.json();
+  const edges = data?.data?.streams?.edges;
+  if (!Array.isArray(edges)) {
+    return {
+      items: [],
+      nextCursor: null,
+      hasMore: false,
+    };
+  }
+
+  const items: LiveStream[] = edges
+    .map((edge: any) => {
+      const node = edge?.node;
+      if (!node?.id || !node?.broadcaster?.login) {
+        return null;
+      }
+
+      return {
+        id: String(node.id),
+        title: node.title || 'Live stream',
+        previewImageURL: node.previewImageURL || '',
+        viewerCount: Number(node.viewersCount) || 0,
+        language: node.language || '',
+        startedAt: node.createdAt || new Date().toISOString(),
+        broadcaster: {
+          id: String(node.broadcaster.id || ''),
+          login: node.broadcaster.login,
+          displayName: node.broadcaster.displayName || node.broadcaster.login,
+          profileImageURL: node.broadcaster.profileImageURL || '',
+        },
+        game: node.game
+          ? {
+              id: node.game.id,
+              name: node.game.name,
+              boxArtURL: node.game.boxArtURL,
+            }
+          : null,
+      } as LiveStream;
+    })
+    .filter(Boolean) as LiveStream[];
+
+  const lastCursor = (edges.at(-1)?.cursor as string | undefined) || null;
+  const hasNextPage = Boolean(data?.data?.streams?.pageInfo?.hasNextPage);
+
+  const payload: LiveStreamsPage = {
+    items,
+    nextCursor: hasNextPage ? lastCursor : null,
+    hasMore: hasNextPage && Boolean(lastCursor),
+  };
+
+  cache.set(cacheKey, payload, 25);
+  return payload;
 }

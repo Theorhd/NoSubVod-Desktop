@@ -78,3 +78,29 @@ export interface WatchlistEntry {
 export interface ExperienceSettings {
   oneSync: boolean;
 }
+
+export interface LiveStream {
+  id: string;
+  title: string;
+  previewImageURL: string;
+  viewerCount: number;
+  language?: string;
+  startedAt: string;
+  broadcaster: {
+    id: string;
+    login: string;
+    displayName: string;
+    profileImageURL: string;
+  };
+  game: {
+    id?: string;
+    name: string;
+    boxArtURL?: string;
+  } | null;
+}
+
+export interface LiveStreamsPage {
+  items: LiveStream[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}

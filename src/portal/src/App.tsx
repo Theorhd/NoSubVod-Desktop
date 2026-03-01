@@ -5,15 +5,16 @@ import Channel from './Channel';
 import Player from './Player';
 import Trends from './Trends';
 import Search from './Search';
+import Live from './Live';
 import Settings from './Settings';
 import History from './History';
+import { TrendingUp, Home as HomeIcon, Search as SearchIcon, Radio } from 'lucide-react';
 
 const navItems = [
-  { path: '/trends', label: 'Trends', icon: '↗' },
-  { path: '/', label: 'Home', icon: '⌂' },
-  { path: '/search', label: 'Search', icon: '⌕' },
-  { path: '/history', label: 'History', icon: '◷' },
-  { path: '/settings', label: 'Settings', icon: '⚙' },
+  { path: '/trends', label: 'Trends', Icon: TrendingUp },
+  { path: '/', label: 'Home', Icon: HomeIcon },
+  { path: '/live', label: 'Live', Icon: Radio },
+  { path: '/search', label: 'Search', Icon: SearchIcon },
 ];
 
 function BottomNav() {
@@ -37,7 +38,9 @@ function BottomNav() {
             onClick={() => navigate(item.path)}
             type="button"
           >
-            <span className="nav-icon">{item.icon}</span>
+            <span className="nav-icon">
+              <item.Icon size={20} />
+            </span>
             <span className="nav-label">{item.label}</span>
           </button>
         );
@@ -54,6 +57,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/trends" element={<Trends />} />
+            <Route path="/live" element={<Live />} />
             <Route path="/search" element={<Search />} />
             <Route path="/history" element={<History />} />
             <Route path="/settings" element={<Settings />} />

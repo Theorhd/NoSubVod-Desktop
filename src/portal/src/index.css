@@ -54,7 +54,7 @@ input {
   inset: auto 0 0 0;
   height: 72px;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   border-top: 1px solid var(--border);
   backdrop-filter: blur(14px);
   background: rgba(12, 16, 31, 0.88);
@@ -453,6 +453,37 @@ h2 {
   margin-top: 6px;
   font-size: 0.78rem;
   color: var(--text-muted);
+}
+
+.live-intro-card {
+  margin-bottom: 14px;
+}
+
+.live-count {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.live-card {
+  position: relative;
+}
+
+.live-chip {
+  right: auto;
+  left: 8px;
+  background: rgba(255, 73, 73, 0.92);
+  border-color: rgba(255, 115, 115, 0.7);
+  color: #2b0a0a;
+  font-weight: 700;
+}
+
+.live-viewers {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.live-load-sentinel {
+  height: 1px;
 }
 
 .watchlist-card {

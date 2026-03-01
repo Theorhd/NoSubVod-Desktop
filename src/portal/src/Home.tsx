@@ -257,7 +257,37 @@ export default function Home() {
           )}
         </div>
 
-        <div className="section-head">
+        <h2>My Subs</h2>
+        <div className="sub-list" style={{ marginBottom: '24px' }}>
+          {subs.length === 0 ? (
+            <div className="empty-state">No subs yet. Click + to add one.</div>
+          ) : (
+            subs.map((sub) => (
+              <div key={sub.login} className="sub-item">
+                <button
+                  type="button"
+                  className="sub-link"
+                  aria-label={`Open ${sub.displayName} channel`}
+                  onClick={() => navigate(`/channel?user=${encodeURIComponent(sub.login)}`)}
+                >
+                  <img src={sub.profileImageURL} alt={sub.displayName} />
+                  <div className="name">{sub.displayName}</div>
+                </button>
+                <button
+                  type="button"
+                  className="delete-btn"
+                  onClick={(e) => {
+                    void handleDeleteSub(e, sub.login);
+                  }}
+                >
+                  &times;
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="section-head" style={{ marginTop: '0' }}>
           <h2>History</h2>
           <button type="button" className="ghost-btn" onClick={() => navigate('/history')}>
             View all history
@@ -334,36 +364,6 @@ export default function Home() {
             </div>
           </>
         )}
-
-        <h2>My Subs</h2>
-        <div className="sub-list">
-          {subs.length === 0 ? (
-            <div className="empty-state">No subs yet. Click + to add one.</div>
-          ) : (
-            subs.map((sub) => (
-              <div key={sub.login} className="sub-item">
-                <button
-                  type="button"
-                  className="sub-link"
-                  aria-label={`Open ${sub.displayName} channel`}
-                  onClick={() => navigate(`/channel?user=${encodeURIComponent(sub.login)}`)}
-                >
-                  <img src={sub.profileImageURL} alt={sub.displayName} />
-                  <div className="name">{sub.displayName}</div>
-                </button>
-                <button
-                  type="button"
-                  className="delete-btn"
-                  onClick={(e) => {
-                    void handleDeleteSub(e, sub.login);
-                  }}
-                >
-                  &times;
-                </button>
-              </div>
-            ))
-          )}
-        </div>
       </div>
 
       {showModal && (

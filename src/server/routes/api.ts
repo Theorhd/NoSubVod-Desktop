@@ -11,6 +11,7 @@ import {
   fetchVodsByIds,
   fetchVideoChat,
   fetchVideoMarkers,
+  fetchLiveStreams,
 } from '../services/twitch.service';
 import {
   getAllHistory,
@@ -174,6 +175,20 @@ router.get('/search/category-vods', async (req, res) => {
 router.get('/trends', async (req, res) => {
   try {
     const results = await fetchTrendingVODs(getAllHistory(), getSubs());
+    res.json(results);
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/live', async (req, res) => {
+  try {
+    const requestedLimit = Number.parseInt((req.query.limit as string) || '', 10);
+    const limit = Number.isFinite(requestedLimit) ? Math.max(8, Math.min(requestedLimit, 48)) : 24;
+    const cursor = ((req.query.cursor as string) || '').trim();
+
+    const results = await fetchLiveStreams(limit, cursor || undefined);
     res.json(results);
   } catch (err: any) {
     console.error(err);

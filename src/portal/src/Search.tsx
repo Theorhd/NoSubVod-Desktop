@@ -1,6 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { UserInfo, VOD } from '../../shared/types';
+import { UserInfo } from '../../shared/types';
+
+function formatViewers(value: number): string {
+  if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M viewers`;
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}K viewers`;
+  return `${value} viewers`;
+}
 
 type SearchGame = {
   id: string;
@@ -11,16 +17,15 @@ type SearchGame = {
 
 type SearchUser = UserInfo & {
   __typename: 'User';
+  stream?: {
+    id: string;
+    title: string;
+    viewersCount: number;
+    previewImageURL: string;
+  } | null;
 };
 
 type SearchResult = SearchGame | SearchUser;
-
-function formatViews(views: number): string {
-  if (!views) return '0 views';
-  if (views >= 1000000) return `${(views / 1000000).toFixed(1)}M views`;
-  if (views >= 1000) return `${(views / 1000).toFixed(1)}K views`;
-  return `${views} views`;
-}
 
 export default function Search() {
   const navigate = useNavigate();
@@ -31,55 +36,15 @@ export default function Search() {
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
 
-  const [selectedCategory, setSelectedCategory] = useState(searchParams.get('category') || '');
-  const [categoryVods, setCategoryVods] = useState<VOD[]>([]);
-  const [isCategoryLoading, setIsCategoryLoading] = useState(false);
-
   const channels = useMemo(
     () => results.filter((result): result is SearchUser => result.__typename === 'User'),
     [results]
   );
+  const liveStreams = useMemo(() => channels.filter((user) => user.stream != null), [channels]);
   const categories = useMemo(
     () => results.filter((result): result is SearchGame => result.__typename === 'Game'),
     [results]
   );
-
-  const fetchCategoryVods = async (categoryName: string) => {
-    const normalized = categoryName.trim();
-    if (!normalized) return;
-
-    setSelectedCategory(normalized);
-    setIsCategoryLoading(true);
-    try {
-      const res = await fetch(`/api/search/category-vods?name=${encodeURIComponent(normalized)}`);
-      if (!res.ok) {
-        throw new Error('Failed to fetch category VODs');
-      }
-      const data = (await res.json()) as VOD[];
-      setCategoryVods(data);
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        next.set('category', normalized);
-        return next;
-      });
-    } catch (error) {
-      console.error(error);
-      setCategoryVods([]);
-    } finally {
-      setIsCategoryLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    const category = searchParams.get('category') || '';
-    if (!category) {
-      setSelectedCategory('');
-      setCategoryVods([]);
-      return;
-    }
-
-    void fetchCategoryVods(category);
-  }, []);
 
   const handleSearch = async (e: React.SyntheticEvent) => {
     e.preventDefault();
@@ -149,6 +114,67 @@ export default function Search() {
           <div className="empty-state">No results found.</div>
         )}
 
+        {liveStreams.length > 0 && (
+          <div className="block-section">
+            <h2>Live Streams</h2>
+            <div className="vod-grid">
+              {liveStreams.map((user) => (
+                <button
+                  key={user.id}
+                  type="button"
+                  onClick={() => navigate(`/player?live=${encodeURIComponent(user.login)}`)}
+                  className="vod-card live-card"
+                >
+                  <div className="vod-thumb-wrap">
+                    <img
+                      src={
+                        user.stream?.previewImageURL ||
+                        'https://static-cdn.jtvnw.net/ttv-static/404_preview-320x180.jpg'
+                      }
+                      alt={user.stream?.title}
+                      className="vod-thumb"
+                    />
+                    <div className="vod-chip live-chip">LIVE</div>
+                  </div>
+                  <div className="vod-body">
+                    <div className="vod-owner-row">
+                      {user.profileImageURL && (
+                        <img src={user.profileImageURL} alt={user.displayName} />
+                      )}
+                      <span>{user.displayName}</span>
+                    </div>
+                    <h3 title={user.stream?.title}>{user.stream?.title}</h3>
+                    <div className="vod-meta-row">
+                      <span className="live-viewers">
+                        {formatViewers(user.stream?.viewersCount || 0)}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {categories.length > 0 && (
+          <div className="block-section">
+            <h2>Categories</h2>
+            <div className="categories-grid">
+              {categories.map((game) => (
+                <button
+                  key={game.id}
+                  type="button"
+                  className="category-card"
+                  onClick={() => navigate(`/channel?category=${encodeURIComponent(game.name)}`)}
+                >
+                  <img src={game.boxArtURL} alt={game.name} />
+                  <span>{game.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {channels.length > 0 && (
           <div className="block-section">
             <h2>Channels</h2>
@@ -166,74 +192,6 @@ export default function Search() {
                 </div>
               ))}
             </div>
-          </div>
-        )}
-
-        {categories.length > 0 && (
-          <div className="block-section">
-            <h2>Categories</h2>
-            <div className="categories-grid">
-              {categories.map((game) => (
-                <button
-                  key={game.id}
-                  type="button"
-                  className={`category-card ${selectedCategory === game.name ? 'active' : ''}`}
-                  onClick={() => {
-                    void fetchCategoryVods(game.name);
-                  }}
-                >
-                  <img src={game.boxArtURL} alt={game.name} />
-                  <span>{game.name}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {selectedCategory && (
-          <div className="block-section">
-            <div className="section-head">
-              <h2>{selectedCategory} VODs</h2>
-              <button
-                type="button"
-                className="ghost-btn"
-                onClick={() =>
-                  navigate(`/channel?category=${encodeURIComponent(selectedCategory)}`)
-                }
-              >
-                Open dedicated page
-              </button>
-            </div>
-
-            {isCategoryLoading && <div className="status-line">Loading category VODs...</div>}
-
-            {!isCategoryLoading && categoryVods.length === 0 && (
-              <div className="empty-state">No VODs found for this category.</div>
-            )}
-
-            {!isCategoryLoading && categoryVods.length > 0 && (
-              <div className="vod-grid">
-                {categoryVods.map((vod) => (
-                  <button
-                    key={vod.id}
-                    type="button"
-                    className="vod-card"
-                    onClick={() => navigate(`/player?vod=${vod.id}`)}
-                  >
-                    <div className="vod-thumb-wrap">
-                      <img src={vod.previewThumbnailURL} alt={vod.title} className="vod-thumb" />
-                    </div>
-                    <div className="vod-body">
-                      <h3 title={vod.title}>{vod.title}</h3>
-                      <div className="vod-meta-row">
-                        <span>{vod.owner?.displayName || 'Unknown stream'}</span>
-                        <span>{formatViews(vod.viewCount)}</span>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
         )}
       </div>
