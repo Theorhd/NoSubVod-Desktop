@@ -488,6 +488,35 @@ export async function generateMasterPlaylist(vodId: string, host: string): Promi
   return fakePlaylist;
 }
 
+function validateVariantTargetUrl(targetUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(targetUrl);
+  } catch {
+    throw new Error('Invalid target URL');
+  }
+
+  // Only allow HTTPS URLs
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Only HTTPS URLs are allowed');
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+
+  // Allow only Twitch-related hostnames to prevent SSRF to arbitrary hosts.
+  const allowedHostSuffixes = ['.ttvnw.net', '.twitch.tv'];
+  const allowedExactHosts = ['ttvnw.net', 'twitch.tv'];
+
+  const isExactAllowed = allowedExactHosts.includes(hostname);
+  const hasAllowedSuffix = allowedHostSuffixes.some((suffix) => hostname.endsWith(suffix));
+
+  if (!isExactAllowed && !hasAllowedSuffix) {
+    throw new Error('Disallowed target host');
+  }
+
+  return parsed.toString();
+}
+
 export async function generateLiveMasterPlaylist(
   channelLogin: string,
   host: string
@@ -517,8 +546,9 @@ export async function generateLiveMasterPlaylist(
 }
 
 export async function proxyVariantPlaylist(targetUrl: string): Promise<string> {
-  console.log(`[NSV] Proxying variant playlist: ${targetUrl}`);
-  const response = await fetch(targetUrl);
+  const safeUrl = validateVariantTargetUrl(targetUrl);
+  console.log(`[NSV] Proxying variant playlist: ${safeUrl}`);
+  const response = await fetch(safeUrl);
   if (!response.ok) {
     throw new Error(`Failed to fetch variant playlist from Twitch (${response.status})`);
   }
@@ -526,7 +556,7 @@ export async function proxyVariantPlaylist(targetUrl: string): Promise<string> {
   let body = await response.text();
   body = body.replaceAll('-unmuted', '-muted');
 
-  const baseUrlMatch = /^(.*\/)/.exec(targetUrl);
+  const baseUrlMatch = /^(.*\/)/.exec(safeUrl);
   if (!baseUrlMatch) return body;
   const baseUrl = baseUrlMatch[1];
 
