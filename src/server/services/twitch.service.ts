@@ -1,4 +1,5 @@
 import NodeCache from 'node-cache';
+import { randomUUID } from 'node:crypto';
 import {
   HistoryEntry,
   LiveStatusMap,
@@ -399,7 +400,8 @@ function rewriteMasterWithProxy(master: string, host: string, sourceMasterUrl: s
         const absoluteUrl = /^https?:\/\//i.test(uri)
           ? uri
           : new URL(uri, sourceMasterUrl).toString();
-        const proxyUrl = `http://${host}/api/proxy/variant.m3u8?url=${encodeURIComponent(absoluteUrl)}`;
+        const proxyTargetId = registerVariantProxyTarget(absoluteUrl);
+        const proxyUrl = `http://${host}/api/proxy/variant.m3u8?id=${encodeURIComponent(proxyTargetId)}`;
         return `URI="${proxyUrl}"`;
       });
       continue;
@@ -409,7 +411,8 @@ function rewriteMasterWithProxy(master: string, host: string, sourceMasterUrl: s
       const absoluteUrl = /^https?:\/\//i.test(line)
         ? line
         : new URL(line, sourceMasterUrl).toString();
-      lines[i] = `http://${host}/api/proxy/variant.m3u8?url=${encodeURIComponent(absoluteUrl)}`;
+      const proxyTargetId = registerVariantProxyTarget(absoluteUrl);
+      lines[i] = `http://${host}/api/proxy/variant.m3u8?id=${encodeURIComponent(proxyTargetId)}`;
     }
   }
 
@@ -478,7 +481,8 @@ export async function generateMasterPlaylist(vodId: string, host: string): Promi
     if (valid) {
       const quality = resKey === 'chunked' ? `${resolutions[resKey].res.split('x')[1]}p` : resKey;
       const enabled = resKey === 'chunked' ? 'YES' : 'NO';
-      const proxyUrl = `http://${host}/api/proxy/variant.m3u8?url=${encodeURIComponent(streamUrl)}`;
+      const proxyTargetId = registerVariantProxyTarget(streamUrl);
+      const proxyUrl = `http://${host}/api/proxy/variant.m3u8?id=${encodeURIComponent(proxyTargetId)}`;
 
       fakePlaylist += `\n#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID="${quality}",NAME="${quality}",AUTOSELECT=${enabled},DEFAULT=${enabled}\n#EXT-X-STREAM-INF:BANDWIDTH=${startBandwidth},CODECS="${valid.codec},mp4a.40.2",RESOLUTION=${resolutions[resKey].res},VIDEO="${quality}",FRAME-RATE=${resolutions[resKey].fps}\n${proxyUrl}`;
       startBandwidth -= 100;
@@ -561,6 +565,29 @@ function validateVariantTargetUrl(targetUrl: string): string {
   return sanitizedUrl;
 }
 
+const VARIANT_PROXY_CACHE_TTL_SECONDS = 300;
+
+function registerVariantProxyTarget(targetUrl: string): string {
+  const sanitizedUrl = validateVariantTargetUrl(targetUrl);
+  const proxyTargetId = randomUUID();
+  cache.set(`variant_proxy_${proxyTargetId}`, sanitizedUrl, VARIANT_PROXY_CACHE_TTL_SECONDS);
+  return proxyTargetId;
+}
+
+function resolveVariantProxyTarget(proxyTargetId: string): string {
+  const normalizedId = (proxyTargetId || '').trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizedId)) {
+    throw new Error('Invalid variant proxy id');
+  }
+
+  const targetUrl = cache.get<string>(`variant_proxy_${normalizedId}`);
+  if (!targetUrl) {
+    throw new Error('Variant proxy target not found or expired');
+  }
+
+  return targetUrl;
+}
+
 export async function generateLiveMasterPlaylist(
   channelLogin: string,
   host: string
@@ -589,8 +616,8 @@ export async function generateLiveMasterPlaylist(
   return rewriteMasterWithProxy(master, host, sourceMasterUrl);
 }
 
-export async function proxyVariantPlaylist(targetUrl: string): Promise<string> {
-  const safeUrl = validateVariantTargetUrl(targetUrl);
+export async function proxyVariantPlaylist(proxyTargetId: string): Promise<string> {
+  const safeUrl = resolveVariantProxyTarget(proxyTargetId);
   console.log(`[NSV] Proxying variant playlist: ${safeUrl}`);
   const response = await fetch(safeUrl);
   if (!response.ok) {

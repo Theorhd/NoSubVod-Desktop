@@ -312,13 +312,13 @@ router.get('/live/:login/master.m3u8', async (req, res) => {
 // Variant Playlist proxying
 router.get('/proxy/variant.m3u8', async (req, res) => {
   try {
-    const targetUrl = req.query.url as string;
-    if (!targetUrl) {
-      res.status(400).send('Missing url parameter');
+    const proxyId = req.query.id as string;
+    if (!proxyId) {
+      res.status(400).send('Missing id parameter');
       return;
     }
 
-    const modifiedVariant = await proxyVariantPlaylist(targetUrl);
+    const modifiedVariant = await proxyVariantPlaylist(proxyId);
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
     res.send(modifiedVariant);
   } catch (err: any) {
