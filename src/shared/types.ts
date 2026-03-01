@@ -5,6 +5,12 @@ export interface UserInfo {
   profileImageURL: string;
 }
 
+export interface SubEntry {
+  login: string;
+  displayName: string;
+  profileImageURL: string;
+}
+
 export interface VOD {
   id: string;
   title: string;
@@ -57,4 +63,8 @@ export interface WatchlistEntry {
   previewThumbnailURL: string;
   lengthSeconds: number;
   addedAt: number;
+}
+
+export interface ExperienceSettings {
+  oneSync: boolean;
 }

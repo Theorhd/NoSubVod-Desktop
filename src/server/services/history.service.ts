@@ -1,10 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { HistoryEntry, WatchlistEntry } from '../../shared/types';
+import { ExperienceSettings, HistoryEntry, SubEntry, WatchlistEntry } from '../../shared/types';
 
 let historyFilePath: string = '';
 let memoryHistory: Record<string, HistoryEntry> = {};
 let watchlist: WatchlistEntry[] = [];
+let subs: SubEntry[] = [];
+let settings: ExperienceSettings = {
+  oneSync: false,
+};
 
 export async function initHistoryService(userDataPath: string) {
   historyFilePath = path.join(userDataPath, 'history.json');
@@ -13,6 +17,10 @@ export async function initHistoryService(userDataPath: string) {
     const parsed = JSON.parse(data);
     memoryHistory = parsed.history || {};
     watchlist = parsed.watchlist || [];
+    subs = parsed.subs || [];
+    settings = {
+      oneSync: Boolean(parsed.settings?.oneSync),
+    };
   } catch (error: any) {
     if (error.code !== 'ENOENT') {
       console.error('Error reading history file:', error);
@@ -20,6 +28,10 @@ export async function initHistoryService(userDataPath: string) {
     // Initialize empty if file doesn't exist
     memoryHistory = {};
     watchlist = [];
+    subs = [];
+    settings = {
+      oneSync: false,
+    };
   }
 }
 
@@ -29,6 +41,8 @@ async function saveHistoryToFile() {
     const dataToSave = {
       history: memoryHistory,
       watchlist: watchlist,
+      subs: subs,
+      settings: settings,
     };
     await fs.writeFile(historyFilePath, JSON.stringify(dataToSave, null, 2), 'utf-8');
   } catch (error) {
@@ -74,4 +88,47 @@ export async function removeFromWatchlist(vodId: string) {
   watchlist = watchlist.filter((item) => item.vodId !== vodId);
   await saveHistoryToFile();
   return watchlist;
+}
+
+export function getSettings(): ExperienceSettings {
+  return settings;
+}
+
+export async function updateSettings(partial: Partial<ExperienceSettings>) {
+  settings = {
+    ...settings,
+    ...partial,
+  };
+
+  await saveHistoryToFile();
+  return settings;
+}
+
+export function getSubs(): SubEntry[] {
+  return subs;
+}
+
+export async function addSub(entry: SubEntry) {
+  const normalizedLogin = entry.login.trim().toLowerCase();
+  if (!normalizedLogin) {
+    return subs;
+  }
+
+  if (!subs.some((item) => item.login === normalizedLogin)) {
+    subs.push({
+      login: normalizedLogin,
+      displayName: entry.displayName,
+      profileImageURL: entry.profileImageURL,
+    });
+    await saveHistoryToFile();
+  }
+
+  return subs;
+}
+
+export async function removeSub(login: string) {
+  const normalizedLogin = login.trim().toLowerCase();
+  subs = subs.filter((item) => item.login !== normalizedLogin);
+  await saveHistoryToFile();
+  return subs;
 }

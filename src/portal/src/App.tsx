@@ -5,6 +5,7 @@ import Channel from './Channel';
 import Player from './Player';
 import Trends from './Trends';
 import Search from './Search';
+import Settings from './Settings';
 
 function BottomNav() {
   const location = useLocation();
@@ -35,6 +36,12 @@ function BottomNav() {
       >
         Search
       </button>
+      <button
+        className={`nav-btn ${location.pathname === '/settings' ? 'active' : ''}`}
+        onClick={() => navigate('/settings')}
+      >
+        Settings
+      </button>
     </div>
   );
 }
@@ -48,6 +55,7 @@ export default function App() {
             <Route path="/" element={<Home />} />
             <Route path="/trends" element={<Trends />} />
             <Route path="/search" element={<Search />} />
+            <Route path="/settings" element={<Settings />} />
             <Route path="/channel" element={<Channel />} />
             <Route path="/player" element={<Player />} />
           </Routes>

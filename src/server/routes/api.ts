@@ -17,6 +17,11 @@ import {
   getWatchlist,
   addToWatchlist,
   removeFromWatchlist,
+  getSettings,
+  updateSettings,
+  getSubs,
+  addSub,
+  removeSub,
 } from '../services/history.service';
 
 const router = Router();
@@ -59,6 +64,65 @@ router.delete('/watchlist/:vodId', async (req, res) => {
   try {
     const list = await removeFromWatchlist(req.params.vodId);
     res.json(list);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Experience Settings
+router.get('/settings', (req, res) => {
+  res.json(getSettings());
+});
+
+router.post('/settings', async (req, res) => {
+  try {
+    const { oneSync } = req.body;
+
+    if (oneSync !== undefined && typeof oneSync !== 'boolean') {
+      res.status(400).json({ error: 'oneSync must be a boolean' });
+      return;
+    }
+
+    const patch: { oneSync?: boolean } = {};
+    if (typeof oneSync === 'boolean') {
+      patch.oneSync = oneSync;
+    }
+
+    const settings = await updateSettings(patch);
+    res.json(settings);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Shared Subscriptions (for OneSync)
+router.get('/subs', (req, res) => {
+  res.json(getSubs());
+});
+
+router.post('/subs', async (req, res) => {
+  try {
+    const { login, displayName, profileImageURL } = req.body;
+    if (!login || !displayName || !profileImageURL) {
+      res.status(400).json({ error: 'Invalid sub payload' });
+      return;
+    }
+
+    const updatedSubs = await addSub({
+      login,
+      displayName,
+      profileImageURL,
+    });
+    res.json(updatedSubs);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/subs/:login', async (req, res) => {
+  try {
+    const updatedSubs = await removeSub(req.params.login);
+    res.json(updatedSubs);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

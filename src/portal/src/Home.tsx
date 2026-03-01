@@ -1,10 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ExperienceSettings, SubEntry } from '../../shared/types';
+
+const defaultSettings: ExperienceSettings = {
+  oneSync: false,
+};
 
 export default function Home() {
   const navigate = useNavigate();
-  const [subs, setSubs] = useState<any[]>([]);
+  const [subs, setSubs] = useState<SubEntry[]>([]);
   const [watchlist, setWatchlist] = useState<any[]>([]);
+  const [settings, setSettings] = useState<ExperienceSettings>(defaultSettings);
   const [showModal, setShowModal] = useState(false);
   const [streamerInput, setStreamerInput] = useState('');
   const [modalError, setModalError] = useState('');
@@ -14,18 +20,66 @@ export default function Home() {
   const [isSearchingChannels, setIsSearchingChannels] = useState(false);
 
   useEffect(() => {
-    const saved = localStorage.getItem('nsv_subs');
-    if (saved) setSubs(JSON.parse(saved));
+    const loadData = async () => {
+      try {
+        const [watchlistRes, settingsRes] = await Promise.all([
+          fetch('/api/watchlist'),
+          fetch('/api/settings'),
+        ]);
 
-    fetch('/api/watchlist')
-      .then((res) => res.json())
-      .then((data) => setWatchlist(data))
-      .catch((e) => console.error('Failed to fetch watchlist', e));
+        if (watchlistRes.ok) {
+          setWatchlist(await watchlistRes.json());
+        }
+
+        let oneSyncEnabled = false;
+        if (settingsRes.ok) {
+          const remoteSettings = (await settingsRes.json()) as ExperienceSettings;
+          oneSyncEnabled = Boolean(remoteSettings.oneSync);
+          setSettings({ oneSync: oneSyncEnabled });
+        }
+
+        if (oneSyncEnabled) {
+          const subsRes = await fetch('/api/subs');
+          if (subsRes.ok) {
+            setSubs((await subsRes.json()) as SubEntry[]);
+          }
+        } else {
+          const saved = localStorage.getItem('nsv_subs');
+          setSubs(saved ? (JSON.parse(saved) as SubEntry[]) : []);
+        }
+      } catch (e) {
+        console.error('Failed to fetch initial home data', e);
+      }
+    };
+
+    loadData();
   }, []);
 
-  const saveSubs = (newSubs: any[]) => {
+  const saveSubsLocal = (newSubs: SubEntry[]) => {
     setSubs(newSubs);
     localStorage.setItem('nsv_subs', JSON.stringify(newSubs));
+  };
+
+  const saveSubServer = async (entry: SubEntry) => {
+    const res = await fetch('/api/subs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry),
+    });
+
+    if (res.ok) {
+      setSubs((await res.json()) as SubEntry[]);
+    }
+  };
+
+  const removeSubServer = async (login: string) => {
+    const res = await fetch(`/api/subs/${encodeURIComponent(login)}`, {
+      method: 'DELETE',
+    });
+
+    if (res.ok) {
+      setSubs((await res.json()) as SubEntry[]);
+    }
   };
 
   const removeFromWatchlist = async (vodId: string) => {
@@ -73,14 +127,18 @@ export default function Home() {
       if (!res.ok) throw new Error('User not found');
       const user = await res.json();
 
-      saveSubs([
-        ...subs,
-        {
-          login: user.login,
-          displayName: user.displayName,
-          profileImageURL: user.profileImageURL,
-        },
-      ]);
+      const newSub: SubEntry = {
+        login: user.login,
+        displayName: user.displayName,
+        profileImageURL: user.profileImageURL,
+      };
+
+      if (settings.oneSync) {
+        await saveSubServer(newSub);
+      } else {
+        saveSubsLocal([...subs, newSub]);
+      }
+
       setShowModal(false);
       setStreamerInput('');
     } catch (err: any) {
@@ -90,11 +148,15 @@ export default function Home() {
     }
   };
 
-  const handleDeleteSub = (e: React.MouseEvent, login: string) => {
+  const handleDeleteSub = async (e: React.MouseEvent, login: string) => {
     e.preventDefault();
     e.stopPropagation();
     if (globalThis.confirm('Remove this streamer?')) {
-      saveSubs(subs.filter((s) => s.login !== login));
+      if (settings.oneSync) {
+        await removeSubServer(login);
+      } else {
+        saveSubsLocal(subs.filter((s) => s.login !== login));
+      }
     }
   };
 
@@ -102,25 +164,23 @@ export default function Home() {
     <>
       <div className="top-bar">
         <h1>
-          <button
-            className="logo-btn"
-            onClick={() => navigate('/')}
-            aria-label="Home"
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'inherit',
-              font: 'inherit',
-              padding: 0,
-              cursor: 'pointer',
-            }}
-          >
+          <button className="logo-btn" onClick={() => navigate('/')} aria-label="Home">
             NoSubVod
           </button>
         </h1>
-        <button className="add-btn" onClick={() => setShowModal(true)}>
-          +
-        </button>
+        <div className="top-actions">
+          <button className="add-btn" onClick={() => setShowModal(true)} aria-label="Add sub">
+            +
+          </button>
+          <button
+            className="settings-btn"
+            onClick={() => navigate('/settings')}
+            aria-label="Open settings"
+            title="Settings"
+          >
+            ⚙
+          </button>
+        </div>
       </div>
 
       <div className="container">
@@ -258,7 +318,7 @@ export default function Home() {
                 <button
                   type="button"
                   className="delete-btn"
-                  onClick={(e) => handleDeleteSub(e, sub.login)}
+                  onClick={(e) => void handleDeleteSub(e, sub.login)}
                 >
                   &times;
                 </button>
