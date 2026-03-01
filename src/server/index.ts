@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
+import rateLimit from 'express-rate-limit';
 import apiRoutes from './routes/api';
 import pino from 'pino';
 import { initHistoryService } from './services/history.service';
@@ -16,6 +17,13 @@ const logger = pino({
 
 export function startServer(port: number, isDev: boolean, userDataPath: string) {
   const app = express();
+
+  const spaFallbackLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
 
   // Initialize History Service asynchronously
   initHistoryService(userDataPath).catch((err) => {
@@ -38,7 +46,7 @@ export function startServer(port: number, isDev: boolean, userDataPath: string) 
     const portalPath = path.join(__dirname, 'portal');
     app.use(express.static(portalPath));
     // Catch-all route for SPA
-    app.get(/.*/, (req, res, next) => {
+    app.get(/.*/, spaFallbackLimiter, (req, res, next) => {
       if (req.path.startsWith('/api')) return next();
       res.sendFile(path.join(portalPath, 'index.html'));
     });
