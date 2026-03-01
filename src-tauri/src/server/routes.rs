@@ -368,7 +368,7 @@ async fn handle_get_history_vod(
 ) -> Response {
     match state.history.get_history_by_vod_id(&vod_id).await {
         Some(entry) => Json(entry).into_response(),
-        None => not_found("History not found"),
+        None => Json(serde_json::Value::Null).into_response(),
     }
 }
 

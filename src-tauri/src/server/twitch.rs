@@ -367,7 +367,7 @@ fn make_absolute_url(url: &str, base: &str) -> String {
 
 fn rewrite_master_with_proxy(
     master: &str,
-    host: &str,
+    _host: &str,
     source_master_url: &str,
     variant_cache: &TimedCache<String>,
 ) -> String {
@@ -396,7 +396,7 @@ fn rewrite_master_with_proxy(
                         let abs_url = make_absolute_url(uri, source_master_url);
                         let proxy_url = match register_variant_proxy_target(variant_cache, &abs_url) {
                             Ok(pid) => format!(
-                                "http://{host}/api/stream/variant.m3u8?id={}",
+                                "/api/stream/variant.m3u8?id={}",
                                 urlencoding_simple(&pid)
                             ),
                             Err(_) => abs_url.clone(),
@@ -417,7 +417,7 @@ fn rewrite_master_with_proxy(
             let abs_url = make_absolute_url(&line, source_master_url);
             if let Ok(proxy_id) = register_variant_proxy_target(variant_cache, &abs_url) {
                 lines[i] = format!(
-                    "http://{host}/api/stream/variant.m3u8?id={}",
+                    "/api/stream/variant.m3u8?id={}",
                     urlencoding_simple(&proxy_id)
                 );
             }
@@ -1225,7 +1225,7 @@ impl TwitchService {
     pub async fn generate_master_playlist(
         &self,
         vod_id: &str,
-        host: &str,
+        _host: &str,
     ) -> Result<String, String> {
         let safe_vod_id = gql_escape(vod_id.trim());
         let vod_id_re = regex::Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap();
@@ -1305,7 +1305,7 @@ impl TwitchService {
                     Err(_) => continue,
                 };
                 let proxy_url = format!(
-                    "http://{host}/api/stream/variant.m3u8?id={}",
+                    "/api/stream/variant.m3u8?id={}",
                     urlencoding_simple(&proxy_id)
                 );
 
@@ -1322,7 +1322,7 @@ impl TwitchService {
     pub async fn generate_live_master_playlist(
         &self,
         channel_login: &str,
-        host: &str,
+        _host: &str,
     ) -> Result<String, String> {
         let token = self.fetch_live_playback_token(channel_login).await?;
         let random_p = rand_u32() % 1_000_000;
@@ -1351,7 +1351,7 @@ impl TwitchService {
         let master = resp.text().await.map_err(|e| e.to_string())?;
         Ok(rewrite_master_with_proxy(
             &master,
-            host,
+            _host,
             &source_url,
             &self.variant_cache,
         ))
