@@ -42,7 +42,10 @@ function gqlEscape(value: string): string {
 
 function createSimpleHash(value: string): string {
   let hash = 0;
-  for (let index = 0; index < value.length; index++) {
+  // Limit the number of iterations to avoid excessive work on very large inputs.
+  const maxLength = 10000;
+  const length = Math.min(value.length, maxLength);
+  for (let index = 0; index < length; index++) {
     hash = (hash << 5) - hash + (value.codePointAt(index) || 0);
     hash = Math.trunc(hash);
   }
