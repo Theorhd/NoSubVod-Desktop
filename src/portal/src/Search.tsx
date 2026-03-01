@@ -114,6 +114,25 @@ export default function Search() {
           <div className="empty-state">No results found.</div>
         )}
 
+        {categories.length > 0 && (
+          <div className="block-section">
+            <h2>Categories</h2>
+            <div className="categories-grid">
+              {categories.map((game) => (
+                <button
+                  key={game.id}
+                  type="button"
+                  className="category-card"
+                  onClick={() => navigate(`/channel?category=${encodeURIComponent(game.name)}`)}
+                >
+                  <img src={game.boxArtURL} alt={game.name} />
+                  <span>{game.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {liveStreams.length > 0 && (
           <div className="block-section">
             <h2>Live Streams</h2>
@@ -150,25 +169,6 @@ export default function Search() {
                       </span>
                     </div>
                   </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {categories.length > 0 && (
-          <div className="block-section">
-            <h2>Categories</h2>
-            <div className="categories-grid">
-              {categories.map((game) => (
-                <button
-                  key={game.id}
-                  type="button"
-                  className="category-card"
-                  onClick={() => navigate(`/channel?category=${encodeURIComponent(game.name)}`)}
-                >
-                  <img src={game.boxArtURL} alt={game.name} />
-                  <span>{game.name}</span>
                 </button>
               ))}
             </div>

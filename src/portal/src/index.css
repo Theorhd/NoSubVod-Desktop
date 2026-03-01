@@ -222,7 +222,13 @@ input {
   background: var(--bg-elevated);
   color: var(--text);
   padding: 11px 12px;
+  font-size: 16px;
   outline: none;
+}
+
+select,
+textarea {
+  font-size: 16px;
 }
 
 input:focus {
@@ -321,6 +327,33 @@ h2 {
   border-radius: 50%;
   object-fit: cover;
   background: #090d19;
+}
+
+.sub-avatar-wrap {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 46px;
+}
+
+.sub-avatar-wrap img {
+  width: 100%;
+  height: 100%;
+}
+
+.sub-live-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  background: rgba(255, 73, 73, 0.95);
+  color: #2b0a0a;
+  border: 1px solid rgba(255, 120, 120, 0.85);
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1;
+  padding: 3px 6px;
+  letter-spacing: 0.02em;
 }
 
 .sub-item .name {

@@ -104,3 +104,5 @@ export interface LiveStreamsPage {
   nextCursor: string | null;
   hasMore: boolean;
 }
+
+export type LiveStatusMap = Record<string, LiveStream>;

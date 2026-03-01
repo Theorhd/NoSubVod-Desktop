@@ -1,8 +1,11 @@
 import { Router } from 'express';
 import {
   generateMasterPlaylist,
+  generateLiveMasterPlaylist,
   proxyVariantPlaylist,
   fetchUserInfo,
+  fetchUserLiveStream,
+  fetchLiveStatusByLogins,
   fetchUserVods,
   searchChannels,
   fetchTrendingVODs,
@@ -196,6 +199,27 @@ router.get('/live', async (req, res) => {
   }
 });
 
+router.get('/live/status', async (req, res) => {
+  try {
+    const rawLogins = ((req.query.logins as string) || '').trim();
+    if (!rawLogins) {
+      res.json({});
+      return;
+    }
+
+    const logins = rawLogins
+      .split(',')
+      .map((login) => login.trim().toLowerCase())
+      .filter(Boolean);
+
+    const result = await fetchLiveStatusByLogins(logins);
+    res.json(result);
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // History
 router.get('/history', (req, res) => {
   res.json(getAllHistory());
@@ -267,6 +291,24 @@ router.get('/vod/:vodId/master.m3u8', async (req, res) => {
   }
 });
 
+router.get('/live/:login/master.m3u8', async (req, res) => {
+  try {
+    const login = (req.params.login || '').trim().toLowerCase();
+    if (!login) {
+      res.status(400).send('Missing channel login');
+      return;
+    }
+
+    const host = req.get('host') || 'localhost';
+    const m3u8 = await generateLiveMasterPlaylist(login, host);
+    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    res.send(m3u8);
+  } catch (err: any) {
+    console.error('Error generating live master playlist:', err);
+    res.status(500).send('Failed to generate live playlist');
+  }
+});
+
 // Variant Playlist proxying
 router.get('/proxy/variant.m3u8', async (req, res) => {
   try {
@@ -301,6 +343,16 @@ router.get('/user/:username/vods', async (req, res) => {
   try {
     const vods = await fetchUserVods(req.params.username);
     res.json(vods);
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/user/:username/live', async (req, res) => {
+  try {
+    const stream = await fetchUserLiveStream(req.params.username);
+    res.json(stream);
   } catch (err: any) {
     console.error(err);
     res.status(500).json({ error: err.message });

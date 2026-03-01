@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ExperienceSettings,
   HistoryVodEntry,
+  LiveStatusMap,
   SubEntry,
   UserInfo,
   WatchlistEntry,
@@ -23,6 +24,7 @@ export default function Home() {
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
   const [historyPreview, setHistoryPreview] = useState<HistoryVodEntry[]>([]);
   const [settings, setSettings] = useState<ExperienceSettings>(defaultSettings);
+  const [liveStatus, setLiveStatus] = useState<LiveStatusMap>({});
 
   const [showModal, setShowModal] = useState(false);
   const [streamerInput, setStreamerInput] = useState('');
@@ -73,6 +75,31 @@ export default function Home() {
 
     void loadData();
   }, []);
+
+  useEffect(() => {
+    const loadLiveStatus = async () => {
+      if (subs.length === 0) {
+        setLiveStatus({});
+        return;
+      }
+
+      try {
+        const logins = subs.map((sub) => sub.login.toLowerCase()).join(',');
+        const res = await fetch(`/api/live/status?logins=${encodeURIComponent(logins)}`);
+        if (!res.ok) {
+          setLiveStatus({});
+          return;
+        }
+
+        setLiveStatus((await res.json()) as LiveStatusMap);
+      } catch (error) {
+        console.error('Failed to fetch live status for subs', error);
+        setLiveStatus({});
+      }
+    };
+
+    void loadLiveStatus();
+  }, [subs]);
 
   const saveSubsLocal = (newSubs: SubEntry[]) => {
     setSubs(newSubs);
@@ -270,7 +297,12 @@ export default function Home() {
                   aria-label={`Open ${sub.displayName} channel`}
                   onClick={() => navigate(`/channel?user=${encodeURIComponent(sub.login)}`)}
                 >
-                  <img src={sub.profileImageURL} alt={sub.displayName} />
+                  <div className="sub-avatar-wrap">
+                    <img src={sub.profileImageURL} alt={sub.displayName} />
+                    {Boolean(liveStatus[sub.login.toLowerCase()]) && (
+                      <span className="sub-live-badge">LIVE</span>
+                    )}
+                  </div>
                   <div className="name">{sub.displayName}</div>
                 </button>
                 <button

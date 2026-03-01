@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { HistoryEntry, VOD } from '../../shared/types';
+import { HistoryEntry, LiveStream, VOD } from '../../shared/types';
 
 function formatTime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -16,6 +16,12 @@ function formatViews(views: number): string {
   return `${views} views`;
 }
 
+function formatViewers(viewers: number): string {
+  if (viewers >= 1000000) return `${(viewers / 1000000).toFixed(1)}M viewers`;
+  if (viewers >= 1000) return `${(viewers / 1000).toFixed(1)}K viewers`;
+  return `${viewers} viewers`;
+}
+
 export default function Channel() {
   const [searchParams] = useSearchParams();
   const user = searchParams.get('user');
@@ -23,6 +29,7 @@ export default function Channel() {
   const navigate = useNavigate();
 
   const [vods, setVods] = useState<VOD[]>([]);
+  const [liveStream, setLiveStream] = useState<LiveStream | null>(null);
   const [history, setHistory] = useState<Record<string, HistoryEntry>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -49,6 +56,14 @@ export default function Channel() {
         if (!res.ok) throw new Error('Failed to fetch VODs');
         return res.json();
       }),
+      user
+        ? fetch(`/api/user/${encodeURIComponent(user)}/live`)
+            .then((res) => {
+              if (!res.ok) return null;
+              return res.json();
+            })
+            .catch(() => null)
+        : Promise.resolve(null),
       fetch('/api/history')
         .then((res) => {
           if (!res.ok) return {};
@@ -56,8 +71,9 @@ export default function Channel() {
         })
         .catch(() => ({})),
     ])
-      .then(([vodsData, historyData]) => {
+      .then(([vodsData, liveData, historyData]) => {
         setVods(vodsData as VOD[]);
+        setLiveStream((liveData as LiveStream | null) || null);
         setHistory(historyData as Record<string, HistoryEntry>);
         setLoading(false);
       })
@@ -106,52 +122,96 @@ export default function Channel() {
           <div className="empty-state">No VODs found.</div>
         )}
 
-        {!loading && !error && vods.length > 0 && (
-          <div className="vod-grid">
-            {vods.map((vod) => {
-              const hist = history[vod.id];
-              const progress =
-                hist && hist.duration > 0
-                  ? Math.min(100, (hist.timecode / hist.duration) * 100)
-                  : 0;
-
-              return (
-                <button
-                  key={vod.id}
-                  type="button"
-                  onClick={() => navigate(`/player?vod=${vod.id}`)}
-                  className="vod-card"
-                >
-                  <div className="vod-thumb-wrap">
-                    <img src={vod.previewThumbnailURL} alt={vod.title} className="vod-thumb" />
-                    <div className="vod-chip vod-duration">{formatTime(vod.lengthSeconds)}</div>
-                    <button
-                      onClick={(e) => {
-                        void addToWatchlist(e, vod);
-                      }}
-                      className="vod-watchlist-btn"
-                      type="button"
-                      title="Add to watch later"
-                    >
-                      +
-                    </button>
-                    {progress > 0 && (
-                      <div className="progress-track absolute-track">
-                        <div className="progress-fill" style={{ width: `${progress}%` }} />
-                      </div>
+        {!loading && !error && liveStream && user && (
+          <div className="block-section" style={{ marginTop: 0 }}>
+            <h2>Live</h2>
+            <div className="vod-grid">
+              <button
+                type="button"
+                onClick={() => navigate(`/player?live=${encodeURIComponent(user)}`)}
+                className="vod-card live-card"
+              >
+                <div className="vod-thumb-wrap">
+                  <img
+                    src={
+                      liveStream.previewImageURL ||
+                      'https://static-cdn.jtvnw.net/ttv-static/404_preview-320x180.jpg'
+                    }
+                    alt={liveStream.title}
+                    className="vod-thumb"
+                  />
+                  <div className="vod-chip live-chip">LIVE</div>
+                </div>
+                <div className="vod-body">
+                  <div className="vod-owner-row">
+                    {liveStream.broadcaster.profileImageURL && (
+                      <img
+                        src={liveStream.broadcaster.profileImageURL}
+                        alt={liveStream.broadcaster.displayName}
+                      />
                     )}
+                    <span>{liveStream.broadcaster.displayName}</span>
                   </div>
-                  <div className="vod-body">
-                    <h3 title={vod.title}>{vod.title}</h3>
-                    <div className="vod-meta-row">
-                      <span>{vod.game?.name || 'No Category'}</span>
-                      <span>{formatViews(vod.viewCount)}</span>
+                  <h3 title={liveStream.title}>{liveStream.title}</h3>
+                  <div className="vod-meta-row">
+                    <span>{liveStream.game?.name || 'No category'}</span>
+                    <span className="live-viewers">{formatViewers(liveStream.viewerCount)}</span>
+                  </div>
+                </div>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!loading && !error && vods.length > 0 && (
+          <div className="block-section" style={{ marginTop: liveStream ? '16px' : '0' }}>
+            <h2>VODs</h2>
+            <div className="vod-grid">
+              {vods.map((vod) => {
+                const hist = history[vod.id];
+                const progress =
+                  hist && hist.duration > 0
+                    ? Math.min(100, (hist.timecode / hist.duration) * 100)
+                    : 0;
+
+                return (
+                  <button
+                    key={vod.id}
+                    type="button"
+                    onClick={() => navigate(`/player?vod=${vod.id}`)}
+                    className="vod-card"
+                  >
+                    <div className="vod-thumb-wrap">
+                      <img src={vod.previewThumbnailURL} alt={vod.title} className="vod-thumb" />
+                      <div className="vod-chip vod-duration">{formatTime(vod.lengthSeconds)}</div>
+                      <button
+                        onClick={(e) => {
+                          void addToWatchlist(e, vod);
+                        }}
+                        className="vod-watchlist-btn"
+                        type="button"
+                        title="Add to watch later"
+                      >
+                        +
+                      </button>
+                      {progress > 0 && (
+                        <div className="progress-track absolute-track">
+                          <div className="progress-fill" style={{ width: `${progress}%` }} />
+                        </div>
+                      )}
                     </div>
-                    <div className="vod-date">{new Date(vod.createdAt).toLocaleDateString()}</div>
-                  </div>
-                </button>
-              );
-            })}
+                    <div className="vod-body">
+                      <h3 title={vod.title}>{vod.title}</h3>
+                      <div className="vod-meta-row">
+                        <span>{vod.game?.name || 'No Category'}</span>
+                        <span>{formatViews(vod.viewCount)}</span>
+                      </div>
+                      <div className="vod-date">{new Date(vod.createdAt).toLocaleDateString()}</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>

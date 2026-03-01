@@ -1,6 +1,7 @@
 import NodeCache from 'node-cache';
 import {
   HistoryEntry,
+  LiveStatusMap,
   LiveStream,
   LiveStreamsPage,
   SubEntry,
@@ -349,6 +350,72 @@ function buildStreamUrl(
   return `https://${domain}/${vodSpecialID}/${resKey}/index-dvr.m3u8`;
 }
 
+async function fetchLivePlaybackToken(channelLogin: string): Promise<{
+  value: string;
+  signature: string;
+}> {
+  const response = await fetch('https://gql.twitch.tv/gql', {
+    method: 'POST',
+    headers: {
+      'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      operationName: 'PlaybackAccessToken_Template',
+      query:
+        'query PlaybackAccessToken_Template($login: String!) { streamPlaybackAccessToken(channelName: $login, params: {platform: "web", playerBackend: "mediaplayer", playerType: "site"}) { value signature } }',
+      variables: {
+        login: channelLogin,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch live playback token (${response.status})`);
+  }
+
+  const payload: any = await response.json();
+  const token = payload?.data?.streamPlaybackAccessToken;
+  if (!token?.value || !token?.signature) {
+    throw new Error('Invalid live playback token payload');
+  }
+
+  return {
+    value: token.value,
+    signature: token.signature,
+  };
+}
+
+function rewriteMasterWithProxy(master: string, host: string, sourceMasterUrl: string): string {
+  const lines = master.split(/\r?\n/);
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    if (line.startsWith('#') && line.includes('URI="')) {
+      lines[i] = line.replaceAll(/URI="([^"]+)"/g, (_match, uri: string) => {
+        const absoluteUrl = /^https?:\/\//i.test(uri)
+          ? uri
+          : new URL(uri, sourceMasterUrl).toString();
+        const proxyUrl = `http://${host}/api/proxy/variant.m3u8?url=${encodeURIComponent(absoluteUrl)}`;
+        return `URI="${proxyUrl}"`;
+      });
+      continue;
+    }
+
+    if (!line.startsWith('#')) {
+      const absoluteUrl = /^https?:\/\//i.test(line)
+        ? line
+        : new URL(line, sourceMasterUrl).toString();
+      lines[i] = `http://${host}/api/proxy/variant.m3u8?url=${encodeURIComponent(absoluteUrl)}`;
+    }
+  }
+
+  return lines.join('\n');
+}
+
 export async function generateMasterPlaylist(vodId: string, host: string): Promise<string> {
   console.log(`[NSV] Generating Master Playlist for VOD: ${vodId}`);
   const data = await fetchTwitchDataGQL(vodId);
@@ -410,6 +477,31 @@ export async function generateMasterPlaylist(vodId: string, host: string): Promi
   }
 
   return fakePlaylist;
+}
+
+export async function generateLiveMasterPlaylist(channelLogin: string, host: string): Promise<string> {
+  const token = await fetchLivePlaybackToken(channelLogin);
+  const randomValue = Math.floor(Math.random() * 1_000_000).toString();
+  const params = new URLSearchParams({
+    allow_source: 'true',
+    allow_audio_only: 'true',
+    fast_bread: 'true',
+    playlist_include_framerate: 'true',
+    player_backend: 'mediaplayer',
+    player: 'twitchweb',
+    p: randomValue,
+    sig: token.signature,
+    token: token.value,
+  });
+
+  const sourceMasterUrl = `https://usher.ttvnw.net/api/channel/hls/${encodeURIComponent(channelLogin)}.m3u8?${params.toString()}`;
+  const response = await fetch(sourceMasterUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch live master playlist from Twitch (${response.status})`);
+  }
+
+  const master = await response.text();
+  return rewriteMasterWithProxy(master, host, sourceMasterUrl);
 }
 
 export async function proxyVariantPlaylist(targetUrl: string): Promise<string> {
@@ -494,6 +586,99 @@ export async function fetchUserVods(username: string): Promise<VOD[]> {
   const vods = data.data.user.videos.edges.map((e: any) => e.node);
   cache.set(cacheKey, vods, 600); // 10 minutes cache for VODs
   return vods;
+}
+
+export async function fetchUserLiveStream(username: string): Promise<LiveStream | null> {
+  const normalizedLogin = (username || '').trim().toLowerCase();
+  if (!normalizedLogin) return null;
+
+  const cacheKey = `live_user_${normalizedLogin}`;
+  const cached = cache.get<LiveStream | null>(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const resp = await fetch('https://gql.twitch.tv/gql', {
+    method: 'POST',
+    body: JSON.stringify({
+      query: `query { user(login: "${gqlEscape(normalizedLogin)}") { id login displayName profileImageURL(width: 70) stream { id title viewersCount previewImageURL(width: 640, height: 360) createdAt language game { id name boxArtURL(width: 110, height: 147) } } } }`,
+    }),
+    headers: {
+      'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!resp.ok) {
+    throw new Error('Twitch API request failed: ' + resp.status);
+  }
+
+  const data: any = await resp.json();
+  const user = data?.data?.user;
+  const stream = user?.stream;
+
+  if (!user || !stream) {
+    cache.set(cacheKey, null, 25);
+    return null;
+  }
+
+  const liveStream: LiveStream = {
+    id: String(stream.id || ''),
+    title: stream.title || 'Live stream',
+    previewImageURL: stream.previewImageURL || '',
+    viewerCount: Number(stream.viewersCount) || 0,
+    language: stream.language || '',
+    startedAt: stream.createdAt || new Date().toISOString(),
+    broadcaster: {
+      id: String(user.id || ''),
+      login: user.login || normalizedLogin,
+      displayName: user.displayName || user.login || normalizedLogin,
+      profileImageURL: user.profileImageURL || '',
+    },
+    game: stream.game
+      ? {
+          id: stream.game.id,
+          name: stream.game.name,
+          boxArtURL: stream.game.boxArtURL,
+        }
+      : null,
+  };
+
+  cache.set(cacheKey, liveStream, 20);
+  return liveStream;
+}
+
+export async function fetchLiveStatusByLogins(logins: string[]): Promise<LiveStatusMap> {
+  const normalized = [...new Set(logins.map((login) => login.trim().toLowerCase()).filter(Boolean))]
+    .filter((login) => /^[a-z0-9_]{2,25}$/i.test(login))
+    .slice(0, 80);
+
+  if (normalized.length === 0) return {};
+
+  const sortedLogins = [...normalized].sort((left, right) => left.localeCompare(right));
+  const cacheKey = `live_status_${createSimpleHash(sortedLogins.join('|'))}`;
+  const cached = cache.get<LiveStatusMap>(cacheKey);
+  if (cached) return cached;
+
+  const resultEntries = await Promise.all(
+    normalized.map(async (login) => {
+      try {
+        const stream = await fetchUserLiveStream(login);
+        return [login, stream] as const;
+      } catch {
+        return [login, null] as const;
+      }
+    })
+  );
+
+  const liveMap: LiveStatusMap = {};
+  for (const [login, stream] of resultEntries) {
+    if (stream) {
+      liveMap[login] = stream;
+    }
+  }
+
+  cache.set(cacheKey, liveMap, 18);
+  return liveMap;
 }
 
 export async function searchChannels(query: string): Promise<UserInfo[]> {
@@ -623,7 +808,7 @@ export async function searchGlobalContent(query: string): Promise<any> {
   const channels = data.data.searchFor.channels?.edges?.map((e: any) => e.item) || [];
   const games = data.data.searchFor.games?.edges?.map((e: any) => e.item) || [];
 
-  return [...channels, ...games].filter(Boolean);
+  return [...games, ...channels].filter(Boolean);
 }
 
 export async function fetchVideoChat(
