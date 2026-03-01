@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import {
   generateMasterPlaylist,
   generateLiveMasterPlaylist,
@@ -31,6 +32,13 @@ import {
 } from '../services/history.service';
 
 const router = Router();
+
+const liveStatusLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 60, // limit each IP to 60 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // Video Data
 router.get('/vod/:vodId/chat', async (req, res) => {
@@ -199,7 +207,7 @@ router.get('/live', async (req, res) => {
   }
 });
 
-router.get('/live/status', async (req, res) => {
+router.get('/live/status', liveStatusLimiter, async (req, res) => {
   try {
     const rawLogins = ((req.query.logins as string) || '').trim();
     if (!rawLogins) {
