@@ -514,7 +514,51 @@ function validateVariantTargetUrl(targetUrl: string): string {
     throw new Error('Disallowed target host');
   }
 
-  return parsed.toString();
+  // Further restrict the path to known-safe Twitch HLS/VOD endpoints.
+  const pathname = parsed.pathname;
+
+  // Allowed patterns (simplified):
+  //  - /api/channel/hls/<login>.m3u8                 (live playlists)
+  //  - /vod/                                         (VOD segments/playlists)
+  //  - /chunked/                                     (older VOD segment scheme)
+  const isLiveHlsApi = /^\/api\/channel\/hls\/[^/]+\.m3u8$/i.test(pathname);
+  const isVodPath = pathname.toLowerCase().startsWith('/vod/');
+  const isChunkedVodPath = pathname.toLowerCase().startsWith('/chunked/');
+
+  if (!isLiveHlsApi && !isVodPath && !isChunkedVodPath) {
+    throw new Error('Disallowed target path');
+  }
+
+  // Optionally, restrict query parameters to a conservative allow-list.
+  const allowedQueryParams = new Set([
+    'allow_source',
+    'allow_audio_only',
+    'fast_bread',
+    'playlist_include_framerate',
+    'player_backend',
+    'player',
+    'p',
+    'sig',
+    'token',
+  ]);
+
+  const originalSearchParams = parsed.searchParams;
+  const sanitizedParams = new URLSearchParams();
+  for (const [key, value] of originalSearchParams.entries()) {
+    if (allowedQueryParams.has(key)) {
+      sanitizedParams.append(key, value);
+    }
+  }
+
+  // Rebuild a sanitized URL to ensure no unexpected components remain.
+  const sanitizedUrl =
+    parsed.protocol +
+    '//' +
+    parsed.host +
+    parsed.pathname +
+    (sanitizedParams.toString() ? '?' + sanitizedParams.toString() : '');
+
+  return sanitizedUrl;
 }
 
 export async function generateLiveMasterPlaylist(
