@@ -362,6 +362,7 @@ impl Default for TwitchService {
 }
 
 const ANDROID_TV_UA: &str = "Mozilla/5.0 (Linux; Android 9; SHIELD Android TV Build/PPR1.180610.011; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/68.0.3440.70 Mobile Safari/537.36";
+const ANDROID_TV_CLIENT_ID: &str = "ue6666qo983tsx6so1t0vnawi233wa";
 
 impl TwitchService {
     pub fn new() -> Self {
@@ -456,7 +457,7 @@ impl TwitchService {
         let resp = self
             .client
             .post("https://gql.twitch.tv/gql")
-            .header("Client-Id", "kimne78kx3ncx6brgo4mv6wki5h1ko")
+            .header("Client-Id", ANDROID_TV_CLIENT_ID)
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .body(body.to_string())
@@ -1095,7 +1096,7 @@ impl TwitchService {
             .unwrap_or_default();
 
         let query = format!(
-            r#"{{"query":"query {{ game(name: \"{}\") {{ videos(first: {}{}) {{ edges {{ node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} }} }} }}"}}"#,
+            r#"{{"query":"query {{ game(name: \"{}\") {{ videos(first: {}{}) {{ edges {{ node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, broadcastType, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} }} }} }}"}}"#,
             gql_escape(game_name),
             first,
             lang_filter
@@ -1141,7 +1142,7 @@ impl TwitchService {
         };
 
         let query = format!(
-            r#"{{"query":"query {{ game(name: \"{escaped}\") {{ videos(first: {safe_first}{after_clause}) {{ edges {{ cursor node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} pageInfo {{ hasNextPage }} }} }} }}"}}"#
+            r#"{{"query":"query {{ game(name: \"{escaped}\") {{ videos(first: {safe_first}{after_clause}) {{ edges {{ cursor node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, broadcastType, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} pageInfo {{ hasNextPage }} }} }} }}"}}"#
         );
 
         let Ok(data) = self.gql_post(&query).await else {
@@ -1208,7 +1209,7 @@ impl TwitchService {
             return vec![];
         }
 
-        let fields = r#"id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, language, game { name }, owner { login, displayName, profileImageURL(width: 50) }"#;
+        let fields = r#"id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, broadcastType, language, game { name }, owner { login, displayName, profileImageURL(width: 50) }"#;
         let query_body = safe_ids
             .iter()
             .enumerate()
@@ -1294,8 +1295,9 @@ impl TwitchService {
         let pagination = if safe_after.is_empty() {
             String::new()
         } else {
-            let escaped = serde_json::to_string(&safe_after).unwrap_or_default();
-            format!(", after: {escaped}")
+            // safe_after might contain base64, which is fine, but we must escape it for the GraphQL string literal
+            let escaped = gql_escape(&safe_after);
+            format!(r#", after: \"{escaped}\""#)
         };
 
         let body = format!(
@@ -1532,7 +1534,7 @@ impl TwitchService {
         }
 
         let body = format!(
-            r#"{{"query":"query {{ user(login: \"{}\") {{ videos(first: 30) {{ edges {{ node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} }} }} }}"}}"#,
+            r#"{{"query":"query {{ user(login: \"{}\") {{ videos(first: 30) {{ edges {{ node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, broadcastType, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} }} }} }}"}}"#,
             gql_escape(username)
         );
 
@@ -1785,8 +1787,9 @@ impl TwitchService {
         let pagination = if safe_after.is_empty() {
             String::new()
         } else {
-            let escaped = serde_json::to_string(&safe_after).unwrap_or_default();
-            format!(", after: {escaped}")
+            // safe_after might contain base64, which is fine, but we must escape it for the GraphQL string literal
+            let escaped = gql_escape(&safe_after);
+            format!(r#", after: \"{escaped}\""#)
         };
 
         let body = format!(
@@ -1923,12 +1926,12 @@ impl TwitchService {
 
         let mut game_futures = Vec::new();
         for game in &top_games {
-            game_futures.push(self.fetch_game_vods(game, Some(vec!["fr".to_string()]), 18));
-            game_futures.push(self.fetch_game_vods(game, None, 18));
+            game_futures.push(self.fetch_game_vods(game, Some(vec!["fr".to_string()]), 35));
+            game_futures.push(self.fetch_game_vods(game, None, 35));
         }
         let sub_futures: Vec<_> = subs
             .iter()
-            .take(10)
+            .take(15)
             .map(|s| self.fetch_user_vods(&s.login))
             .collect();
 
@@ -1963,7 +1966,7 @@ impl TwitchService {
             })
             .collect();
         scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(120);
+        scored.truncate(200);
 
         // ── Diversity pass: cap same-channel VODs to avoid feed monopolisation ──
         {
@@ -2008,7 +2011,7 @@ impl TwitchService {
         };
         let foreign_ratio = clamp(0.16 + foreign_affinity * 0.35, 0.16, 0.4);
 
-        let feed = interleave_localized_feed(scored, foreign_ratio, 40);
+        let feed = interleave_localized_feed(scored, foreign_ratio, 100);
 
         let val = serde_json::to_value(&feed).unwrap_or_default();
         self.cache.set(cache_key, val, 900);

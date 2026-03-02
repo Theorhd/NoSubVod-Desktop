@@ -49,6 +49,8 @@ pub struct Vod {
     pub created_at: String,
     #[serde(rename = "viewCount")]
     pub view_count: u64,
+    #[serde(rename = "broadcastType")]
+    pub broadcast_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
     pub game: Option<VodGame>,
@@ -58,8 +60,32 @@ pub struct Vod {
 
 impl Vod {
     pub fn is_valid(&self) -> bool {
-        // Instant VODs (still recording) often have empty or 404 placeholder thumbnails.
-        !self.preview_thumbnail_url.is_empty() && !self.preview_thumbnail_url.contains("404_preview")
+        // Filter out instant VODs/streams:
+        // 1. Check if it's currently recording or upcoming (if broadcastType is present)
+        if let Some(ref bt) = self.broadcast_type {
+            let bt_lower = bt.to_lowercase();
+            if bt_lower == "live" || bt_lower == "upcoming" || bt_lower == "current_archiving" {
+                return false;
+            }
+        }
+
+        // 2. Check for missing or placeholder thumbnails
+        let thumb = &self.preview_thumbnail_url;
+        if thumb.is_empty() || thumb.contains("404_preview") || thumb.contains("recording") {
+            return false;
+        }
+
+        // 3. Heuristic: VODs without a proper length or view count might be early recordings
+        if self.length_seconds == 0 {
+            return false;
+        }
+
+        // 4. Reject very short VODs (< 3m30s = 210s) — likely stream artifacts or clip-like entries
+        if self.length_seconds < 210 {
+            return false;
+        }
+
+        true
     }
 }
 

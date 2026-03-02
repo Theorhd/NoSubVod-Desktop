@@ -84,6 +84,7 @@ struct VariantProxyQuery {
 struct LiveQuery {
     limit: Option<String>,
     cursor: Option<String>,
+    after: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -378,7 +379,8 @@ async fn handle_live(
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(24)
         .clamp(8, 48);
-    let cursor = q.cursor.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    // Support both 'cursor' and 'after' params, preferring 'cursor'
+    let cursor = q.cursor.or(q.after).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
 
     match state
         .twitch
@@ -410,6 +412,7 @@ async fn handle_live_category(
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(24)
         .clamp(8, 48);
+    // Support both 'cursor' and 'after' (if we decide to add it to LiveCategoryQuery too)
     let cursor = q.cursor.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     match state
         .twitch
