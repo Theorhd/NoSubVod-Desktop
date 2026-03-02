@@ -49,11 +49,44 @@ pub struct Vod {
     pub created_at: String,
     #[serde(rename = "viewCount")]
     pub view_count: u64,
+    #[serde(rename = "broadcastType")]
+    pub broadcast_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
     pub game: Option<VodGame>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner: Option<VodOwner>,
+}
+
+impl Vod {
+    pub fn is_valid(&self) -> bool {
+        // Filter out instant VODs/streams:
+        // 1. Check if it's currently recording or upcoming (if broadcastType is present)
+        if let Some(ref bt) = self.broadcast_type {
+            let bt_lower = bt.to_lowercase();
+            if bt_lower == "live" || bt_lower == "upcoming" || bt_lower == "current_archiving" {
+                return false;
+            }
+        }
+
+        // 2. Check for missing or placeholder thumbnails
+        let thumb = &self.preview_thumbnail_url;
+        if thumb.is_empty() || thumb.contains("404_preview") || thumb.contains("recording") {
+            return false;
+        }
+
+        // 3. Heuristic: VODs without a proper length or view count might be early recordings
+        if self.length_seconds == 0 {
+            return false;
+        }
+
+        // 4. Reject very short VODs (< 3m30s = 210s) — likely stream artifacts or clip-like entries
+        if self.length_seconds < 210 {
+            return false;
+        }
+
+        true
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,6 +180,12 @@ pub struct SubEntry {
 pub struct ExperienceSettings {
     #[serde(rename = "oneSync")]
     pub one_sync: bool,
+    #[serde(rename = "adblockEnabled", default)]
+    pub adblock_enabled: bool,
+    #[serde(rename = "adblockProxy", default)]
+    pub adblock_proxy: Option<String>,
+    #[serde(rename = "adblockProxyMode", default)]
+    pub adblock_proxy_mode: Option<String>, // "auto" or "manual"
 }
 
 /// Root of the persisted JSON file.

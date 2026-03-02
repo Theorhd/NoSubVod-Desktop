@@ -84,6 +84,7 @@ struct VariantProxyQuery {
 struct LiveQuery {
     limit: Option<String>,
     cursor: Option<String>,
+    after: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -98,6 +99,7 @@ struct HistoryListQuery {
 
 #[derive(Deserialize)]
 struct SearchCategoryQuery {
+    id: Option<String>,
     name: Option<String>,
     cursor: Option<String>,
     limit: Option<String>,
@@ -172,7 +174,12 @@ async fn handle_live_master(
         .unwrap_or("localhost")
         .to_string();
 
-    match state.twitch.generate_live_master_playlist(&login, &host).await {
+    let settings = state.history.get_settings().await;
+    match state
+        .twitch
+        .generate_live_master_playlist(&login, &host, &settings)
+        .await
+    {
         Ok(m3u8) => m3u8_response(m3u8),
         Err(e) => internal(e),
     }
@@ -186,8 +193,35 @@ async fn handle_proxy_variant(
         return bad_request("Missing id parameter");
     };
 
-    match state.twitch.proxy_variant_playlist(&id).await {
+    let settings = state.history.get_settings().await;
+    match state.twitch.proxy_variant_playlist(&id, &settings).await {
         Ok(body) => m3u8_response(body),
+        Err(e) => internal(e),
+    }
+}
+
+async fn handle_proxy_segment(
+    Query(q): Query<VariantProxyQuery>,
+    State(state): State<ApiState>,
+) -> Response {
+    let Some(id) = q.id else {
+        return bad_request("Missing id parameter");
+    };
+
+    let settings = state.history.get_settings().await;
+    match state.twitch.proxy_segment(&id, &settings).await {
+        Ok(resp) => {
+            let mut builder = Response::builder();
+            if let Some(ct) = resp.headers().get(reqwest::header::CONTENT_TYPE) {
+                builder = builder.header(reqwest::header::CONTENT_TYPE, ct);
+            }
+            if let Some(cc) = resp.headers().get(reqwest::header::CACHE_CONTROL) {
+                builder = builder.header(reqwest::header::CACHE_CONTROL, cc);
+            }
+
+            let body = Body::from_stream(resp.bytes_stream());
+            builder.body(body).unwrap_or_else(|_| internal("Failed to build response"))
+        }
         Err(e) => internal(e),
     }
 }
@@ -214,17 +248,44 @@ async fn handle_get_settings(State(state): State<ApiState>) -> impl IntoResponse
     Json(state.history.get_settings().await)
 }
 
+async fn handle_get_adblock_proxies(State(state): State<ApiState>) -> impl IntoResponse {
+    state.twitch.refresh_adblock_proxy_state();
+    Json(state.twitch.get_all_proxies())
+}
+
+async fn handle_get_adblock_status(State(state): State<ApiState>) -> impl IntoResponse {
+    state.twitch.refresh_adblock_proxy_state();
+    Json(state.twitch.get_current_proxy())
+}
+
 #[derive(Deserialize)]
 struct SettingsPatch {
     #[serde(rename = "oneSync")]
     one_sync: Option<bool>,
+    #[serde(rename = "adblockEnabled")]
+    adblock_enabled: Option<bool>,
+    #[serde(rename = "adblockProxy")]
+    adblock_proxy: Option<Option<String>>,
+    #[serde(rename = "adblockProxyMode")]
+    adblock_proxy_mode: Option<Option<String>>,
 }
 
 async fn handle_update_settings(
     State(state): State<ApiState>,
     Json(patch): Json<SettingsPatch>,
 ) -> Response {
-    Json(state.history.update_settings(patch.one_sync).await).into_response()
+    Json(
+        state
+            .history
+            .update_settings(
+                patch.one_sync,
+                patch.adblock_enabled,
+                patch.adblock_proxy,
+                patch.adblock_proxy_mode,
+            )
+            .await,
+    )
+    .into_response()
 }
 
 async fn handle_get_subs(State(state): State<ApiState>) -> impl IntoResponse {
@@ -278,9 +339,11 @@ async fn handle_search_category_vods(
     Query(q): Query<SearchCategoryQuery>,
     State(state): State<ApiState>,
 ) -> Response {
+    let id = q.id.unwrap_or_default();
+    let id = id.trim().to_string();
     let name = q.name.unwrap_or_default();
     let name = name.trim().to_string();
-    if name.is_empty() {
+    if id.is_empty() && name.is_empty() {
         return Json(serde_json::json!({ "items": [], "hasMore": false, "nextCursor": null })).into_response();
     }
     let limit = q
@@ -291,7 +354,7 @@ async fn handle_search_category_vods(
     let cursor = q.cursor.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     let (items, next_cursor, has_more) = state
         .twitch
-        .fetch_category_vods_page(&name, limit, cursor.as_deref())
+        .fetch_category_vods_page(&name, if id.is_empty() { None } else { Some(id.as_str()) }, limit, cursor.as_deref())
         .await;
     Json(serde_json::json!({
         "items": items,
@@ -319,7 +382,8 @@ async fn handle_live(
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(24)
         .clamp(8, 48);
-    let cursor = q.cursor.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    // Support both 'cursor' and 'after' params, preferring 'cursor'
+    let cursor = q.cursor.or(q.after).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
 
     match state
         .twitch
@@ -351,6 +415,7 @@ async fn handle_live_category(
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(24)
         .clamp(8, 48);
+    // Support both 'cursor' and 'after' (if we decide to add it to LiveCategoryQuery too)
     let cursor = q.cursor.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     match state
         .twitch
@@ -541,11 +606,14 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         .route("/vod/:vod_id/master.m3u8", get(handle_vod_master))
         .route("/live/:login/master.m3u8", get(handle_live_master))
         .route("/stream/variant.m3u8", get(handle_proxy_variant))
+        .route("/stream/variant.ts", get(handle_proxy_segment))
         // Watchlist
         .route("/watchlist", get(handle_get_watchlist).post(handle_add_watchlist))
         .route("/watchlist/:vod_id", delete(handle_remove_watchlist))
         // Settings
         .route("/settings", get(handle_get_settings).post(handle_update_settings))
+        .route("/adblock/proxies", get(handle_get_adblock_proxies))
+        .route("/adblock/status", get(handle_get_adblock_status))
         // Subs
         .route("/subs", get(handle_get_subs).post(handle_add_sub))
         .route("/subs/:login", delete(handle_remove_sub))

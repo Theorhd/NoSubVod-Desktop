@@ -78,8 +78,6 @@ export default function Live() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
 
   const seenIdsRef = useRef<Set<string>>(new Set());
-  const observerRef = useRef<IntersectionObserver | null>(null);
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
   const isFetchingRef = useRef(false);
   const isInitialLoadingRef = useRef(true);
 
@@ -243,26 +241,35 @@ export default function Live() {
   }, [subLogins]);
 
   // ── Infinite scroll observer (only in all/category modes) ────────────────
-  useEffect(() => {
-    if (mode === 'search') return;
-    if (!sentinelRef.current) return;
+  const observerRef = useRef<IntersectionObserver | null>(null);
 
-    observerRef.current?.disconnect();
-    observerRef.current = new IntersectionObserver(
-      (entries) => {
-        const [entry] = entries;
-        if (!entry?.isIntersecting) return;
-        if (isFetchingRef.current || !hasMore) return;
-        if (mode === 'all') void fetchAllPage(nextCursor);
-        if (mode === 'category' && activeCategory)
-          void fetchCategoryPage(activeCategory, nextCursor);
-      },
-      { root: null, rootMargin: '520px 0px', threshold: 0.01 }
-    );
-    observerRef.current.observe(sentinelRef.current);
-    return () => observerRef.current?.disconnect();
-  }, [fetchAllPage, fetchCategoryPage, hasMore, nextCursor, mode, activeCategory]);
+  const lastElementRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (mode === 'search') return;
+      if (isFetchingRef.current) return;
 
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+      }
+
+      if (node) {
+        observerRef.current = new IntersectionObserver(
+          (entries) => {
+            if (entries[0]?.isIntersecting && hasMore && !isFetchingRef.current) {
+              if (mode === 'all') {
+                void fetchAllPage(nextCursor);
+              } else if (mode === 'category' && activeCategory) {
+                void fetchCategoryPage(activeCategory, nextCursor);
+              }
+            }
+          },
+          { rootMargin: '400px' }
+        );
+        observerRef.current.observe(node);
+      }
+    },
+    [mode, hasMore, nextCursor, activeCategory, fetchAllPage, fetchCategoryPage]
+  );
   // ── Mode switching helpers ────────────────────────────────────────────────
   const switchToAll = useCallback(() => {
     setMode('all');
@@ -396,14 +403,7 @@ export default function Live() {
         {!isInitialLoading && streams.length > 0 && (
           <div className="vod-grid">
             {streams.map((stream) => (
-              <button
-                key={stream.id}
-                type="button"
-                onClick={() =>
-                  navigate(`/player?live=${encodeURIComponent(stream.broadcaster.login)}`)
-                }
-                className="vod-card live-card"
-              >
+              <div key={stream.id} className="vod-card live-card">
                 <div className="vod-thumb-wrap">
                   <img
                     src={
@@ -425,8 +425,27 @@ export default function Live() {
                     )}
                     <span>{stream.broadcaster.displayName}</span>
                   </div>
-                  <h3 title={stream.title}>{stream.title}</h3>
-                  <div className="vod-meta-row">
+                  <h3 title={stream.title}>
+                    <button
+                      type="button"
+                      className="stretched-link"
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: 'inherit',
+                        font: 'inherit',
+                        padding: 0,
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                      }}
+                      onClick={() =>
+                        navigate(`/player?live=${encodeURIComponent(stream.broadcaster.login)}`)
+                      }
+                    >
+                      {stream.title}
+                    </button>
+                  </h3>
+                  <div className="vod-meta-row" style={{ position: 'relative', zIndex: 2 }}>
                     {stream.game?.name && (
                       <button
                         type="button"
@@ -449,12 +468,12 @@ export default function Live() {
                   </div>
                   <div className="vod-date">Uptime: {formatUptime(stream.startedAt)}</div>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         )}
 
-        <div ref={sentinelRef} className="live-load-sentinel" aria-hidden="true" />
+        <div ref={lastElementRef} style={{ height: '20px', width: '100%' }} aria-hidden="true" />
 
         {!isInitialLoading && isLoadingMore && (
           <div className="status-line">Chargement de plus de streams...</div>

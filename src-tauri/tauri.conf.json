@@ -21,10 +21,6 @@
         "backgroundColor": "#18181b"
       }
     ],
-    "trayIcon": {
-      "iconPath": "icons/icon.ico",
-      "iconAsTemplate": false
-    },
     "security": {
       "csp": null
     }
