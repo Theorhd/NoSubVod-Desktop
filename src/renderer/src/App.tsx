@@ -1,32 +1,23 @@
 import React, { useEffect, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { ServerInfo } from '../../shared/types';
-
-// Electron IPC is global when contextIsolation is false
-const ipcRenderer = (globalThis as any).require
-  ? (globalThis as any).require('electron').ipcRenderer
-  : null;
 
 export default function App() {
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
 
   useEffect(() => {
-    if (ipcRenderer) {
-      const listener = (_event: any, data: ServerInfo) => {
-        setServerInfo(data);
-      };
-      ipcRenderer.on('server-info', listener);
-      return () => {
-        ipcRenderer.removeListener('server-info', listener);
-      };
-    } else {
-      // Mock for development in browser
-      setServerInfo({
-        ip: '192.168.1.100',
-        port: 23455,
-        url: 'http://192.168.1.100:23455',
-        qrcode: '',
+    invoke<ServerInfo>('get_server_info')
+      .then(setServerInfo)
+      .catch((err) => {
+        console.error('Failed to get server info:', err);
+        // Fallback for browser-only development
+        setServerInfo({
+          ip: '127.0.0.1',
+          port: 23455,
+          url: 'http://127.0.0.1:23455',
+          qrcode: '',
+        });
       });
-    }
   }, []);
 
   return (
@@ -55,7 +46,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#efeff1',
     padding: '2rem',
     margin: 0,
-    height: '100%',
+    minHeight: '100vh',
     width: '100%',
     boxSizing: 'border-box',
     display: 'flex',

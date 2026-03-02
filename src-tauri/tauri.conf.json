@@ -1,0 +1,44 @@
+{
+  "$schema": "gen/schemas/desktop-schema.json",
+  "productName": "NoSubVOD",
+  "version": "0.2.0",
+  "identifier": "com.nosubvod.desktop",
+  "build": {
+    "frontendDist": "../dist/renderer",
+    "devUrl": "http://localhost:5174",
+    "beforeDevCommand": "npm run dev:renderer",
+    "beforeBuildCommand": "npm run build:renderer"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "NoSubVOD",
+        "width": 600,
+        "height": 700,
+        "resizable": false,
+        "fullscreen": false,
+        "backgroundColor": "#18181b"
+      }
+    ],
+    "trayIcon": {
+      "iconPath": "icons/icon.ico",
+      "iconAsTemplate": false
+    },
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {},
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "resources": ["../dist/portal"],
+    "icon": ["icons/icon.png", "icons/icon.ico"],
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}

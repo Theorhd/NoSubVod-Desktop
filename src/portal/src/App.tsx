@@ -1,14 +1,15 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
-import Home from './Home';
-import Channel from './Channel';
-import Player from './Player';
-import Trends from './Trends';
-import Search from './Search';
-import Live from './Live';
-import Settings from './Settings';
-import History from './History';
 import { TrendingUp, Home as HomeIcon, Search as SearchIcon, Radio } from 'lucide-react';
+
+const Home = lazy(() => import('./Home'));
+const Channel = lazy(() => import('./Channel'));
+const Player = lazy(() => import('./Player'));
+const Trends = lazy(() => import('./Trends'));
+const Search = lazy(() => import('./Search'));
+const Live = lazy(() => import('./Live'));
+const Settings = lazy(() => import('./Settings'));
+const History = lazy(() => import('./History'));
 
 const navItems = [
   { path: '/trends', label: 'Trends', Icon: TrendingUp },
@@ -53,18 +54,26 @@ export default function App() {
   return (
     <Router>
       <div className="app-container">
-        <div className="content-wrap">
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/trends" element={<Trends />} />
-            <Route path="/live" element={<Live />} />
-            <Route path="/search" element={<Search />} />
-            <Route path="/history" element={<History />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/channel" element={<Channel />} />
-            <Route path="/player" element={<Player />} />
-          </Routes>
-        </div>
+        <Suspense
+          fallback={
+            <div className="status-line" style={{ padding: '24px 16px' }}>
+              Loading portal...
+            </div>
+          }
+        >
+          <div className="content-wrap">
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/trends" element={<Trends />} />
+              <Route path="/live" element={<Live />} />
+              <Route path="/search" element={<Search />} />
+              <Route path="/history" element={<History />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/channel" element={<Channel />} />
+              <Route path="/player" element={<Player />} />
+            </Routes>
+          </div>
+        </Suspense>
         <BottomNav />
       </div>
     </Router>
