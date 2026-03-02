@@ -138,18 +138,11 @@ export default function Search() {
             <h2>Live Streams</h2>
             <div className="vod-grid">
               {liveStreams.map((user) => (
-                <div
+                <button
                   key={user.id}
+                  type="button"
                   onClick={() => navigate(`/player?live=${encodeURIComponent(user.login)}`)}
                   className="vod-card live-card"
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      navigate(`/player?live=${encodeURIComponent(user.login)}`);
-                    }
-                  }}
                 >
                   <div className="vod-thumb-wrap">
                     <img
@@ -176,7 +169,7 @@ export default function Search() {
                       </span>
                     </div>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>

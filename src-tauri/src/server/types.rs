@@ -130,7 +130,7 @@ pub struct WatchlistEntry {
     pub preview_thumbnail_url: String,
     #[serde(rename = "lengthSeconds")]
     pub length_seconds: u64,
-    #[serde(rename = "addedAt")]
+    #[serde(rename = "addedAt", default)]
     pub added_at: u64,
 }
 

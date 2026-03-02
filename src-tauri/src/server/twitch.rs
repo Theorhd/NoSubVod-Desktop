@@ -510,6 +510,40 @@ fn score_candidate_vod(
     profile: &PreferenceProfile,
     subs_set: &std::collections::HashSet<String>,
 ) -> f64 {
+    // ── Quality gate ──────────────────────────────────────────────────────────
+    // VODs under 10 minutes or with very few views are ranked near-zero.
+    let length_secs = vod.length_seconds as f64;
+    let length_factor = if length_secs < 60.0 {
+        // Under 1 min → essentially invisible
+        0.01
+    } else if length_secs < 600.0 {
+        // 1–10 min: quadratic ramp capped at 0.18
+        let ratio = (length_secs - 60.0) / 540.0; // 0..1 over [1min, 10min]
+        0.01 + 0.17 * ratio * ratio
+    } else if length_secs < 1800.0 {
+        // 10–30 min: linear ramp from 0.18 to 1.0
+        0.18 + 0.82 * (length_secs - 600.0) / 1200.0
+    } else {
+        1.0
+    };
+
+    let view_factor = if vod.view_count == 0 {
+        0.04
+    } else if vod.view_count < 5 {
+        0.04 + 0.46 * (vod.view_count as f64 / 5.0)
+    } else if vod.view_count < 50 {
+        0.5 + 0.5 * (vod.view_count as f64 / 50.0)
+    } else {
+        1.0
+    };
+
+    // If quality gate blocks strongly, bail early to save computation
+    let quality = length_factor * view_factor;
+    if quality < 0.05 {
+        return quality;
+    }
+
+    // ── Signal computation ────────────────────────────────────────────────────
     let game_name = vod.game.as_ref().map(|g| g.name.as_str()).unwrap_or("");
     let channel_login = vod
         .owner
@@ -518,7 +552,10 @@ fn score_candidate_vod(
         .unwrap_or_default();
     let language = normalize_language(vod.language.as_deref());
 
+    // Popularity signal: log-scaled, mild influence to avoid pure viral bias
     let popularity = (vod.view_count as f64 + 10.0).log10() * 1.15;
+
+    // Personalisation signals
     let game_affinity = profile.game_scores.get(game_name).copied().unwrap_or(0.0) * 2.1;
     let channel_affinity = profile
         .channel_scores
@@ -532,6 +569,8 @@ fn score_candidate_vod(
         .copied()
         .unwrap_or(0.0)
         * 1.15;
+
+    // Boosts
     let fr_boost = if language == "fr" { 2.3 } else { 0.0 };
     let sub_boost = if subs_set.contains(&channel_login) {
         3.2
@@ -539,10 +578,18 @@ fn score_candidate_vod(
         0.0
     };
 
+    // Recency signal: VODs older than ~19 days score 0 here
     let vod_age_days = chrono_days_since_str(&vod.created_at);
     let recency = clamp(2.1 - vod_age_days / 9.0, 0.0, 2.1);
 
-    popularity + game_affinity + channel_affinity + lang_affinity + fr_boost + sub_boost + recency
+    // Diversity bonus: slightly reward content from niche/low-count channels
+    // by not artificially boosting already-popular ones beyond their popularity signal.
+    // (Achieved implicitly: game_affinity is bounded by profile scores, not raw view counts.)
+
+    let base_score =
+        popularity + game_affinity + channel_affinity + lang_affinity + fr_boost + sub_boost + recency;
+
+    base_score * quality
 }
 
 fn chrono_days_since_str(date_str: &str) -> f64 {
@@ -691,6 +738,53 @@ impl TwitchService {
             .unwrap_or_default()
     }
 
+    /// Paginated category VODs: returns (vods, next_cursor, has_more)
+    pub async fn fetch_category_vods_page(
+        &self,
+        game_name: &str,
+        first: usize,
+        after: Option<&str>,
+    ) -> (Vec<Vod>, Option<String>, bool) {
+        let safe_first = first.clamp(4, 50);
+        let escaped = gql_escape(game_name);
+        let safe_after = after.unwrap_or("").trim().to_string();
+
+        let after_clause = if safe_after.is_empty() {
+            String::new()
+        } else {
+            let esc = serde_json::to_string(&safe_after).unwrap_or_default();
+            format!(", after: {esc}")
+        };
+
+        let query = format!(
+            r#"{{"query":"query {{ game(name: \"{escaped}\") {{ videos(first: {safe_first}{after_clause}) {{ edges {{ cursor node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} pageInfo {{ hasNextPage }} }} }} }}"}}"#
+        );
+
+        let Ok(data) = self.gql_post(&query).await else {
+            return (vec![], None, false);
+        };
+
+        let edges = match data["data"]["game"]["videos"]["edges"].as_array() {
+            Some(a) => a.clone(),
+            None => return (vec![], None, false),
+        };
+
+        let vods: Vec<Vod> = edges
+            .iter()
+            .filter_map(|e| serde_json::from_value::<Vod>(e["node"].clone()).ok())
+            .collect();
+
+        let last_cursor = edges
+            .last()
+            .and_then(|e| e["cursor"].as_str())
+            .map(|s| s.to_string());
+        let has_next = data["data"]["game"]["videos"]["pageInfo"]["hasNextPage"]
+            .as_bool()
+            .unwrap_or(false);
+
+        (vods, if has_next { last_cursor } else { None }, has_next)
+    }
+
     pub async fn fetch_game_vods_by_name(&self, game_name: &str, first: usize) -> Vec<Vod> {
         let (fr_first, global_pool) = tokio::join!(
             self.fetch_game_vods(game_name, Some(vec!["fr".to_string()]), first),
@@ -727,7 +821,7 @@ impl TwitchService {
         let query_body = safe_ids
             .iter()
             .enumerate()
-            .map(|(i, id)| format!(r#"v{i}: video(id: "{id}") {{ {fields} }}"#))
+            .map(|(i, id)| format!(r#"v{i}: video(id: \"{id}\") {{ {fields} }}"#))
             .collect::<Vec<_>>()
             .join(" ");
 
@@ -745,6 +839,271 @@ impl TwitchService {
 
     pub async fn fetch_vods_by_ids(&self, vod_ids: Vec<String>) -> Vec<Vod> {
         self.fetch_watched_vod_metadata(&vod_ids).await
+    }
+
+    pub async fn fetch_top_live_categories(&self) -> Result<Vec<serde_json::Value>, String> {
+        let cache_key = "top_live_categories".to_string();
+        if let Some(cached) = self.cache.get(&cache_key) {
+            return serde_json::from_value(cached).map_err(|e| e.to_string());
+        }
+
+        let body = r#"{"query":"query { topGames(first: 5) { edges { node { id name boxArtURL(width: 80, height: 107) } } } }"}"#.to_string();
+        let data = self.gql_post(&body).await?;
+
+        let categories: Vec<serde_json::Value> = data["data"]["topGames"]["edges"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|e| {
+                        let node = &e["node"];
+                        if node.is_null() {
+                            return None;
+                        }
+                        Some(serde_json::json!({
+                            "id": node["id"].as_str().unwrap_or(""),
+                            "name": node["name"].as_str().unwrap_or(""),
+                            "boxArtURL": node["boxArtURL"].as_str().unwrap_or(""),
+                        }))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let val = serde_json::to_value(&categories).unwrap_or_default();
+        self.cache.set(cache_key, val, 120);
+        Ok(categories)
+    }
+
+    pub async fn fetch_live_streams_by_category(
+        &self,
+        category_name: &str,
+        first: usize,
+        after: Option<&str>,
+    ) -> Result<LiveStreamsPage, String> {
+        let safe_first = first.clamp(4, 48);
+        let safe_after = after.unwrap_or("").trim().to_string();
+        let escaped_name = gql_escape(category_name);
+        let cache_key = format!(
+            "live_cat_{}_{}_{safe_first}",
+            create_simple_hash(category_name),
+            if safe_after.is_empty() { "first" } else { &safe_after }
+        );
+
+        if let Some(cached) = self.cache.get(&cache_key) {
+            return serde_json::from_value(cached).map_err(|e| e.to_string());
+        }
+
+        let pagination = if safe_after.is_empty() {
+            String::new()
+        } else {
+            let escaped = serde_json::to_string(&safe_after).unwrap_or_default();
+            format!(", after: {escaped}")
+        };
+
+        let body = format!(
+            r#"{{"query":"query {{ game(name: \"{escaped_name}\") {{ streams(first: {safe_first}{pagination}) {{ edges {{ cursor node {{ id title viewersCount previewImageURL(width: 640, height: 360) createdAt language broadcaster {{ id login displayName profileImageURL(width: 70) }} }} }} pageInfo {{ hasNextPage }} }} }} }}"}}"#
+        );
+
+        let data = self.gql_post(&body).await?;
+        let edges = match data["data"]["game"]["streams"]["edges"].as_array() {
+            Some(a) => a.clone(),
+            None => {
+                return Ok(LiveStreamsPage {
+                    items: vec![],
+                    next_cursor: None,
+                    has_more: false,
+                })
+            }
+        };
+
+        let game_name = category_name.to_string();
+        let items: Vec<LiveStream> = edges
+            .iter()
+            .filter_map(|edge| {
+                let node = &edge["node"];
+                if node.is_null() || node["broadcaster"]["login"].is_null() {
+                    return None;
+                }
+                Some(LiveStream {
+                    id: node["id"].as_str().unwrap_or("").to_string(),
+                    title: node["title"].as_str().unwrap_or("Live stream").to_string(),
+                    preview_image_url: node["previewImageURL"].as_str().unwrap_or("").to_string(),
+                    viewer_count: node["viewersCount"].as_u64().unwrap_or(0),
+                    language: node["language"].as_str().map(|s| s.to_string()),
+                    started_at: node["createdAt"].as_str().unwrap_or("").to_string(),
+                    broadcaster: LiveBroadcaster {
+                        id: node["broadcaster"]["id"].as_str().unwrap_or("").to_string(),
+                        login: node["broadcaster"]["login"].as_str().unwrap_or("").to_string(),
+                        display_name: node["broadcaster"]["displayName"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string(),
+                        profile_image_url: node["broadcaster"]["profileImageURL"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string(),
+                    },
+                    game: Some(LiveGame {
+                        id: None,
+                        name: game_name.clone(),
+                        box_art_url: None,
+                    }),
+                })
+            })
+            .collect();
+
+        let last_cursor = edges
+            .last()
+            .and_then(|e| e["cursor"].as_str())
+            .map(|s| s.to_string());
+        let has_next = data["data"]["game"]["streams"]["pageInfo"]["hasNextPage"]
+            .as_bool()
+            .unwrap_or(false);
+
+        let page = LiveStreamsPage {
+            items,
+            next_cursor: if has_next { last_cursor.clone() } else { None },
+            has_more: has_next && last_cursor.is_some(),
+        };
+
+        let val = serde_json::to_value(&page).unwrap_or_default();
+        self.cache.set(cache_key, val, 25);
+        Ok(page)
+    }
+
+    pub async fn search_live_streams_by_query(
+        &self,
+        query: &str,
+        first: usize,
+    ) -> Result<LiveStreamsPage, String> {
+        let safe_first = first.clamp(4, 48);
+        let escaped_q = gql_escape(query);
+        let cache_key = format!(
+            "live_search_{}_{}",
+            create_simple_hash(query),
+            safe_first
+        );
+
+        if let Some(cached) = self.cache.get(&cache_key) {
+            return serde_json::from_value(cached).map_err(|e| e.to_string());
+        }
+
+        // Search by category name (game streams) + channel name search in parallel
+        let cat_body = format!(
+            r#"{{"query":"query {{ game(name: \"{escaped_q}\") {{ streams(first: {safe_first}) {{ edges {{ cursor node {{ id title viewersCount previewImageURL(width: 640, height: 360) createdAt language broadcaster {{ id login displayName profileImageURL(width: 70) }} }} }} pageInfo {{ hasNextPage }} }} }} }}"}}"#
+        );
+        let chan_body = format!(
+            r#"{{"query":"query {{ searchFor(userQuery: \"{escaped_q}\", target: {{ index: \"CHANNEL\" }}, first: {safe_first}) {{ results {{ item {{ ... on User {{ id login displayName profileImageURL(width: 70) stream {{ id title viewersCount previewImageURL(width: 640, height: 360) createdAt language game {{ id name }} }} }} }} }} }} }}"}}"#
+        );
+
+        let (cat_result, chan_result) =
+            tokio::join!(self.gql_post(&cat_body), self.gql_post(&chan_body));
+
+        let mut items: Vec<LiveStream> = Vec::new();
+        let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        if let Ok(data) = cat_result {
+            let game_name = query.to_string();
+            if let Some(edges) = data["data"]["game"]["streams"]["edges"].as_array() {
+                for edge in edges {
+                    let node = &edge["node"];
+                    if node.is_null() || node["broadcaster"]["login"].is_null() {
+                        continue;
+                    }
+                    let id = node["id"].as_str().unwrap_or("").to_string();
+                    if id.is_empty() || seen_ids.contains(&id) {
+                        continue;
+                    }
+                    seen_ids.insert(id.clone());
+                    items.push(LiveStream {
+                        id,
+                        title: node["title"].as_str().unwrap_or("Live stream").to_string(),
+                        preview_image_url: node["previewImageURL"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string(),
+                        viewer_count: node["viewersCount"].as_u64().unwrap_or(0),
+                        language: node["language"].as_str().map(|s| s.to_string()),
+                        started_at: node["createdAt"].as_str().unwrap_or("").to_string(),
+                        broadcaster: LiveBroadcaster {
+                            id: node["broadcaster"]["id"].as_str().unwrap_or("").to_string(),
+                            login: node["broadcaster"]["login"].as_str().unwrap_or("").to_string(),
+                            display_name: node["broadcaster"]["displayName"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_string(),
+                            profile_image_url: node["broadcaster"]["profileImageURL"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_string(),
+                        },
+                        game: Some(LiveGame {
+                            id: None,
+                            name: game_name.clone(),
+                            box_art_url: None,
+                        }),
+                    });
+                }
+            }
+        }
+
+        if let Ok(data) = chan_result {
+            if let Some(results) = data["data"]["searchFor"]["results"].as_array() {
+                for result in results {
+                    let user = &result["item"];
+                    if user.is_null() || user["stream"].is_null() {
+                        continue;
+                    }
+                    let stream = &user["stream"];
+                    let id = stream["id"].as_str().unwrap_or("").to_string();
+                    if id.is_empty() || seen_ids.contains(&id) {
+                        continue;
+                    }
+                    seen_ids.insert(id.clone());
+                    let game = if stream["game"].is_null() {
+                        None
+                    } else {
+                        Some(LiveGame {
+                            id: stream["game"]["id"].as_str().map(|s| s.to_string()),
+                            name: stream["game"]["name"].as_str().unwrap_or("").to_string(),
+                            box_art_url: None,
+                        })
+                    };
+                    items.push(LiveStream {
+                        id,
+                        title: stream["title"].as_str().unwrap_or("Live stream").to_string(),
+                        preview_image_url: stream["previewImageURL"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string(),
+                        viewer_count: stream["viewersCount"].as_u64().unwrap_or(0),
+                        language: stream["language"].as_str().map(|s| s.to_string()),
+                        started_at: stream["createdAt"].as_str().unwrap_or("").to_string(),
+                        broadcaster: LiveBroadcaster {
+                            id: user["id"].as_str().unwrap_or("").to_string(),
+                            login: user["login"].as_str().unwrap_or("").to_string(),
+                            display_name: user["displayName"].as_str().unwrap_or("").to_string(),
+                            profile_image_url: user["profileImageURL"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_string(),
+                        },
+                        game,
+                    });
+                }
+            }
+        }
+
+        items.sort_by(|a, b| b.viewer_count.cmp(&a.viewer_count));
+
+        let page = LiveStreamsPage {
+            has_more: false,
+            next_cursor: None,
+            items,
+        };
+        let val = serde_json::to_value(&page).unwrap_or_default();
+        self.cache.set(cache_key, val, 30);
+        Ok(page)
     }
 
     pub async fn fetch_user_info(&self, username: &str) -> Result<UserInfo, String> {
@@ -1201,6 +1560,35 @@ impl TwitchService {
         scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(120);
 
+        // ── Diversity pass: cap same-channel VODs to avoid feed monopolisation ──
+        {
+            let mut channel_count: HashMap<String, usize> = HashMap::new();
+            scored.retain(|sv| {
+                let login = sv
+                    .vod
+                    .owner
+                    .as_ref()
+                    .map(|o| o.login.to_lowercase())
+                    .unwrap_or_default();
+                // Subs/watched channels get up to 3 slots; others get 2
+                let max_slots = if subs_set.contains(&login)
+                    || sv.vod.owner.as_ref().map(|o| {
+                        profile.channel_scores.contains_key(&o.login.to_lowercase())
+                    }).unwrap_or(false)
+                {
+                    3
+                } else {
+                    2
+                };
+                let count = channel_count.entry(login).or_insert(0);
+                if *count < max_slots {
+                    *count += 1;
+                    true
+                } else {
+                    false
+                }
+            });
+        }
         let total_lang_weight: f64 = profile.language_scores.values().sum();
         let foreign_weight: f64 = profile
             .language_scores

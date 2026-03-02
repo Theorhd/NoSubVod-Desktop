@@ -4,8 +4,16 @@ import { LiveStream, LiveStreamsPage, SubEntry } from '../../shared/types';
 
 const PAGE_SIZE = 24;
 
+type LiveMode = 'all' | 'search' | 'category';
+
 type StreamWithScore = LiveStream & {
   __score: number;
+};
+
+type TopCategory = {
+  id: string;
+  name: string;
+  boxArtURL: string;
 };
 
 function formatViewers(value: number): string {
@@ -54,6 +62,13 @@ function rankStreams(streams: LiveStream[], subLogins: Set<string>): LiveStream[
 export default function Live() {
   const navigate = useNavigate();
 
+  // ── Mode & search state ───────────────────────────────────────────────────
+  const [mode, setMode] = useState<LiveMode>('all');
+  const [searchInput, setSearchInput] = useState('');
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [topCategories, setTopCategories] = useState<TopCategory[]>([]);
+
+  // ── Stream list state ─────────────────────────────────────────────────────
   const [streams, setStreams] = useState<LiveStream[]>([]);
   const [subLogins, setSubLogins] = useState<Set<string>>(new Set());
   const [isInitialLoading, setIsInitialLoading] = useState(true);
@@ -68,6 +83,17 @@ export default function Live() {
   const isFetchingRef = useRef(false);
   const isInitialLoadingRef = useRef(true);
 
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const resetStreamState = useCallback(() => {
+    setStreams([]);
+    seenIdsRef.current = new Set();
+    setNextCursor(null);
+    setHasMore(true);
+    setError('');
+    isInitialLoadingRef.current = true;
+    isFetchingRef.current = false;
+  }, []);
+
   const appendRankedStreams = useCallback(
     (incoming: LiveStream[]) => {
       const fresh = incoming.filter((stream) => {
@@ -75,22 +101,20 @@ export default function Live() {
         seenIdsRef.current.add(stream.id);
         return true;
       });
-
       if (fresh.length === 0) return;
-
       setStreams((current) => rankStreams([...current, ...fresh], subLogins));
     },
     [subLogins]
   );
 
-  const fetchPage = useCallback(
+  // ── Fetchers ──────────────────────────────────────────────────────────────
+  const fetchAllPage = useCallback(
     async (cursor?: string | null) => {
       if (isFetchingRef.current) return;
       if (!isInitialLoadingRef.current && !hasMore) return;
 
       isFetchingRef.current = true;
       setError('');
-
       if (isInitialLoadingRef.current) {
         setIsInitialLoading(true);
       } else {
@@ -98,15 +122,11 @@ export default function Live() {
       }
 
       try {
-        const params = new URLSearchParams({
-          limit: String(PAGE_SIZE),
-        });
+        const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
         if (cursor) params.set('cursor', cursor);
-
         const res = await fetch(`/api/live?${params.toString()}`);
         if (!res.ok) throw new Error('Failed to load live streams');
         const payload = (await res.json()) as LiveStreamsPage;
-
         appendRankedStreams(payload.items || []);
         setNextCursor(payload.nextCursor || null);
         setHasMore(Boolean(payload.hasMore));
@@ -122,43 +142,109 @@ export default function Live() {
     [appendRankedStreams, hasMore]
   );
 
+  const fetchCategoryPage = useCallback(
+    async (name: string, cursor?: string | null) => {
+      if (isFetchingRef.current) return;
+      if (!isInitialLoadingRef.current && !hasMore) return;
+
+      isFetchingRef.current = true;
+      setError('');
+      if (isInitialLoadingRef.current) {
+        setIsInitialLoading(true);
+      } else {
+        setIsLoadingMore(true);
+      }
+
+      try {
+        const params = new URLSearchParams({ name, limit: String(PAGE_SIZE) });
+        if (cursor) params.set('cursor', cursor);
+        const res = await fetch(`/api/live/category?${params.toString()}`);
+        if (!res.ok) throw new Error('Failed to load category streams');
+        const payload = (await res.json()) as LiveStreamsPage;
+        appendRankedStreams(payload.items || []);
+        setNextCursor(payload.nextCursor || null);
+        setHasMore(Boolean(payload.hasMore));
+      } catch (err: any) {
+        setError(err?.message || 'Failed to load category streams');
+      } finally {
+        isFetchingRef.current = false;
+        isInitialLoadingRef.current = false;
+        setIsInitialLoading(false);
+        setIsLoadingMore(false);
+      }
+    },
+    [appendRankedStreams, hasMore]
+  );
+
+  const fetchSearch = useCallback(async (q: string) => {
+    isFetchingRef.current = true;
+    setError('');
+    setIsInitialLoading(true);
+    try {
+      const res = await fetch(`/api/live/search?q=${encodeURIComponent(q)}&limit=${PAGE_SIZE}`);
+      if (!res.ok) throw new Error('Search failed');
+      const payload = (await res.json()) as LiveStreamsPage;
+      const fresh = (payload.items || []).filter((s) => {
+        if (seenIdsRef.current.has(s.id)) return false;
+        seenIdsRef.current.add(s.id);
+        return true;
+      });
+      setStreams(fresh);
+      setHasMore(false);
+      setNextCursor(null);
+    } catch (err: any) {
+      setError(err?.message || 'Search failed');
+    } finally {
+      isFetchingRef.current = false;
+      isInitialLoadingRef.current = false;
+      setIsInitialLoading(false);
+    }
+  }, []);
+
+  // ── Load subs + initial data ──────────────────────────────────────────────
   useEffect(() => {
-    const loadSubs = async () => {
+    const init = async () => {
+      // Load subs
       try {
         const settingsRes = await fetch('/api/settings');
         let oneSync = false;
-
         if (settingsRes.ok) {
-          const settings = (await settingsRes.json()) as { oneSync?: boolean };
-          oneSync = Boolean(settings.oneSync);
+          const s = (await settingsRes.json()) as { oneSync?: boolean };
+          oneSync = Boolean(s.oneSync);
         }
-
         let subEntries: SubEntry[] = [];
         if (oneSync) {
           const subsRes = await fetch('/api/subs');
-          if (subsRes.ok) {
-            subEntries = (await subsRes.json()) as SubEntry[];
-          }
+          if (subsRes.ok) subEntries = (await subsRes.json()) as SubEntry[];
         } else {
           const local = localStorage.getItem('nsv_subs');
           subEntries = local ? (JSON.parse(local) as SubEntry[]) || [] : [];
         }
-
-        setSubLogins(new Set(subEntries.map((entry) => entry.login.toLowerCase())));
+        setSubLogins(new Set(subEntries.map((e) => e.login.toLowerCase())));
       } catch {
         setSubLogins(new Set());
       }
-    };
 
-    void loadSubs();
-    void fetchPage(null);
-  }, [fetchPage]);
+      // Load top categories (non-blocking)
+      fetch('/api/live/top-categories')
+        .then((r) => (r.ok ? r.json() : []))
+        .then((cats: TopCategory[]) => setTopCategories(cats || []))
+        .catch(() => {});
+
+      // First page of "all"
+      void fetchAllPage(null);
+    };
+    void init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     setStreams((current) => rankStreams(current, subLogins));
   }, [subLogins]);
 
+  // ── Infinite scroll observer (only in all/category modes) ────────────────
   useEffect(() => {
+    if (mode === 'search') return;
     if (!sentinelRef.current) return;
 
     observerRef.current?.disconnect();
@@ -167,25 +253,68 @@ export default function Live() {
         const [entry] = entries;
         if (!entry?.isIntersecting) return;
         if (isFetchingRef.current || !hasMore) return;
-        void fetchPage(nextCursor);
+        if (mode === 'all') void fetchAllPage(nextCursor);
+        if (mode === 'category' && activeCategory)
+          void fetchCategoryPage(activeCategory, nextCursor);
       },
-      {
-        root: null,
-        rootMargin: '520px 0px',
-        threshold: 0.01,
-      }
+      { root: null, rootMargin: '520px 0px', threshold: 0.01 }
     );
-
     observerRef.current.observe(sentinelRef.current);
+    return () => observerRef.current?.disconnect();
+  }, [fetchAllPage, fetchCategoryPage, hasMore, nextCursor, mode, activeCategory]);
 
-    return () => {
-      observerRef.current?.disconnect();
-    };
-  }, [fetchPage, hasMore, nextCursor]);
+  // ── Mode switching helpers ────────────────────────────────────────────────
+  const switchToAll = useCallback(() => {
+    setMode('all');
+    setActiveCategory(null);
+    setSearchInput('');
+    resetStreamState();
+    void fetchAllPage(null);
+  }, [resetStreamState, fetchAllPage]);
+
+  const switchToCategory = useCallback(
+    (name: string) => {
+      setMode('category');
+      setActiveCategory(name);
+      setSearchInput('');
+      resetStreamState();
+      void fetchCategoryPage(name, null);
+    },
+    [resetStreamState, fetchCategoryPage]
+  );
+
+  const handleSearchSubmit = useCallback(
+    (e: React.SubmitEvent<HTMLFormElement>) => {
+      e.preventDefault();
+      const q = searchInput.trim();
+      if (!q) {
+        switchToAll();
+        return;
+      }
+      setMode('search');
+      setActiveCategory(null);
+      resetStreamState();
+      void fetchSearch(q);
+    },
+    [searchInput, resetStreamState, fetchSearch, switchToAll]
+  );
+
+  // ── UI labels ─────────────────────────────────────────────────────────────
+  const emptyStateMessage = useMemo(() => {
+    if (mode === 'search') return 'Aucun live trouvé pour cette recherche.';
+    if (mode === 'category') return `Aucun live pour la catégorie "${activeCategory}".`;
+    return 'Aucun stream disponible pour le moment.';
+  }, [mode, activeCategory]);
+
+  const headerLabel = useMemo(() => {
+    if (mode === 'category' && activeCategory) return activeCategory;
+    if (mode === 'search') return `"${searchInput}"`;
+    return 'En direct maintenant';
+  }, [mode, activeCategory, searchInput]);
 
   const streamCountLabel = useMemo(() => {
-    if (streams.length <= 0) return 'Live now on Twitch';
-    return `${streams.length} stream${streams.length > 1 ? 's' : ''} loaded`;
+    if (streams.length <= 0) return 'Aucun stream chargé';
+    return `${streams.length} stream${streams.length > 1 ? 's' : ''} chargé${streams.length > 1 ? 's' : ''}`;
   }, [streams.length]);
 
   return (
@@ -193,12 +322,7 @@ export default function Live() {
       <div className="top-bar">
         <div className="bar-main">
           <h1>
-            <button
-              className="logo-btn"
-              onClick={() => navigate('/')}
-              aria-label="Home"
-              type="button"
-            >
+            <button className="logo-btn" onClick={switchToAll} aria-label="Home" type="button">
               Live Twitch
             </button>
           </h1>
@@ -206,38 +330,79 @@ export default function Live() {
       </div>
 
       <div className="container">
+        {/* ── Search bar ── */}
+        <div className="card live-search-card">
+          <form className="live-search-form" onSubmit={handleSearchSubmit}>
+            <input
+              type="text"
+              className="live-search-input"
+              placeholder="Chercher par catégorie, mot-clé, chaîne..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              aria-label="Rechercher des lives"
+            />
+            <button type="submit" className="action-btn">
+              Rechercher
+            </button>
+            {mode !== 'all' && (
+              <button type="button" className="secondary-btn" onClick={switchToAll}>
+                ✕ Réinitialiser
+              </button>
+            )}
+          </form>
+
+          {/* ── Top 5 categories ── */}
+          {topCategories.length > 0 && (
+            <div className="live-top-categories">
+              <span className="live-cats-label">Populaires&nbsp;:</span>
+              {topCategories.map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  className={`live-cat-pill${activeCategory === cat.name ? ' active' : ''}`}
+                  onClick={() =>
+                    activeCategory === cat.name ? switchToAll() : switchToCategory(cat.name)
+                  }
+                  title={cat.name}
+                >
+                  {cat.boxArtURL && (
+                    <img src={cat.boxArtURL} alt="" className="live-cat-pill-art" />
+                  )}
+                  <span>{cat.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── Section header ── */}
         <div className="card live-intro-card">
-          <h2>En direct maintenant</h2>
-          <p className="card-subtitle">
-            Flux dynamique classé par popularité, abonnements et fraîcheur du live.
-          </p>
+          <h2>{headerLabel}</h2>
+          {mode === 'all' && (
+            <p className="card-subtitle">
+              Flux dynamique classé par popularité, abonnements et fraîcheur du live.
+            </p>
+          )}
           <div className="live-count">{streamCountLabel}</div>
         </div>
 
-        {isInitialLoading && <div className="status-line">Loading live streams...</div>}
+        {isInitialLoading && <div className="status-line">Chargement des streams...</div>}
         {error && <div className="error-text">{error}</div>}
 
         {!isInitialLoading && !error && streams.length === 0 && (
-          <div className="empty-state">No live streams available right now.</div>
+          <div className="empty-state">{emptyStateMessage}</div>
         )}
 
         {!isInitialLoading && streams.length > 0 && (
           <div className="vod-grid">
             {streams.map((stream) => (
-              <div
+              <button
                 key={stream.id}
+                type="button"
                 onClick={() =>
                   navigate(`/player?live=${encodeURIComponent(stream.broadcaster.login)}`)
                 }
                 className="vod-card live-card"
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    navigate(`/player?live=${encodeURIComponent(stream.broadcaster.login)}`);
-                  }
-                }}
               >
                 <div className="vod-thumb-wrap">
                   <img
@@ -262,12 +427,29 @@ export default function Live() {
                   </div>
                   <h3 title={stream.title}>{stream.title}</h3>
                   <div className="vod-meta-row">
-                    <span>{stream.game?.name || 'No category'}</span>
+                    {stream.game?.name && (
+                      <button
+                        type="button"
+                        className="meta-tag-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          switchToCategory(stream.game!.name);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.stopPropagation();
+                            switchToCategory(stream.game!.name);
+                          }
+                        }}
+                      >
+                        {stream.game.name}
+                      </button>
+                    )}
                     <span className="live-viewers">{formatViewers(stream.viewerCount)}</span>
                   </div>
                   <div className="vod-date">Uptime: {formatUptime(stream.startedAt)}</div>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         )}
@@ -275,7 +457,7 @@ export default function Live() {
         <div ref={sentinelRef} className="live-load-sentinel" aria-hidden="true" />
 
         {!isInitialLoading && isLoadingMore && (
-          <div className="status-line">Loading more streams...</div>
+          <div className="status-line">Chargement de plus de streams...</div>
         )}
       </div>
     </>

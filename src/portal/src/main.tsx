@@ -28,7 +28,9 @@ class AppErrorBoundary extends React.Component<React.PropsWithChildren, AppError
   public override render() {
     if (this.state.hasError) {
       return (
-        <div style={{ padding: '20px', color: '#f7f8ff', background: '#07080f', minHeight: '100vh' }}>
+        <div
+          style={{ padding: '20px', color: '#f7f8ff', background: '#07080f', minHeight: '100vh' }}
+        >
           <h2 style={{ marginTop: 0 }}>Portal error</h2>
           <p style={{ marginBottom: 0 }}>{this.state.message || 'Unknown runtime error'}</p>
         </div>

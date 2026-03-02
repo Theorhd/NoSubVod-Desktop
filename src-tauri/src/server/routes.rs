@@ -97,6 +97,21 @@ struct HistoryListQuery {
 #[derive(Deserialize)]
 struct SearchCategoryQuery {
     name: Option<String>,
+    cursor: Option<String>,
+    limit: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct LiveCategoryQuery {
+    name: Option<String>,
+    cursor: Option<String>,
+    limit: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct LiveSearchQuery {
+    q: Option<String>,
+    limit: Option<String>,
 }
 
 // ── Route handlers ────────────────────────────────────────────────────────────
@@ -264,10 +279,24 @@ async fn handle_search_category_vods(
     let name = q.name.unwrap_or_default();
     let name = name.trim().to_string();
     if name.is_empty() {
-        return Json(Value::Array(vec![])).into_response();
+        return Json(serde_json::json!({ "items": [], "hasMore": false, "nextCursor": null })).into_response();
     }
-    let results = state.twitch.fetch_game_vods_by_name(&name, 36).await;
-    Json(results).into_response()
+    let limit = q
+        .limit
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(36)
+        .clamp(4, 50);
+    let cursor = q.cursor.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let (items, next_cursor, has_more) = state
+        .twitch
+        .fetch_category_vods_page(&name, limit, cursor.as_deref())
+        .await;
+    Json(serde_json::json!({
+        "items": items,
+        "hasMore": has_more,
+        "nextCursor": next_cursor,
+    }))
+    .into_response()
 }
 
 async fn handle_trends(State(state): State<ApiState>) -> Response {
@@ -295,6 +324,56 @@ async fn handle_live(
         .fetch_live_streams(limit, cursor.as_deref())
         .await
     {
+        Ok(page) => Json(page).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+async fn handle_live_top_categories(State(state): State<ApiState>) -> Response {
+    match state.twitch.fetch_top_live_categories().await {
+        Ok(cats) => Json(cats).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+async fn handle_live_category(
+    Query(q): Query<LiveCategoryQuery>,
+    State(state): State<ApiState>,
+) -> Response {
+    let name = q.name.unwrap_or_default().trim().to_string();
+    if name.is_empty() {
+        return bad_request("Missing category name");
+    }
+    let limit = q
+        .limit
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(24)
+        .clamp(8, 48);
+    let cursor = q.cursor.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    match state
+        .twitch
+        .fetch_live_streams_by_category(&name, limit, cursor.as_deref())
+        .await
+    {
+        Ok(page) => Json(page).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+async fn handle_live_search(
+    Query(q): Query<LiveSearchQuery>,
+    State(state): State<ApiState>,
+) -> Response {
+    let query = q.q.unwrap_or_default().trim().to_string();
+    if query.is_empty() {
+        return bad_request("Missing query");
+    }
+    let limit = q
+        .limit
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(24)
+        .clamp(8, 48);
+    match state.twitch.search_live_streams_by_query(&query, limit).await {
         Ok(page) => Json(page).into_response(),
         Err(e) => internal(e),
     }
@@ -475,6 +554,9 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         // Trends & Live
         .route("/trends", get(handle_trends))
         .route("/live", get(handle_live))
+        .route("/live/top-categories", get(handle_live_top_categories))
+        .route("/live/search", get(handle_live_search))
+        .route("/live/category", get(handle_live_category))
         .route("/live/status", get(handle_live_status))
         // History
         .route("/history", get(handle_get_history).post(handle_post_history))

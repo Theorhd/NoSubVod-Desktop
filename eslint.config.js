@@ -1,16 +1,18 @@
 const reactPlugin = require('eslint-plugin-react');
+const reactHooksPlugin = require('eslint-plugin-react-hooks');
 const prettierConfig = require('eslint-config-prettier');
 const tseslint = require('typescript-eslint');
 
 module.exports = tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'build/**', 'releasenotes/**'],
+    ignores: ['dist/**', 'node_modules/**', 'build/**', 'releasenotes/**', 'src-tauri/target/**'],
   },
   ...tseslint.configs.recommended,
   {
     files: ['**/*.{js,mjs,cjs,ts,jsx,tsx}'],
     plugins: {
       react: reactPlugin,
+      'react-hooks': reactHooksPlugin,
     },
     languageOptions: {
       parserOptions: {
@@ -27,6 +29,7 @@ module.exports = tseslint.config(
     },
     rules: {
       ...reactPlugin.configs.recommended.rules,
+      ...reactHooksPlugin.configs.recommended.rules,
       'react/react-in-jsx-scope': 'off',
       ...prettierConfig.rules,
       '@typescript-eslint/no-require-imports': 'off',
