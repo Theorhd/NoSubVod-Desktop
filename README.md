@@ -1,100 +1,105 @@
 # 🚀 NoSubVOD Desktop
 
-NoSubVOD Desktop est une application locale qui permet de regarder des VODs Twitch et des lives depuis un portail web accessible sur votre réseau local, avec reprise de lecture, historique, watchlist et synchronisation optionnelle des données.
+NoSubVOD Desktop est une application locale pour regarder des VODs et des lives Twitch depuis n’importe quel appareil du réseau local (mobile, tablette, TV, PC), avec historique, watchlist et portail web intégré.
+
+## 🆕 v0.2.0 — Nouvelle architecture Tauri (Rust)
+
+La version 0.2.0 migre le desktop vers **Tauri**.
+
+- **Poids de l’ancienne installation**: `701 Mo`
+- **Poids de la nouvelle installation**: `16,3 Mo`
+- **Économie mémoire**: consommation RAM **divisée par 8**
+
+Résultat: démarrage plus rapide, binaire bien plus léger et meilleure stabilité générale.
+
+---
 
 ## ✨ Fonctionnalités
 
-### 🔓 Lecture VOD + Live
+### 🔓 VOD + Live Twitch
 
-- Lecture des **VODs Twitch** via playlist HLS générée côté serveur local.
-- Lecture des **lives Twitch** via endpoint local (`/api/live/:login/master.m3u8`) pour éviter les problèmes d’intégration iframe.
-- Qualité vidéo sélectionnable (Auto + niveaux) et indicateur de qualité active dans le player.
+- Lecture des VOD via HLS généré côté serveur local.
+- Lecture des lives via endpoint local `/api/live/:login/master.m3u8`.
+- Sélecteur de qualité (Auto + niveaux manuels) dans le player.
 
 ### 🏠 Portail local multi-appareils
 
-- Serveur embarqué accessible sur le LAN (port `23455`).
-- QR Code affiché dans l’app desktop pour ouvrir rapidement le portail sur mobile/tablette.
-- Navigation simple: Home, Live, Search, Trends, Channel, Player, History, Settings.
+- Serveur local accessible sur le LAN.
+- QR code affiché côté desktop pour ouverture rapide du portail.
+- Navigation: Home, Live, Search, Trends, Channel, Player, History, Settings.
 
 ### 🎬 Expérience player
 
-- **Desktop**: player maison complet (play/pause, seek, volume, mute, vitesse, qualité, fullscreen).
-- **iOS / iPadOS**: fallback automatique vers le player natif Apple.
-- Contrôles desktop auto-masqués après inactivité souris (3s), réaffichés au mouvement.
-- En fullscreen: affichage vidéo plein écran sans barre top parasite.
-
-### 📡 Live & abonnements
-
-- Détection live des subs sur Home avec badge **LIVE** sur l’avatar.
-- Sur la page Channel: section **Live** en tête (si actif), puis section **VODs**.
-- Clic direct vers le stream live depuis Home/Channel/Search/Live.
+- Player desktop complet (lecture, seek, volume, vitesse, qualité, fullscreen).
+- Fallback natif iOS/iPadOS.
+- Contrôles auto-masqués après inactivité, réaffichage au mouvement.
 
 ### 💾 Données utilisateur
 
-- Historique de lecture (reprise automatique proche du dernier timecode).
-- Watchlist (ajout/retrait rapide).
-- Mode **OneSync** (optionnel) pour partager données et subs entre appareils connectés au même serveur.
+- Historique de lecture avec reprise.
+- Watchlist.
+- Synchronisation locale optionnelle (OneSync).
 
 ---
 
 ## 🧱 Stack technique
 
-- **Desktop**: Electron
-- **Frontend portail**: React + Vite + TypeScript
-- **Backend local**: Express + TypeScript
-- **Build backend**: tsup
-- **UI**: CSS custom
+- **Desktop shell**: Tauri v2 (Rust)
+- **Backend local**: Rust (`src-tauri/src/server`)
+- **Portail LAN**: React + Vite + TypeScript (`src/portal`)
+- **UI desktop**: React + Vite + TypeScript (`src/renderer`)
 
 ---
 
-## 📁 Structure (résumé)
+## 📁 Architecture du repo
 
-- `src/main/` : bootstrap Electron + fenêtre + systray
-- `src/server/` : API locale + services Twitch + persistance
-- `src/portal/` : portail web utilisateur (LAN)
-- `src/renderer/` : UI desktop d’état serveur (IP, URL, QR)
+- `src/portal/` : application web servie aux appareils du réseau local
+- `src/renderer/` : interface desktop (fenêtre principale)
+- `src/shared/` : types partagés TypeScript
+- `src-tauri/src/` : cœur Rust (commands Tauri, serveur local, routes Twitch, historique)
+- `src-tauri/tauri.conf.json` : configuration packaging/resources
 
 ---
 
-## 🛠 Installation & usage
+## 🛠 Développement
 
 ### Prérequis
 
-- Node.js 18+
+- Node.js 20+
+- Rust stable
 - npm
 
-### Développement
+### Installation
 
 ```bash
-npm install
+npm ci
+```
+
+### Lancer en dev
+
+```bash
 npm run dev
 ```
 
-### Vérification types
+### Qualité code
 
 ```bash
+npm run lint
 npm run type-check
 ```
 
-### Build
+### Build desktop
 
 ```bash
 npm run build
 ```
 
-### Démarrage (build)
-
-```bash
-npm start
-```
-
 ---
 
-## ⚠️ Notes importantes
+## ⚠️ Notes
 
-- Le serveur local écoute sur `0.0.0.0:23455`.
-- L’accès depuis mobile/tablette doit se faire sur le **même réseau local**.
-- La disponibilité de certains contenus dépend de Twitch et des variations de leurs endpoints.
+- Le portail local doit être accessible sur le même réseau local que l’appareil client.
+- Certaines disponibilités de contenus dépendent des endpoints Twitch.
 
 ---
 
