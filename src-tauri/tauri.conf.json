@@ -33,6 +33,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": ["../dist/portal"],
     "icon": ["icons/icon.png", "icons/icon.ico"],
     "windows": {
       "nsis": {

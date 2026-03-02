@@ -11,6 +11,8 @@ use base64::Engine;
 use image::ImageEncoder;
 use qrcode::QrCode;
 use tauri::AppHandle;
+#[cfg(not(debug_assertions))]
+use tauri::Manager;
 use tokio::net::TcpListener;
 
 use history::HistoryStore;
@@ -95,26 +97,21 @@ fn generate_qr_data_url(data: &str) -> String {
     format!("data:image/png;base64,{}", B64.encode(&buffer))
 }
 
-pub async fn start_server(state: Arc<AppState>, _app: AppHandle) {
-    // Resolve portal dist directory (relative to the binary in production)
-    let portal_dist = {
-        #[cfg(debug_assertions)]
-        {
-            None // In dev, Vite serves the portal on port 5173
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            let exe = std::env::current_exe().ok();
-            exe.and_then(|p| p.parent().map(|d| d.join("portal")))
-        }
-    };
+pub async fn start_server(state: Arc<AppState>, app: AppHandle) {
+    // Resolve portal dist directory in release (bundled resources first).
+    let portal_dist = resolve_portal_dist(&app);
 
-    let router = build_router(state.api_state.clone(), portal_dist);
+    let router = build_router(state.api_state.clone(), portal_dist.clone());
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], SERVER_PORT));
 
     match TcpListener::bind(addr).await {
         Ok(listener) => {
             eprintln!("[NoSubVOD] HTTP server listening on {addr}");
+            #[cfg(not(debug_assertions))]
+            match &portal_dist {
+                Some(path) => eprintln!("[NoSubVOD] Serving portal from {}", path.display()),
+                None => eprintln!("[NoSubVOD] Portal static files not found in bundle resources"),
+            }
             if let Err(e) = axum::serve(listener, router).await {
                 eprintln!("[NoSubVOD] Server error: {e}");
             }
@@ -122,5 +119,37 @@ pub async fn start_server(state: Arc<AppState>, _app: AppHandle) {
         Err(e) => {
             eprintln!("[NoSubVOD] Failed to bind port {SERVER_PORT}: {e}");
         }
+    }
+}
+
+fn resolve_portal_dist(_app: &AppHandle) -> Option<PathBuf> {
+    #[cfg(debug_assertions)]
+    {
+        None
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let mut candidates: Vec<PathBuf> = Vec::new();
+
+        if let Ok(resource_dir) = _app.path().resource_dir() {
+            candidates.push(resource_dir.join("portal"));
+            candidates.push(resource_dir.join("dist").join("portal"));
+            candidates.push(resource_dir.join("_up_").join("portal"));
+            candidates.push(resource_dir.join("_up_").join("dist").join("portal"));
+        }
+
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                candidates.push(exe_dir.join("portal"));
+                candidates.push(exe_dir.join("resources").join("portal"));
+                candidates.push(exe_dir.join("resources").join("dist").join("portal"));
+                candidates.push(exe_dir.join("_up_").join("portal"));
+                candidates.push(exe_dir.join("_up_").join("dist").join("portal"));
+            }
+        }
+
+        candidates
+            .into_iter()
+            .find(|path| path.join("index.html").exists())
     }
 }
