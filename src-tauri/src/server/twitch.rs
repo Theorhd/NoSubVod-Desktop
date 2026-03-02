@@ -76,6 +76,12 @@ pub struct ProxyManager {
     refresh_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
+impl Default for ProxyManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProxyManager {
     pub fn new() -> Self {
         Self {
