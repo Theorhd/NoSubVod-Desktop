@@ -75,6 +75,9 @@ jobs:
             src-tauri/target/
           key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Ensure portal resource path exists
+        run: mkdir -p dist/portal
+
       - name: Run Clippy
         run: cargo clippy -- -D warnings
         working-directory: src-tauri
