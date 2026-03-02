@@ -123,7 +123,11 @@ export default function Search() {
                   key={game.id}
                   type="button"
                   className="category-card"
-                  onClick={() => navigate(`/channel?category=${encodeURIComponent(game.name)}`)}
+                  onClick={() =>
+                    navigate(
+                      `/channel?category=${encodeURIComponent(game.name)}&categoryId=${encodeURIComponent(game.id)}`
+                    )
+                  }
                 >
                   <img src={game.boxArtURL} alt={game.name} />
                   <span>{game.name}</span>
@@ -138,12 +142,7 @@ export default function Search() {
             <h2>Live Streams</h2>
             <div className="vod-grid">
               {liveStreams.map((user) => (
-                <button
-                  key={user.id}
-                  type="button"
-                  onClick={() => navigate(`/player?live=${encodeURIComponent(user.login)}`)}
-                  className="vod-card live-card"
-                >
+                <div key={user.id} className="vod-card live-card">
                   <div className="vod-thumb-wrap">
                     <img
                       src={
@@ -162,14 +161,31 @@ export default function Search() {
                       )}
                       <span>{user.displayName}</span>
                     </div>
-                    <h3 title={user.stream?.title}>{user.stream?.title}</h3>
+                    <h3 title={user.stream?.title}>
+                      <button
+                        type="button"
+                        className="stretched-link"
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: 'inherit',
+                          font: 'inherit',
+                          padding: 0,
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => navigate(`/player?live=${encodeURIComponent(user.login)}`)}
+                      >
+                        {user.stream?.title}
+                      </button>
+                    </h3>
                     <div className="vod-meta-row">
                       <span className="live-viewers">
                         {formatViewers(user.stream?.viewersCount || 0)}
                       </span>
                     </div>
                   </div>
-                </button>
+                </div>
               ))}
             </div>
           </div>

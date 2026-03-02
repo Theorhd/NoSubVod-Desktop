@@ -1,13 +1,15 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
 use super::types::{
-    HistoryEntry, LiveBroadcaster, LiveGame, LiveStream, LiveStreamsPage, SubEntry, Vod, UserInfo,
+    ExperienceSettings, HistoryEntry, LiveBroadcaster, LiveGame, LiveStream, LiveStreamsPage,
+    SubEntry, UserInfo, Vod,
 };
 
 // ── Simple in-process TTL cache ────────────────────────────────────────────────
@@ -56,10 +58,303 @@ impl<V: Clone + Send + Sync + 'static> TimedCache<V> {
     }
 }
 
+// ── Proxy Manager for Automatic Adblocking ──────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyInfo {
+    pub url: String,
+    pub country: String,
+    pub ping: u64,
+}
+
+pub struct ProxyManager {
+    client: Client,
+    proxies: Arc<RwLock<Vec<ProxyInfo>>>,
+    last_refresh: Arc<RwLock<Option<Instant>>>,
+    current_proxy: Arc<RwLock<Option<ProxyInfo>>>,
+    /// Ensures only ONE refresh runs at a time regardless of concurrent callers
+    refresh_lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl Default for ProxyManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProxyManager {
+    pub fn new() -> Self {
+        Self {
+            client: Client::builder()
+                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+                .timeout(Duration::from_secs(10))
+                .build()
+                .unwrap(),
+            proxies: Arc::new(RwLock::new(Vec::new())),
+            last_refresh: Arc::new(RwLock::new(None)),
+            current_proxy: Arc::new(RwLock::new(None)),
+            refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
+        }
+    }
+
+    pub fn get_all_proxies(&self) -> Vec<ProxyInfo> {
+        self.proxies.read().unwrap().clone()
+    }
+
+    pub fn get_current_proxy(&self) -> Option<ProxyInfo> {
+        self.current_proxy.read().unwrap().clone()
+    }
+
+    pub async fn get_proxy(&self, mode: &str, manual_url: Option<&str>) -> Option<String> {
+        if mode == "manual" {
+            return manual_url.map(|s| s.to_string());
+        }
+
+        let should_refresh = {
+            let last = self.last_refresh.read().unwrap();
+            last.is_none() || last.unwrap().elapsed() > Duration::from_secs(3600)
+        };
+
+        if should_refresh {
+            // Acquire the mutex — if another refresh is already running, wait for it
+            // instead of launching a duplicate scan.
+            let _guard = self.refresh_lock.lock().await;
+            // Re-check after acquiring — another task may have refreshed while we waited
+            let still_needed = {
+                let last = self.last_refresh.read().unwrap();
+                last.is_none() || last.unwrap().elapsed() > Duration::from_secs(3600)
+            };
+            if still_needed {
+                let _ = self.refresh_proxies().await;
+            }
+        }
+
+        let proxies = self.proxies.read().unwrap();
+        if proxies.is_empty() {
+            return None;
+        }
+
+        // Return existing current proxy if still in valid list
+        {
+            let curr = self.current_proxy.read().unwrap();
+            if let Some(ref p) = *curr {
+                if proxies.iter().any(|x| x.url == p.url) {
+                    return Some(p.url.clone());
+                }
+            }
+        }
+
+        // Pick best ping
+        let mut sorted = proxies.clone();
+        sorted.sort_by_key(|p| p.ping);
+        let best = sorted[0].clone();
+        {
+            let mut curr = self.current_proxy.write().unwrap();
+            *curr = Some(best.clone());
+        }
+        Some(best.url)
+    }
+
+    // ── Refresh: collect ALL sources in parallel, merge, probe concurrently, sort by latency ──
+
+    async fn refresh_proxies(&self) -> Result<(), String> {
+        // Launch all sources concurrently — proxyscrape + 3 GitHub lists in parallel
+        let (scrape_api, scrape_gh) = tokio::join!(
+            self.scrape_proxyscrape(),
+            self.scrape_github_proxy_lists(),
+        );
+
+        let mut candidates: Vec<(String, String)> = Vec::new();
+
+        match scrape_api {
+            Ok(entries) => {
+                eprintln!("[adblock] proxyscrape: {} candidates", entries.len());
+                candidates.extend(entries);
+            }
+            Err(e) => eprintln!("[adblock] proxyscrape error: {e}"),
+        }
+        match scrape_gh {
+            Ok(urls) => {
+                eprintln!("[adblock] github lists: {} candidates", urls.len());
+                for url in urls {
+                    candidates.push((url, "?".to_string()));
+                }
+            }
+            Err(e) => eprintln!("[adblock] github lists error: {e}"),
+        }
+
+        // Extra fallback only if both returned nothing
+        if candidates.is_empty() {
+            return Err("No proxy candidates found from any source".to_string());
+        }
+
+        // Deduplicate, keeping first occurrence (which preserves country tag)
+        let mut seen = HashSet::new();
+        candidates.retain(|(url, _)| seen.insert(url.clone()));
+
+        eprintln!("[adblock] {} unique candidates to probe", candidates.len());
+
+        if candidates.is_empty() {
+            return Err("No proxy candidates found from any source".to_string());
+        }
+
+        // Probe ALL candidates concurrently — no sequential bottleneck
+        let candidates: Vec<_> = candidates.into_iter().take(150).collect();
+        let mut set = tokio::task::JoinSet::new();
+
+        for (url, country) in candidates {
+            set.spawn(async move {
+                let ping = Self::probe_proxy(&url).await;
+                (url, country, ping)
+            });
+        }
+
+        let mut working: Vec<ProxyInfo> = Vec::new();
+        while let Some(result) = set.join_next().await {
+            if let Ok((url, country, Some(ping))) = result {
+                eprintln!("[adblock] ✓ {url} ({country}) {ping}ms");
+                working.push(ProxyInfo { url, country, ping });
+            }
+        }
+
+        eprintln!("[adblock] {}/{} proxies passed probe", working.len(), seen.len());
+
+        if working.is_empty() {
+            return Err("No working proxies after probing".to_string());
+        }
+
+        // Sort by ascending latency so the selector always shows best proxy first
+        working.sort_by_key(|p| p.ping);
+        {
+            let mut p = self.proxies.write().unwrap();
+            *p = working;
+            let mut last = self.last_refresh.write().unwrap();
+            *last = Some(Instant::now());
+        }
+
+        Ok(())
+    }
+
+    // ── Proxy probe ──────────────────────────────────────────────────────────
+    //
+    // Uses a plain HTTP target so we never need SSL CONNECT support.
+    // Free HTTP proxies reliably forward plain HTTP but often refuse to tunnel
+    // HTTPS (CONNECT), which caused 0/N pass rates.
+    // Any 2xx/3xx/4xx from the target means the proxy forwarded the request.
+
+    async fn probe_proxy(proxy_url: &str) -> Option<u64> {
+        let Ok(proxy) = reqwest::Proxy::http(proxy_url) else {
+            return None;
+        };
+        let Ok(client) = Client::builder()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .timeout(Duration::from_secs(6))
+            .proxy(proxy)
+            .build()
+        else {
+            return None;
+        };
+
+        let start = Instant::now();
+        // Plain HTTP endpoint — lightweight, always reachable, requires no CONNECT
+        let result = tokio::time::timeout(
+            Duration::from_secs(6),
+            client.get("http://api.ipify.org/").send(),
+        )
+        .await;
+
+        match result {
+            // Any response (even 4xx) proves proxy forwarded the packet
+            Ok(Ok(resp)) if !resp.status().is_server_error() => {
+                Some(start.elapsed().as_millis() as u64)
+            }
+            _ => None,
+        }
+    }
+
+    // ── Scrapers ──────────────────────────────────────────────────────────────
+
+    /// proxyscrape.com v2 — no country/timeout filter, maximises candidate count
+    async fn scrape_proxyscrape(&self) -> Result<Vec<(String, String)>, String> {
+        let url =
+            "https://api.proxyscrape.com/v2/?request=displayproxies\
+&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all&simplified=true";
+        let resp = self
+            .client
+            .get(url)
+            .header("Accept", "text/plain")
+            .send()
+            .await
+            .map_err(|e| format!("proxyscrape request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("proxyscrape HTTP {}", resp.status()));
+        }
+
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        for line in text.lines() {
+            let raw = line.trim();
+            if raw.is_empty() || raw.starts_with('#') {
+                continue;
+            }
+            if raw.contains(':') && !raw.contains(' ') {
+                out.push((format!("http://{raw}"), "?".to_string()));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Raw GitHub proxy lists as last-resort fallback
+    async fn scrape_github_proxy_lists(&self) -> Result<Vec<String>, String> {
+        let sources = [
+            "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+            "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+            "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
+        ];
+
+        let mut out = Vec::new();
+        for source in sources {
+            let Ok(resp) = self.client.get(source).send().await else {
+                continue;
+            };
+            let Ok(text) = resp.text().await else {
+                continue;
+            };
+            for line in text.lines() {
+                let raw = line.trim();
+                if raw.is_empty() || raw.starts_with('#') {
+                    continue;
+                }
+                if raw.starts_with("http://") || raw.starts_with("socks") {
+                    out.push(raw.to_string());
+                } else if raw.contains(':') && !raw.contains(' ') {
+                    out.push(format!("http://{raw}"));
+                }
+                if out.len() >= 300 {
+                    break;
+                }
+            }
+            if out.len() >= 300 {
+                break;
+            }
+        }
+
+        if out.is_empty() {
+            return Err("No proxies in GitHub lists".to_string());
+        }
+        Ok(out)
+    }
+}
+
 // ── Shared Twitch service state ────────────────────────────────────────────────
 
 pub struct TwitchService {
     client: Client,
+    /// Automatic proxy manager
+    proxy_manager: Arc<ProxyManager>,
+    /// Cache for proxy clients (proxy_url -> Client)
+    proxy_clients: Arc<tokio::sync::RwLock<HashMap<String, Client>>>,
     /// General cache for Twitch API responses.
     cache: Arc<TimedCache<Value>>,
     /// Short-lived cache for variant proxy targets (UUID -> sanitized URL).
@@ -72,17 +367,94 @@ impl Default for TwitchService {
     }
 }
 
+const ANDROID_TV_UA: &str = "Mozilla/5.0 (Linux; Android 9; SHIELD Android TV Build/PPR1.180610.011; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/68.0.3440.70 Mobile Safari/537.36";
+const ANDROID_TV_CLIENT_ID: &str = "ue6666qo983tsx6so1t0vnawi233wa";
+
 impl TwitchService {
     pub fn new() -> Self {
         Self {
             client: Client::builder()
-                .user_agent("Mozilla/5.0")
+                .user_agent(ANDROID_TV_UA)
                 .timeout(Duration::from_secs(15))
                 .build()
                 .expect("Failed to build HTTP client"),
+            proxy_manager: Arc::new(ProxyManager::new()),
+            proxy_clients: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             cache: Arc::new(TimedCache::new()),
             variant_cache: Arc::new(TimedCache::new()),
         }
+    }
+
+    pub fn get_all_proxies(&self) -> Vec<ProxyInfo> {
+        self.proxy_manager.get_all_proxies()
+    }
+
+    pub fn get_current_proxy(&self) -> Option<ProxyInfo> {
+        self.proxy_manager.get_current_proxy()
+    }
+
+    pub fn refresh_adblock_proxy_state(&self) {
+        let proxy_manager = self.proxy_manager.clone();
+        // try_lock: if a refresh is already in flight, skip — avoids N parallel scans
+        // when the Settings page polls every 5 s.
+        if proxy_manager.refresh_lock.try_lock().is_ok() {
+            tokio::spawn(async move {
+                let _ = proxy_manager.get_proxy("auto", None).await;
+            });
+        }
+    }
+
+    async fn get_client(&self, settings: &ExperienceSettings) -> Client {
+        if !settings.adblock_enabled {
+            return self.client.clone();
+        }
+
+        let mode = settings.adblock_proxy_mode.as_deref().unwrap_or("auto");
+        let manual_url = settings.adblock_proxy.as_deref();
+
+        let proxy_url = self.proxy_manager.get_proxy(mode, manual_url).await;
+
+        let Some(proxy) = proxy_url else {
+            return self.client.clone();
+        };
+
+        {
+            let clients = self.proxy_clients.read().await;
+            if let Some(c) = clients.get(&proxy) {
+                return c.clone();
+            }
+        }
+
+        let mut clients = self.proxy_clients.write().await;
+        if let Some(c) = clients.get(&proxy) {
+            return c.clone();
+        }
+
+        let new_client = Client::builder()
+            .user_agent(ANDROID_TV_UA)
+            .timeout(Duration::from_secs(15))
+            .proxy(reqwest::Proxy::all(&proxy).expect("Invalid proxy URL"))
+            .build()
+            .unwrap_or_else(|_| self.client.clone());
+
+        clients.insert(proxy, new_client.clone());
+        new_client
+    }
+
+    pub async fn proxy_segment(
+        &self,
+        proxy_id: &str,
+        settings: &ExperienceSettings,
+    ) -> Result<reqwest::Response, String> {
+        let target_url = resolve_variant_proxy_target(&self.variant_cache, proxy_id)?;
+
+        let client = self.get_client(settings).await;
+
+        client
+            .get(&target_url)
+            .send()
+            .await
+            .map_err(|e| e.to_string())
     }
 
     // ── GQL helpers ──────────────────────────────────────────────────────────
@@ -91,7 +463,7 @@ impl TwitchService {
         let resp = self
             .client
             .post("https://gql.twitch.tv/gql")
-            .header("Client-Id", "kimne78kx3ncx6brgo4mv6wki5h1ko")
+            .header("Client-Id", ANDROID_TV_CLIENT_ID)
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .body(body.to_string())
@@ -730,7 +1102,7 @@ impl TwitchService {
             .unwrap_or_default();
 
         let query = format!(
-            r#"{{"query":"query {{ game(name: \"{}\") {{ videos(first: {}{}) {{ edges {{ node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} }} }} }}"}}"#,
+            r#"{{"query":"query {{ game(name: \"{}\") {{ videos(first: {}{}) {{ edges {{ node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, broadcastType, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} }} }} }}"}}"#,
             gql_escape(game_name),
             first,
             lang_filter
@@ -744,7 +1116,14 @@ impl TwitchService {
             .as_array()
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|e| serde_json::from_value::<Vod>(e["node"].clone()).ok())
+                    .filter_map(|e| {
+                        let vod = serde_json::from_value::<Vod>(e["node"].clone()).ok()?;
+                        if vod.is_valid() {
+                            Some(vod)
+                        } else {
+                            None
+                        }
+                    })
                     .collect()
             })
             .unwrap_or_default()
@@ -754,11 +1133,13 @@ impl TwitchService {
     pub async fn fetch_category_vods_page(
         &self,
         game_name: &str,
+        game_id: Option<&str>,
         first: usize,
         after: Option<&str>,
     ) -> (Vec<Vod>, Option<String>, bool) {
         let safe_first = first.clamp(4, 50);
         let escaped = gql_escape(game_name);
+        let safe_game_id = game_id.unwrap_or("").trim().to_string();
         let safe_after = after.unwrap_or("").trim().to_string();
 
         let after_clause = if safe_after.is_empty() {
@@ -768,12 +1149,30 @@ impl TwitchService {
             format!(", after: {esc}")
         };
 
-        let query = format!(
-            r#"{{"query":"query {{ game(name: \"{escaped}\") {{ videos(first: {safe_first}{after_clause}) {{ edges {{ cursor node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} pageInfo {{ hasNextPage }} }} }} }}"}}"#
-        );
+        let query_by_name = || {
+            format!(
+                r#"{{"query":"query {{ game(name: \"{escaped}\") {{ videos(first: {safe_first}{after_clause}) {{ edges {{ cursor node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, broadcastType, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} pageInfo {{ hasNextPage }} }} }} }}"}}"#
+            )
+        };
 
-        let Ok(data) = self.gql_post(&query).await else {
-            return (vec![], None, false);
+        let data = if !safe_game_id.is_empty() {
+            let escaped_id = gql_escape(&safe_game_id);
+            let query_by_id = format!(
+                r#"{{"query":"query {{ game(id: \"{escaped_id}\") {{ videos(first: {safe_first}{after_clause}) {{ edges {{ cursor node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, broadcastType, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} pageInfo {{ hasNextPage }} }} }} }}"}}"#
+            );
+
+            match self.gql_post(&query_by_id).await {
+                Ok(by_id) if !by_id["data"]["game"].is_null() => by_id,
+                _ => match self.gql_post(&query_by_name()).await {
+                    Ok(by_name) => by_name,
+                    Err(_) => return (vec![], None, false),
+                },
+            }
+        } else {
+            match self.gql_post(&query_by_name()).await {
+                Ok(by_name) => by_name,
+                Err(_) => return (vec![], None, false),
+            }
         };
 
         let edges = match data["data"]["game"]["videos"]["edges"].as_array() {
@@ -783,7 +1182,14 @@ impl TwitchService {
 
         let vods: Vec<Vod> = edges
             .iter()
-            .filter_map(|e| serde_json::from_value::<Vod>(e["node"].clone()).ok())
+            .filter_map(|e| {
+                let vod = serde_json::from_value::<Vod>(e["node"].clone()).ok()?;
+                if vod.is_valid() {
+                    Some(vod)
+                } else {
+                    None
+                }
+            })
             .collect();
 
         let last_cursor = edges
@@ -829,7 +1235,7 @@ impl TwitchService {
             return vec![];
         }
 
-        let fields = r#"id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, language, game { name }, owner { login, displayName, profileImageURL(width: 50) }"#;
+        let fields = r#"id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, broadcastType, language, game { name }, owner { login, displayName, profileImageURL(width: 50) }"#;
         let query_body = safe_ids
             .iter()
             .enumerate()
@@ -845,7 +1251,14 @@ impl TwitchService {
         let payload = data["data"].as_object().cloned().unwrap_or_default();
         payload
             .values()
-            .filter_map(|v| serde_json::from_value::<Vod>(v.clone()).ok())
+            .filter_map(|v| {
+                let vod = serde_json::from_value::<Vod>(v.clone()).ok()?;
+                if vod.is_valid() {
+                    Some(vod)
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 
@@ -908,8 +1321,9 @@ impl TwitchService {
         let pagination = if safe_after.is_empty() {
             String::new()
         } else {
-            let escaped = serde_json::to_string(&safe_after).unwrap_or_default();
-            format!(", after: {escaped}")
+            // safe_after might contain base64, which is fine, but we must escape it for the GraphQL string literal
+            let escaped = gql_escape(&safe_after);
+            format!(r#", after: \"{escaped}\""#)
         };
 
         let body = format!(
@@ -1146,7 +1560,7 @@ impl TwitchService {
         }
 
         let body = format!(
-            r#"{{"query":"query {{ user(login: \"{}\") {{ videos(first: 30) {{ edges {{ node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} }} }} }}"}}"#,
+            r#"{{"query":"query {{ user(login: \"{}\") {{ videos(first: 30) {{ edges {{ node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, broadcastType, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} }} }} }}"}}"#,
             gql_escape(username)
         );
 
@@ -1159,7 +1573,14 @@ impl TwitchService {
             .as_array()
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|e| serde_json::from_value::<Vod>(e["node"].clone()).ok())
+                    .filter_map(|e| {
+                        let vod = serde_json::from_value::<Vod>(e["node"].clone()).ok()?;
+                        if vod.is_valid() {
+                            Some(vod)
+                        } else {
+                            None
+                        }
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -1392,8 +1813,9 @@ impl TwitchService {
         let pagination = if safe_after.is_empty() {
             String::new()
         } else {
-            let escaped = serde_json::to_string(&safe_after).unwrap_or_default();
-            format!(", after: {escaped}")
+            // safe_after might contain base64, which is fine, but we must escape it for the GraphQL string literal
+            let escaped = gql_escape(&safe_after);
+            format!(r#", after: \"{escaped}\""#)
         };
 
         let body = format!(
@@ -1530,12 +1952,12 @@ impl TwitchService {
 
         let mut game_futures = Vec::new();
         for game in &top_games {
-            game_futures.push(self.fetch_game_vods(game, Some(vec!["fr".to_string()]), 18));
-            game_futures.push(self.fetch_game_vods(game, None, 18));
+            game_futures.push(self.fetch_game_vods(game, Some(vec!["fr".to_string()]), 35));
+            game_futures.push(self.fetch_game_vods(game, None, 35));
         }
         let sub_futures: Vec<_> = subs
             .iter()
-            .take(10)
+            .take(15)
             .map(|s| self.fetch_user_vods(&s.login))
             .collect();
 
@@ -1570,7 +1992,7 @@ impl TwitchService {
             })
             .collect();
         scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(120);
+        scored.truncate(200);
 
         // ── Diversity pass: cap same-channel VODs to avoid feed monopolisation ──
         {
@@ -1615,7 +2037,7 @@ impl TwitchService {
         };
         let foreign_ratio = clamp(0.16 + foreign_affinity * 0.35, 0.16, 0.4);
 
-        let feed = interleave_localized_feed(scored, foreign_ratio, 40);
+        let feed = interleave_localized_feed(scored, foreign_ratio, 100);
 
         let val = serde_json::to_value(&feed).unwrap_or_default();
         self.cache.set(cache_key, val, 900);
@@ -1723,8 +2145,9 @@ impl TwitchService {
         &self,
         channel_login: &str,
         _host: &str,
+        settings: &ExperienceSettings,
     ) -> Result<String, String> {
-        let token = self.fetch_live_playback_token(channel_login).await?;
+        let token = self.fetch_live_playback_token(channel_login, settings).await?;
         let random_p = rand_u32() % 1_000_000;
 
         let params = format!(
@@ -1738,17 +2161,44 @@ impl TwitchService {
             urlencoding_simple(channel_login)
         );
 
-        let resp = self
-            .client
-            .get(&source_url)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        if !resp.status().is_success() {
-            return Err(format!("Twitch returned HTTP {}", resp.status()));
-        }
+        let client = self.get_client(settings).await;
 
-        let master = resp.text().await.map_err(|e| e.to_string())?;
+        // Try via proxy first; if it fails (proxy error or Twitch rejection) fall
+        // back to the direct client so playback is never broken by a bad proxy.
+        let master = match client.get(&source_url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                resp.text().await.map_err(|e| e.to_string())?
+            }
+            Ok(resp) => {
+                // Proxy forwarded the request but Twitch rejected it — retry direct
+                eprintln!("[adblock] proxy returned HTTP {} for live master, retrying direct", resp.status());
+                let direct = self.client.clone();
+                let resp2 = direct
+                    .get(&source_url)
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if !resp2.status().is_success() {
+                    return Err(format!("Twitch returned HTTP {} (direct fallback)", resp2.status()));
+                }
+                resp2.text().await.map_err(|e| e.to_string())?
+            }
+            Err(e) => {
+                // Network-level error (proxy unreachable) — retry direct
+                eprintln!("[adblock] proxy request failed ({e}), retrying direct");
+                let direct = self.client.clone();
+                let resp2 = direct
+                    .get(&source_url)
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if !resp2.status().is_success() {
+                    return Err(format!("Twitch returned HTTP {} (direct fallback)", resp2.status()));
+                }
+                resp2.text().await.map_err(|e| e.to_string())?
+            }
+        };
+
         Ok(rewrite_master_with_proxy(
             &master,
             _host,
@@ -1760,17 +2210,35 @@ impl TwitchService {
     async fn fetch_live_playback_token(
         &self,
         channel_login: &str,
+        settings: &ExperienceSettings,
     ) -> Result<(String, String), String> {
+        let platform = if settings.adblock_enabled {
+            "amazon"
+        } else {
+            "web"
+        };
+        
+        let device_id = create_device_id();
+        let session_id = create_serving_id();
+
         let body = serde_json::json!({
             "operationName": "PlaybackAccessToken_Template",
-            "query": "query PlaybackAccessToken_Template($login: String!) { streamPlaybackAccessToken(channelName: $login, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: \"site\"}) { value signature } }",
+            "query": format!("query PlaybackAccessToken_Template($login: String!) {{ streamPlaybackAccessToken(channelName: $login, params: {{platform: \"{}\", playerBackend: \"mediaplayer\", playerType: \"site\"}}) {{ value signature }} }}", platform),
             "variables": { "login": channel_login }
         });
 
-        let resp = self
+        let mut req = self
             .client
             .post("https://gql.twitch.tv/gql")
             .header("Client-Id", "kimne78kx3ncx6brgo4mv6wki5h1ko")
+            .header("X-Device-Id", device_id)
+            .header("Client-Session-Id", session_id);
+
+        if settings.adblock_enabled {
+            req = req.header("Client-Adblock-Extension", "ttv-lol-pro");
+        }
+
+        let resp = req
             .json(&body)
             .send()
             .await
@@ -1797,21 +2265,42 @@ impl TwitchService {
         Ok((value, sig))
     }
 
-    pub async fn proxy_variant_playlist(&self, proxy_id: &str) -> Result<String, String> {
+    pub async fn proxy_variant_playlist(
+        &self,
+        proxy_id: &str,
+        settings: &ExperienceSettings,
+    ) -> Result<String, String> {
         let target_url = resolve_variant_proxy_target(&self.variant_cache, proxy_id)?;
 
-        let resp = self
-            .client
-            .get(&target_url)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
+        let client = self.get_client(settings).await;
 
-        if !resp.status().is_success() {
-            return Err(format!("Upstream HTTP {}", resp.status()));
+        // Same resilience pattern as live master: fall back to direct on any proxy error
+        let mut body = match client.get(&target_url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                resp.text().await.map_err(|e| e.to_string())?
+            }
+            Ok(resp) => {
+                eprintln!("[adblock] proxy returned HTTP {} for variant, retrying direct", resp.status());
+                let resp2 = self.client.get(&target_url).send().await.map_err(|e| e.to_string())?;
+                if !resp2.status().is_success() {
+                    return Err(format!("Upstream HTTP {} (direct fallback)", resp2.status()));
+                }
+                resp2.text().await.map_err(|e| e.to_string())?
+            }
+            Err(e) => {
+                eprintln!("[adblock] proxy error for variant ({e}), retrying direct");
+                let resp2 = self.client.get(&target_url).send().await.map_err(|e| e.to_string())?;
+                if !resp2.status().is_success() {
+                    return Err(format!("Upstream HTTP {} (direct fallback)", resp2.status()));
+                }
+                resp2.text().await.map_err(|e| e.to_string())?
+            }
+        };
+
+        if settings.adblock_enabled {
+            body = filter_live_playlist(&body);
         }
 
-        let mut body = resp.text().await.map_err(|e| e.to_string())?;
         body = body.replace("-unmuted", "-muted");
 
         let base_url = target_url
@@ -1827,17 +2316,26 @@ impl TwitchService {
                 if l.is_empty() || l.starts_with('#') {
                     // Rewrite URI="..." inside tags if relative
                     if l.contains("URI=\"") && !l.contains("URI=\"http") {
-                        return l.replace(
-                            "URI=\"",
-                            &format!("URI=\"{base_url}"),
-                        );
+                        return l.replace("URI=\"", &format!("URI=\"{base_url}"));
                     }
                     return l.to_string();
                 }
-                if !l.starts_with("http") {
-                    return format!("{base_url}{l}");
+
+                // If it's a segment URL (not a tag)
+                let abs_url = if !l.starts_with("http") {
+                    format!("{base_url}{l}")
+                } else {
+                    l.to_string()
+                };
+
+                // Register segment for proxying if adblock is enabled
+                if settings.adblock_enabled {
+                    if let Ok(proxy_id) = register_variant_proxy_target(&self.variant_cache, &abs_url) {
+                        return format!("/api/stream/variant.ts?id={}", urlencoding_simple(&proxy_id));
+                    }
                 }
-                l.to_string()
+
+                abs_url
             })
             .collect();
 
@@ -1851,6 +2349,59 @@ impl TwitchService {
             cache: self.cache.clone(),
         }
     }
+}
+
+fn create_device_id() -> String {
+    let id = Uuid::new_v4().to_string().replace('-', "");
+    id[..32].to_string()
+}
+
+fn filter_live_playlist(body: &str) -> String {
+    let lines: Vec<&str> = body.lines().collect();
+    let mut filtered = Vec::new();
+    let mut skipping_ad = false;
+
+    for line in lines {
+        let l = line.trim();
+        
+        // Comprehensive ad tag detection
+        if l.starts_with("#EXT-X-TWITCH-AD") 
+           || l.starts_with("#EXT-X-AD") 
+           || l.starts_with("#EXT-X-TWITCH-CONTENT-TYPE:ad")
+           || l.contains("AD-DURATION")
+        {
+            skipping_ad = true;
+            continue;
+        }
+
+        // If we are in an ad block, skip everything until the next valid content segment
+        if skipping_ad {
+            if l.starts_with("#EXT-X-TWITCH-CONTENT-TYPE:live") {
+                skipping_ad = false;
+                filtered.push(line);
+                continue;
+            }
+            if !l.starts_with('#') {
+                // This is likely an ad segment URL, skip it
+                continue;
+            }
+            if l.starts_with("#EXTINF") || l.starts_with("#EXT-X-DISCONTINUITY") {
+                // Skip ad metadata
+                continue;
+            }
+        }
+
+        // Remove other tracking tags
+        if l.starts_with("#EXT-X-TWITCH-TOTAL-AD-DURATION")
+           || l.starts_with("#EXT-X-TWITCH-ELAPSED-SECS")
+           || l.starts_with("#EXT-X-TWITCH-ROUTING-ID")
+        {
+            continue;
+        }
+
+        filtered.push(line);
+    }
+    filtered.join("\n")
 }
 
 /// Minimal handle used for spawned tasks (avoids non-Clone reqwest::Client wrapping issues).

@@ -120,11 +120,26 @@ impl HistoryStore {
         self.data.read().await.settings.clone()
     }
 
-    pub async fn update_settings(&self, one_sync: Option<bool>) -> ExperienceSettings {
+    pub async fn update_settings(
+        &self,
+        one_sync: Option<bool>,
+        adblock_enabled: Option<bool>,
+        adblock_proxy: Option<Option<String>>,
+        adblock_proxy_mode: Option<Option<String>>,
+    ) -> ExperienceSettings {
         {
             let mut data = self.data.write().await;
             if let Some(v) = one_sync {
                 data.settings.one_sync = v;
+            }
+            if let Some(v) = adblock_enabled {
+                data.settings.adblock_enabled = v;
+            }
+            if let Some(v) = adblock_proxy {
+                data.settings.adblock_proxy = v;
+            }
+            if let Some(v) = adblock_proxy_mode {
+                data.settings.adblock_proxy_mode = v;
             }
         }
         self.save().await;

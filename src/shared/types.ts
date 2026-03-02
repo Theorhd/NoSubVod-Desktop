@@ -77,6 +77,15 @@ export interface WatchlistEntry {
 
 export interface ExperienceSettings {
   oneSync: boolean;
+  adblockEnabled?: boolean;
+  adblockProxy?: string;
+  adblockProxyMode?: 'auto' | 'manual';
+}
+
+export interface ProxyInfo {
+  url: string;
+  country: string;
+  ping: number;
 }
 
 export interface LiveStream {

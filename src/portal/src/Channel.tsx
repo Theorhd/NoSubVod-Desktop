@@ -28,10 +28,17 @@ type CategoryVodPage = {
   nextCursor: string | null;
 };
 
+const MIN_VOD_DURATION_SECONDS = 210;
+
+function filterShortVods(vods: VOD[]): VOD[] {
+  return vods.filter((vod) => (vod.lengthSeconds || 0) >= MIN_VOD_DURATION_SECONDS);
+}
+
 export default function Channel() {
   const [searchParams] = useSearchParams();
   const user = searchParams.get('user');
   const category = searchParams.get('category');
+  const categoryId = searchParams.get('categoryId');
   const navigate = useNavigate();
 
   // ── Shared state ──────────────────────────────────────────────────────────
@@ -81,7 +88,7 @@ export default function Channel() {
           .catch(() => ({})),
       ])
         .then(([vodsData, liveData, historyData]) => {
-          setVods(vodsData as VOD[]);
+          setVods(filterShortVods(vodsData as VOD[]));
           setLiveStream((liveData as LiveStream | null) || null);
           setHistory(historyData as Record<string, HistoryEntry>);
           setLoading(false);
@@ -91,13 +98,13 @@ export default function Channel() {
           setLoading(false);
         });
     } else if (category) {
+      const categoryVodParams = new URLSearchParams({ name: category, limit: '24' });
+      if (categoryId) categoryVodParams.set('id', categoryId);
       Promise.all([
-        fetch(`/api/search/category-vods?name=${encodeURIComponent(category)}&limit=24`).then(
-          (res) => {
-            if (!res.ok) throw new Error('Failed to fetch VODs');
-            return res.json() as Promise<CategoryVodPage>;
-          }
-        ),
+        fetch(`/api/search/category-vods?${categoryVodParams.toString()}`).then((res) => {
+          if (!res.ok) throw new Error('Failed to fetch VODs');
+          return res.json() as Promise<CategoryVodPage>;
+        }),
         fetch(`/api/live/category?name=${encodeURIComponent(category)}&limit=12`)
           .then((res) => (res.ok ? (res.json() as Promise<LiveStreamsPage>) : null))
           .catch(() => null),
@@ -106,7 +113,7 @@ export default function Channel() {
           .catch(() => ({})),
       ])
         .then(([vodPage, livePage, historyData]) => {
-          setVods(vodPage.items || []);
+          setVods(filterShortVods(vodPage.items || []));
           setCatVodCursor(vodPage.nextCursor || null);
           setCatVodHasMore(Boolean(vodPage.hasMore));
           if (livePage) {
@@ -122,7 +129,7 @@ export default function Channel() {
           setLoading(false);
         });
     }
-  }, [user, category]);
+  }, [user, category, categoryId]);
 
   // ── Load more handlers ────────────────────────────────────────────────────
   const loadMoreCatVods = async () => {
@@ -130,14 +137,17 @@ export default function Channel() {
     setCatVodLoading(true);
     try {
       const params = new URLSearchParams({ name: category, limit: '24' });
+      if (categoryId) params.set('id', categoryId);
       if (catVodCursor) params.set('cursor', catVodCursor);
       const res = await fetch(`/api/search/category-vods?${params.toString()}`);
       if (!res.ok) throw new Error('Failed to load more VODs');
       const page = (await res.json()) as CategoryVodPage;
-      setVods((prev) => {
-        const existingIds = new Set(prev.map((v) => v.id));
-        return [...prev, ...(page.items || []).filter((v) => !existingIds.has(v.id))];
-      });
+      if (page.items && page.items.length > 0) {
+        setVods((prev) => {
+          const existingIds = new Set(prev.map((v) => v.id));
+          return [...prev, ...filterShortVods(page.items).filter((v) => !existingIds.has(v.id))];
+        });
+      }
       setCatVodCursor(page.nextCursor || null);
       setCatVodHasMore(Boolean(page.hasMore));
     } catch {
@@ -156,10 +166,12 @@ export default function Channel() {
       const res = await fetch(`/api/live/category?${params.toString()}`);
       if (!res.ok) throw new Error('Failed to load more lives');
       const page = (await res.json()) as LiveStreamsPage;
-      setCatLiveStreams((prev) => {
-        const existingIds = new Set(prev.map((s) => s.id));
-        return [...prev, ...(page.items || []).filter((s) => !existingIds.has(s.id))];
-      });
+      if (page.items && page.items.length > 0) {
+        setCatLiveStreams((prev) => {
+          const existingIds = new Set(prev.map((s) => s.id));
+          return [...prev, ...page.items.filter((s) => !existingIds.has(s.id))];
+        });
+      }
       setCatLiveCursor(page.nextCursor || null);
       setCatLiveHasMore(Boolean(page.hasMore));
     } catch {
@@ -191,14 +203,7 @@ export default function Channel() {
 
   // ── Render helpers ────────────────────────────────────────────────────────
   const renderLiveCard = (stream: LiveStream, loginKey?: string) => (
-    <button
-      key={stream.id}
-      type="button"
-      onClick={() =>
-        navigate(`/player?live=${encodeURIComponent(loginKey || stream.broadcaster.login)}`)
-      }
-      className="vod-card live-card"
-    >
+    <div key={stream.id} className="vod-card live-card">
       <div className="vod-thumb-wrap">
         <img
           src={
@@ -217,13 +222,32 @@ export default function Channel() {
           )}
           <span>{stream.broadcaster.displayName}</span>
         </div>
-        <h3 title={stream.title}>{stream.title}</h3>
+        <h3 title={stream.title}>
+          <button
+            type="button"
+            className="stretched-link"
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'inherit',
+              font: 'inherit',
+              padding: 0,
+              textAlign: 'left',
+              cursor: 'pointer',
+            }}
+            onClick={() =>
+              navigate(`/player?live=${encodeURIComponent(loginKey || stream.broadcaster.login)}`)
+            }
+          >
+            {stream.title}
+          </button>
+        </h3>
         <div className="vod-meta-row">
           <span>{stream.game?.name || 'No category'}</span>
           <span className="live-viewers">{formatViewers(stream.viewerCount)}</span>
         </div>
       </div>
-    </button>
+    </div>
   );
 
   return (
@@ -298,12 +322,7 @@ export default function Channel() {
                     ? Math.min(100, (hist.timecode / hist.duration) * 100)
                     : 0;
                 return (
-                  <button
-                    key={vod.id}
-                    type="button"
-                    onClick={() => navigate(`/player?vod=${vod.id}`)}
-                    className="vod-card"
-                  >
+                  <div key={vod.id} className="vod-card">
                     <div className="vod-thumb-wrap">
                       <img src={vod.previewThumbnailURL} alt={vod.title} className="vod-thumb" />
                       <div className="vod-chip vod-duration">{formatTime(vod.lengthSeconds)}</div>
@@ -315,6 +334,7 @@ export default function Channel() {
                         }}
                         className="vod-watchlist-btn"
                         title="Add to watch later"
+                        style={{ position: 'relative', zIndex: 2 }}
                       >
                         +
                       </button>
@@ -325,14 +345,31 @@ export default function Channel() {
                       )}
                     </div>
                     <div className="vod-body">
-                      <h3 title={vod.title}>{vod.title}</h3>
+                      <h3 title={vod.title}>
+                        <button
+                          type="button"
+                          className="stretched-link"
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'inherit',
+                            font: 'inherit',
+                            padding: 0,
+                            textAlign: 'left',
+                            cursor: 'pointer',
+                          }}
+                          onClick={() => navigate(`/player?vod=${vod.id}`)}
+                        >
+                          {vod.title}
+                        </button>
+                      </h3>
                       <div className="vod-meta-row">
                         <span>{vod.game?.name || 'No Category'}</span>
                         <span>{formatViews(vod.viewCount)}</span>
                       </div>
                       <div className="vod-date">{new Date(vod.createdAt).toLocaleDateString()}</div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
