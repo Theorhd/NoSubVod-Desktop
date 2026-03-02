@@ -1109,7 +1109,14 @@ impl TwitchService {
             .as_array()
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|e| serde_json::from_value::<Vod>(e["node"].clone()).ok())
+                    .filter_map(|e| {
+                        let vod = serde_json::from_value::<Vod>(e["node"].clone()).ok()?;
+                        if vod.is_valid() {
+                            Some(vod)
+                        } else {
+                            None
+                        }
+                    })
                     .collect()
             })
             .unwrap_or_default()
@@ -1148,7 +1155,14 @@ impl TwitchService {
 
         let vods: Vec<Vod> = edges
             .iter()
-            .filter_map(|e| serde_json::from_value::<Vod>(e["node"].clone()).ok())
+            .filter_map(|e| {
+                let vod = serde_json::from_value::<Vod>(e["node"].clone()).ok()?;
+                if vod.is_valid() {
+                    Some(vod)
+                } else {
+                    None
+                }
+            })
             .collect();
 
         let last_cursor = edges
@@ -1210,7 +1224,14 @@ impl TwitchService {
         let payload = data["data"].as_object().cloned().unwrap_or_default();
         payload
             .values()
-            .filter_map(|v| serde_json::from_value::<Vod>(v.clone()).ok())
+            .filter_map(|v| {
+                let vod = serde_json::from_value::<Vod>(v.clone()).ok()?;
+                if vod.is_valid() {
+                    Some(vod)
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 
@@ -1524,7 +1545,14 @@ impl TwitchService {
             .as_array()
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|e| serde_json::from_value::<Vod>(e["node"].clone()).ok())
+                    .filter_map(|e| {
+                        let vod = serde_json::from_value::<Vod>(e["node"].clone()).ok()?;
+                        if vod.is_valid() {
+                            Some(vod)
+                        } else {
+                            None
+                        }
+                    })
                     .collect()
             })
             .unwrap_or_default();

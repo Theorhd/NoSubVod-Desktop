@@ -56,6 +56,13 @@ pub struct Vod {
     pub owner: Option<VodOwner>,
 }
 
+impl Vod {
+    pub fn is_valid(&self) -> bool {
+        // Instant VODs (still recording) often have empty or 404 placeholder thumbnails.
+        !self.preview_thumbnail_url.is_empty() && !self.preview_thumbnail_url.contains("404_preview")
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiveGame {
     #[serde(skip_serializing_if = "Option::is_none")]
