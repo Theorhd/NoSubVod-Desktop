@@ -298,28 +298,22 @@ export default function Channel() {
                     ? Math.min(100, (hist.timecode / hist.duration) * 100)
                     : 0;
                 return (
-                  <div
+                  <button
                     key={vod.id}
+                    type="button"
                     onClick={() => navigate(`/player?vod=${vod.id}`)}
                     className="vod-card"
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        navigate(`/player?vod=${vod.id}`);
-                      }
-                    }}
                   >
                     <div className="vod-thumb-wrap">
                       <img src={vod.previewThumbnailURL} alt={vod.title} className="vod-thumb" />
                       <div className="vod-chip vod-duration">{formatTime(vod.lengthSeconds)}</div>
                       <button
+                        type="button"
                         onClick={(e) => {
-                          void addToWatchlist(e, vod);
+                          e.stopPropagation();
+                          void addToWatchlist(e as any, vod);
                         }}
                         className="vod-watchlist-btn"
-                        type="button"
                         title="Add to watch later"
                       >
                         +
@@ -338,7 +332,7 @@ export default function Channel() {
                       </div>
                       <div className="vod-date">{new Date(vod.createdAt).toLocaleDateString()}</div>
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
