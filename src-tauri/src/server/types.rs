@@ -147,6 +147,12 @@ pub struct SubEntry {
 pub struct ExperienceSettings {
     #[serde(rename = "oneSync")]
     pub one_sync: bool,
+    #[serde(rename = "adblockEnabled", default)]
+    pub adblock_enabled: bool,
+    #[serde(rename = "adblockProxy", default)]
+    pub adblock_proxy: Option<String>,
+    #[serde(rename = "adblockProxyMode", default)]
+    pub adblock_proxy_mode: Option<String>, // "auto" or "manual"
 }
 
 /// Root of the persisted JSON file.

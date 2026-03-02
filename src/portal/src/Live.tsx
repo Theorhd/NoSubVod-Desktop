@@ -398,11 +398,19 @@ export default function Live() {
             {streams.map((stream) => (
               <button
                 key={stream.id}
-                type="button"
                 onClick={() =>
                   navigate(`/player?live=${encodeURIComponent(stream.broadcaster.login)}`)
                 }
                 className="vod-card live-card"
+                style={{
+                  cursor: 'pointer',
+                  border: 'none',
+                  background: 'none',
+                  padding: 0,
+                  textAlign: 'left',
+                  width: '100%',
+                  display: 'block',
+                }}
               >
                 <div className="vod-thumb-wrap">
                   <img
