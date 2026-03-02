@@ -1127,11 +1127,13 @@ impl TwitchService {
     pub async fn fetch_category_vods_page(
         &self,
         game_name: &str,
+        game_id: Option<&str>,
         first: usize,
         after: Option<&str>,
     ) -> (Vec<Vod>, Option<String>, bool) {
         let safe_first = first.clamp(4, 50);
         let escaped = gql_escape(game_name);
+        let safe_game_id = game_id.unwrap_or("").trim().to_string();
         let safe_after = after.unwrap_or("").trim().to_string();
 
         let after_clause = if safe_after.is_empty() {
@@ -1141,12 +1143,30 @@ impl TwitchService {
             format!(", after: {esc}")
         };
 
-        let query = format!(
-            r#"{{"query":"query {{ game(name: \"{escaped}\") {{ videos(first: {safe_first}{after_clause}) {{ edges {{ cursor node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, broadcastType, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} pageInfo {{ hasNextPage }} }} }} }}"}}"#
-        );
+        let query_by_name = || {
+            format!(
+                r#"{{"query":"query {{ game(name: \"{escaped}\") {{ videos(first: {safe_first}{after_clause}) {{ edges {{ cursor node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, broadcastType, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} pageInfo {{ hasNextPage }} }} }} }}"}}"#
+            )
+        };
 
-        let Ok(data) = self.gql_post(&query).await else {
-            return (vec![], None, false);
+        let data = if !safe_game_id.is_empty() {
+            let escaped_id = gql_escape(&safe_game_id);
+            let query_by_id = format!(
+                r#"{{"query":"query {{ game(id: \"{escaped_id}\") {{ videos(first: {safe_first}{after_clause}) {{ edges {{ cursor node {{ id, title, lengthSeconds, previewThumbnailURL(width: 320, height: 180), createdAt, viewCount, broadcastType, language, game {{ name }}, owner {{ login, displayName, profileImageURL(width: 50) }} }} }} pageInfo {{ hasNextPage }} }} }} }}"}}"#
+            );
+
+            match self.gql_post(&query_by_id).await {
+                Ok(by_id) if !by_id["data"]["game"].is_null() => by_id,
+                _ => match self.gql_post(&query_by_name()).await {
+                    Ok(by_name) => by_name,
+                    Err(_) => return (vec![], None, false),
+                },
+            }
+        } else {
+            match self.gql_post(&query_by_name()).await {
+                Ok(by_name) => by_name,
+                Err(_) => return (vec![], None, false),
+            }
         };
 
         let edges = match data["data"]["game"]["videos"]["edges"].as_array() {

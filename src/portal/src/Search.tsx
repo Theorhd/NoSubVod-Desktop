@@ -123,7 +123,11 @@ export default function Search() {
                   key={game.id}
                   type="button"
                   className="category-card"
-                  onClick={() => navigate(`/channel?category=${encodeURIComponent(game.name)}`)}
+                  onClick={() =>
+                    navigate(
+                      `/channel?category=${encodeURIComponent(game.name)}&categoryId=${encodeURIComponent(game.id)}`
+                    )
+                  }
                 >
                   <img src={game.boxArtURL} alt={game.name} />
                   <span>{game.name}</span>

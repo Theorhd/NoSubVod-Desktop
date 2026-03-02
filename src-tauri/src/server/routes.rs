@@ -99,6 +99,7 @@ struct HistoryListQuery {
 
 #[derive(Deserialize)]
 struct SearchCategoryQuery {
+    id: Option<String>,
     name: Option<String>,
     cursor: Option<String>,
     limit: Option<String>,
@@ -338,9 +339,11 @@ async fn handle_search_category_vods(
     Query(q): Query<SearchCategoryQuery>,
     State(state): State<ApiState>,
 ) -> Response {
+    let id = q.id.unwrap_or_default();
+    let id = id.trim().to_string();
     let name = q.name.unwrap_or_default();
     let name = name.trim().to_string();
-    if name.is_empty() {
+    if id.is_empty() && name.is_empty() {
         return Json(serde_json::json!({ "items": [], "hasMore": false, "nextCursor": null })).into_response();
     }
     let limit = q
@@ -351,7 +354,7 @@ async fn handle_search_category_vods(
     let cursor = q.cursor.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     let (items, next_cursor, has_more) = state
         .twitch
-        .fetch_category_vods_page(&name, limit, cursor.as_deref())
+        .fetch_category_vods_page(&name, if id.is_empty() { None } else { Some(id.as_str()) }, limit, cursor.as_deref())
         .await;
     Json(serde_json::json!({
         "items": items,

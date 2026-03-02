@@ -38,6 +38,7 @@ export default function Channel() {
   const [searchParams] = useSearchParams();
   const user = searchParams.get('user');
   const category = searchParams.get('category');
+  const categoryId = searchParams.get('categoryId');
   const navigate = useNavigate();
 
   // ── Shared state ──────────────────────────────────────────────────────────
@@ -97,13 +98,13 @@ export default function Channel() {
           setLoading(false);
         });
     } else if (category) {
+      const categoryVodParams = new URLSearchParams({ name: category, limit: '24' });
+      if (categoryId) categoryVodParams.set('id', categoryId);
       Promise.all([
-        fetch(`/api/search/category-vods?name=${encodeURIComponent(category)}&limit=24`).then(
-          (res) => {
-            if (!res.ok) throw new Error('Failed to fetch VODs');
-            return res.json() as Promise<CategoryVodPage>;
-          }
-        ),
+        fetch(`/api/search/category-vods?${categoryVodParams.toString()}`).then((res) => {
+          if (!res.ok) throw new Error('Failed to fetch VODs');
+          return res.json() as Promise<CategoryVodPage>;
+        }),
         fetch(`/api/live/category?name=${encodeURIComponent(category)}&limit=12`)
           .then((res) => (res.ok ? (res.json() as Promise<LiveStreamsPage>) : null))
           .catch(() => null),
@@ -128,7 +129,7 @@ export default function Channel() {
           setLoading(false);
         });
     }
-  }, [user, category]);
+  }, [user, category, categoryId]);
 
   // ── Load more handlers ────────────────────────────────────────────────────
   const loadMoreCatVods = async () => {
@@ -136,6 +137,7 @@ export default function Channel() {
     setCatVodLoading(true);
     try {
       const params = new URLSearchParams({ name: category, limit: '24' });
+      if (categoryId) params.set('id', categoryId);
       if (catVodCursor) params.set('cursor', catVodCursor);
       const res = await fetch(`/api/search/category-vods?${params.toString()}`);
       if (!res.ok) throw new Error('Failed to load more VODs');
