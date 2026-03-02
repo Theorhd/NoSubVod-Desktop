@@ -21,6 +21,12 @@ pub struct TimedCache<V> {
     inner: RwLock<HashMap<String, Entry<V>>>,
 }
 
+impl<V: Clone + Send + Sync + 'static> Default for TimedCache<V> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<V: Clone + Send + Sync + 'static> TimedCache<V> {
     pub fn new() -> Self {
         Self {
@@ -58,6 +64,12 @@ pub struct TwitchService {
     cache: Arc<TimedCache<Value>>,
     /// Short-lived cache for variant proxy targets (UUID -> sanitized URL).
     variant_cache: Arc<TimedCache<String>>,
+}
+
+impl Default for TwitchService {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TwitchService {
@@ -376,8 +388,8 @@ fn rewrite_master_with_proxy(
         .map(|l| l.trim_end_matches('\r').to_string())
         .collect();
 
-    for i in 0..lines.len() {
-        let line = lines[i].trim().to_string();
+    for line_entry in lines.iter_mut() {
+        let line = line_entry.trim().to_string();
         if line.is_empty() {
             continue;
         }
@@ -411,12 +423,12 @@ fn rewrite_master_with_proxy(
                 break;
             }
             if !result.is_empty() {
-                lines[i] = result;
+                *line_entry = result;
             }
         } else if !line.starts_with('#') {
             let abs_url = make_absolute_url(&line, source_master_url);
             if let Ok(proxy_id) = register_variant_proxy_target(variant_cache, &abs_url) {
-                lines[i] = format!(
+                *line_entry = format!(
                     "/api/stream/variant.m3u8?id={}",
                     urlencoding_simple(&proxy_id)
                 );
@@ -1197,7 +1209,7 @@ impl TwitchService {
             language: stream["language"].as_str().map(|s| s.to_string()),
             started_at: stream["createdAt"]
                 .as_str()
-                .unwrap_or_else(|| "")
+                .unwrap_or("")
                 .to_string(),
             broadcaster: LiveBroadcaster {
                 id: user["id"].as_str().unwrap_or("").to_string(),

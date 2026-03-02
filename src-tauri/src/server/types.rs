@@ -143,16 +143,10 @@ pub struct SubEntry {
     pub profile_image_url: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExperienceSettings {
     #[serde(rename = "oneSync")]
     pub one_sync: bool,
-}
-
-impl Default for ExperienceSettings {
-    fn default() -> Self {
-        Self { one_sync: false }
-    }
 }
 
 /// Root of the persisted JSON file.
