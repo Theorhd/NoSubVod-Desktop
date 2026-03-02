@@ -1,1 +1,9 @@
-{"default":{"identifier":"default","description":"Default capabilities for NoSubVOD","local":true,"windows":["main"],"permissions":["core:default","shell:default"]}}
+{
+  "default": {
+    "identifier": "default",
+    "description": "Default capabilities for NoSubVOD",
+    "local": true,
+    "windows": ["main"],
+    "permissions": ["core:default", "shell:default"]
+  }
+}
