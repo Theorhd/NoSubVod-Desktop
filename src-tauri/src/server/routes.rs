@@ -3,11 +3,13 @@ use std::sync::Arc;
 use axum::{
     body::Body,
     extract::{Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
-    response::{IntoResponse, Redirect, Response},
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
     routing::{delete, get},
     Json, Router,
 };
+#[cfg(debug_assertions)]
+use axum::{http::HeaderMap, response::Redirect};
 use serde::Deserialize;
 use serde_json::Value;
 use tower_http::cors::{Any, CorsLayer};
