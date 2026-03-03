@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ChatMessage, VideoMarker } from '../../shared/types';
+import { ChatMessage, VideoMarker, ExperienceSettings, VOD, LiveStream } from '../../shared/types';
 
 const HLS_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
 
@@ -53,6 +53,8 @@ function formatClock(seconds: number): string {
 type QualityOption = {
   id: number;
   label: string;
+  url?: string; // Used for native HLS quality forcing
+  height?: number; // Used for filtering
 };
 
 function resolvePlayerTitle(vodId: string | null, liveId: string | null): string {
@@ -60,6 +62,472 @@ function resolvePlayerTitle(vodId: string | null, liveId: string | null): string
   if (liveId) return `Live: ${liveId}`;
   return 'Error';
 }
+
+function parseNativeHlsManifest(text: string, baseOrigin: string): QualityOption[] {
+  const options: QualityOption[] = [];
+  let currentRes = 0;
+  let currentName = '';
+
+  text.split('\n').forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (line.startsWith('#EXT-X-STREAM-INF')) {
+      const resMatch = /RESOLUTION=\d+x(\d+)/.exec(line);
+      const nameMatch = /VIDEO="([^"]+)"/.exec(line);
+      if (resMatch) currentRes = Number.parseInt(resMatch[1], 10);
+      if (nameMatch) currentName = nameMatch[1];
+      return;
+    }
+
+    if (!line || line.startsWith('#')) return;
+
+    const label = currentName || (currentRes ? `${currentRes}p` : `Quality ${options.length + 1}`);
+    const isAbs = line.startsWith('http') || line.startsWith('/');
+
+    options.push({
+      id: options.length,
+      label,
+      url: isAbs ? line : new URL(line, baseOrigin).href,
+      height: currentRes,
+    });
+
+    currentRes = 0;
+    currentName = '';
+  });
+
+  return options;
+}
+
+function filterQualityOptions(options: QualityOption[], minVideoQuality?: string): QualityOption[] {
+  const minQ = Number.parseInt(minVideoQuality || 'none', 10);
+  if (Number.isNaN(minQ)) return options;
+  return options.filter((opt) => !opt.height || opt.height >= minQ);
+}
+
+function getPreferredLevelIndex(
+  options: { height?: number }[],
+  preferredVideoQuality?: string
+): number {
+  if (!preferredVideoQuality || preferredVideoQuality === 'auto') return -1;
+  const preferredHeight = Number.parseInt(preferredVideoQuality, 10);
+  const foundIndex = options.findIndex((o) => o.height === preferredHeight);
+  return foundIndex === -1 ? 0 : foundIndex;
+}
+
+function handlePlayerKeyDown(
+  e: KeyboardEvent,
+  video: HTMLVideoElement,
+  canSeek: boolean,
+  viewport: HTMLDivElement | null
+) {
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)) return;
+
+  switch (e.key.toLowerCase()) {
+    case ' ':
+    case 'k':
+      e.preventDefault();
+      if (video.paused) void video.play().catch(() => {});
+      else video.pause();
+      break;
+    case 'f':
+      e.preventDefault();
+      if (!viewport) break;
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      else viewport.requestFullscreen().catch(() => {});
+      break;
+    case 'm':
+      e.preventDefault();
+      video.muted = !video.muted;
+      break;
+    case 'arrowup':
+      e.preventDefault();
+      video.volume = Math.min(1, video.volume + 0.05);
+      break;
+    case 'arrowdown':
+      e.preventDefault();
+      video.volume = Math.max(0, video.volume - 0.05);
+      break;
+    case 'arrowleft':
+      e.preventDefault();
+      if (canSeek) video.currentTime = Math.max(0, video.currentTime - 5);
+      break;
+    case 'arrowright':
+      e.preventDefault();
+      if (canSeek && Number.isFinite(video.duration)) {
+        video.currentTime = Math.min(video.duration, video.currentTime + 5);
+      }
+      break;
+  }
+}
+
+const Uptime = ({ startedAt }: { startedAt: string }) => {
+  const [uptime, setUptime] = useState('');
+  useEffect(() => {
+    const update = () => {
+      const diff = Date.now() - new Date(startedAt).getTime();
+      if (diff < 0) return setUptime('');
+      const h = Math.floor(diff / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      setUptime(h > 0 ? `${h}h ${m}m` : `${m}m`);
+    };
+    update();
+    const int = setInterval(update, 60000);
+    return () => clearInterval(int);
+  }, [startedAt]);
+  return <span>⏱️ {uptime}</span>;
+};
+
+interface PlayerHeaderProps {
+  navigate: ReturnType<typeof useNavigate>;
+  playerTitle: string;
+  qualityOptions: QualityOption[];
+  currentQuality: number;
+  changeQuality: (val: number) => void;
+  activeQualityLabel: string;
+  liveId: string | null;
+  markers: VideoMarker[];
+  showMarkers: boolean;
+  setShowMarkers: (v: boolean) => void;
+  showChat: boolean;
+  setShowChat: (v: boolean) => void;
+}
+
+const PlayerHeader = ({
+  navigate,
+  playerTitle,
+  qualityOptions,
+  currentQuality,
+  changeQuality,
+  activeQualityLabel,
+  liveId,
+  markers,
+  showMarkers,
+  setShowMarkers,
+  showChat,
+  setShowChat,
+}: PlayerHeaderProps) => (
+  <div
+    style={{
+      backgroundColor: '#18181b',
+      padding: '10px 20px',
+      display: 'flex',
+      alignItems: 'center',
+      borderBottom: '1px solid #3a3a3d',
+      zIndex: 10,
+      flexShrink: 0,
+    }}
+  >
+    <button
+      onClick={() => navigate(-1)}
+      style={{
+        color: '#efeff1',
+        fontSize: '14px',
+        fontWeight: 'bold',
+        padding: '5px 10px',
+        backgroundColor: '#3a3a3d',
+        borderRadius: '4px',
+        marginRight: '15px',
+        border: 'none',
+        cursor: 'pointer',
+      }}
+    >
+      &larr; Back
+    </button>
+
+    <h2
+      style={{
+        color: 'white',
+        fontSize: '14px',
+        margin: 0,
+        flexGrow: 1,
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+      }}
+    >
+      {playerTitle}
+    </h2>
+
+    {qualityOptions.length > 0 && (
+      <select
+        value={currentQuality}
+        onChange={(event) => changeQuality(Number(event.target.value))}
+        style={{
+          color: '#efeff1',
+          fontSize: '13px',
+          fontWeight: 700,
+          padding: '4px 8px',
+          borderRadius: '8px',
+          backgroundColor: '#242a43',
+          marginRight: '10px',
+          border: 'none',
+          outline: 'none',
+          cursor: 'pointer',
+        }}
+      >
+        <option value={-1}>Auto</option>
+        {qualityOptions.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    )}
+
+    {qualityOptions.length === 0 && activeQualityLabel && (
+      <span
+        style={{
+          color: '#efeff1',
+          fontSize: '13px',
+          fontWeight: 700,
+          padding: '4px 8px',
+          borderRadius: '8px',
+          backgroundColor: '#242a43',
+          marginRight: '10px',
+        }}
+      >
+        {activeQualityLabel}
+      </span>
+    )}
+
+    {!liveId && (
+      <button
+        onClick={() => setShowMarkers(!showMarkers)}
+        style={{
+          background: 'none',
+          border: 'none',
+          color: '#9146ff',
+          cursor: 'pointer',
+          fontWeight: 'bold',
+          marginRight: '10px',
+        }}
+      >
+        Chapters ({markers.length})
+      </button>
+    )}
+
+    <button
+      onClick={() => setShowChat(!showChat)}
+      style={{
+        background: 'none',
+        border: 'none',
+        color: '#9146ff',
+        cursor: 'pointer',
+        fontWeight: 'bold',
+      }}
+    >
+      {showChat ? 'Hide Chat' : 'Show Chat'}
+    </button>
+  </div>
+);
+
+const InfoEncart = ({
+  liveInfo,
+  vodInfo,
+  isFullscreen,
+}: {
+  liveInfo: LiveStream | null;
+  vodInfo: VOD | null;
+  isFullscreen: boolean;
+}) => {
+  if (isFullscreen || (!vodInfo && !liveInfo)) return null;
+
+  return (
+    <div style={{ padding: '20px', backgroundColor: '#07080f', color: '#efeff1', flex: 1 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '20px' }}>
+        <img
+          src={
+            liveInfo ? liveInfo.broadcaster?.profileImageURL : vodInfo?.owner?.profileImageURL || ''
+          }
+          alt="Profile"
+          style={{
+            width: '72px',
+            height: '72px',
+            borderRadius: '50%',
+            objectFit: 'cover',
+            border: '2px solid #3a3a3d',
+          }}
+        />
+        <div style={{ flex: 1 }}>
+          <h1 style={{ margin: '0 0 8px 0', fontSize: '1.4rem', lineHeight: '1.3' }}>
+            {liveInfo ? liveInfo.title : vodInfo?.title}
+          </h1>
+          <div
+            style={{
+              fontWeight: 'bold',
+              fontSize: '1.1rem',
+              marginBottom: '10px',
+              color: '#bf94ff',
+            }}
+          >
+            {liveInfo
+              ? liveInfo.broadcaster?.displayName
+              : vodInfo?.owner?.displayName || 'Unknown Streamer'}
+          </div>
+          <div
+            style={{
+              color: '#adadb8',
+              fontSize: '0.95rem',
+              display: 'flex',
+              gap: '20px',
+              flexWrap: 'wrap',
+            }}
+          >
+            <span
+              style={{
+                backgroundColor: '#18181b',
+                padding: '4px 8px',
+                borderRadius: '6px',
+                fontWeight: 'bold',
+              }}
+            >
+              🎮 {liveInfo ? liveInfo.game?.name : vodInfo?.game?.name || 'No Category'}
+            </span>
+
+            {liveInfo && (
+              <>
+                <span
+                  style={{
+                    color: '#eb0400',
+                    fontWeight: 'bold',
+                    backgroundColor: '#18181b',
+                    padding: '4px 8px',
+                    borderRadius: '6px',
+                  }}
+                >
+                  🔴 {(liveInfo.viewerCount || 0).toLocaleString()} viewers
+                </span>
+                <span
+                  style={{
+                    backgroundColor: '#18181b',
+                    padding: '4px 8px',
+                    borderRadius: '6px',
+                  }}
+                >
+                  <Uptime startedAt={liveInfo.startedAt} />
+                </span>
+              </>
+            )}
+            {vodInfo && (
+              <>
+                <span
+                  style={{
+                    backgroundColor: '#18181b',
+                    padding: '4px 8px',
+                    borderRadius: '6px',
+                  }}
+                >
+                  👁️ {(vodInfo.viewCount || 0).toLocaleString()} vues
+                </span>
+                <span
+                  style={{
+                    backgroundColor: '#18181b',
+                    padding: '4px 8px',
+                    borderRadius: '6px',
+                  }}
+                >
+                  📅 {new Date(vodInfo.createdAt).toLocaleDateString()}
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ChatSidebar = ({
+  liveId,
+  showChat,
+  visibleChat,
+  chatScrollRef,
+}: {
+  liveId: string | null;
+  showChat: boolean;
+  visibleChat: ChatMessage[];
+  chatScrollRef: React.RefObject<HTMLDivElement | null>;
+}) => {
+  if (!showChat) return null;
+
+  return (
+    <div
+      style={{
+        width: '340px',
+        backgroundColor: '#0e0e10',
+        borderLeft: '1px solid #3a3a3d',
+        display: 'flex',
+        flexDirection: 'column',
+        flexShrink: 0,
+      }}
+    >
+      {liveId ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+          {globalThis.location.hostname === 'localhost' ||
+          globalThis.location.hostname === '127.0.0.1' ||
+          globalThis.location.hostname === 'tauri.localhost' ? (
+            <iframe
+              src={`https://www.twitch.tv/embed/${encodeURIComponent(liveId)}/chat?parent=${globalThis.location.hostname}&darkpopout=true`}
+              width="100%"
+              height="100%"
+              style={{ border: 'none' }}
+              title="Twitch Chat"
+            />
+          ) : (
+            <iframe
+              src={`/api/live/${encodeURIComponent(liveId)}/chat.html`}
+              width="100%"
+              height="100%"
+              style={{ border: 'none' }}
+              title="Twitch Chat Proxy"
+            />
+          )}
+        </div>
+      ) : (
+        <>
+          <div
+            style={{
+              padding: '15px',
+              borderBottom: '1px solid #3a3a3d',
+              fontWeight: 'bold',
+              color: '#efeff1',
+              fontSize: '0.9rem',
+            }}
+          >
+            STREAM CHAT REPLAY
+          </div>
+
+          <div
+            ref={chatScrollRef}
+            style={{ flex: 1, overflowY: 'auto', padding: '10px' }}
+            className="chat-container"
+          >
+            {visibleChat.map((message) => (
+              <div
+                key={message.id}
+                style={{ marginBottom: '8px', fontSize: '0.85rem', lineHeight: '1.4' }}
+              >
+                <span style={{ color: '#adadb8', marginRight: '8px', fontSize: '0.75rem' }}>
+                  {Math.floor(message.contentOffsetSeconds / 3600)}:
+                  {Math.floor((message.contentOffsetSeconds % 3600) / 60)
+                    .toString()
+                    .padStart(2, '0')}
+                </span>
+                <span style={{ fontWeight: 'bold', color: '#efeff1' }}>
+                  {message.commenter?.displayName || 'Unknown'}:{' '}
+                </span>
+                <span style={{ color: '#efeff1' }}>
+                  {(message as any).message?.fragments
+                    ?.map((fragment: any) => fragment.text)
+                    .join('')}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
 
 export default function Player() {
   const [searchParams] = useSearchParams();
@@ -87,11 +555,14 @@ export default function Player() {
   const [activeQualityLabel, setActiveQualityLabel] = useState('');
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [showChat, setShowChat] = useState(false);
+  const [showChat, setShowChat] = useState(window.innerWidth > 1024);
   const [isFetchingChat, setIsFetchingChat] = useState(false);
 
   const [markers, setMarkers] = useState<VideoMarker[]>([]);
   const [showMarkers, setShowMarkers] = useState(false);
+
+  const [vodInfo, setVodInfo] = useState<VOD | null>(null);
+  const [liveInfo, setLiveInfo] = useState<LiveStream | null>(null);
 
   const useDesktopEnhancedPlayer = useMemo(() => {
     if (typeof navigator === 'undefined') return true;
@@ -186,24 +657,48 @@ export default function Player() {
   );
 
   const initializeStream = useCallback(
-    async (video: HTMLVideoElement, streamUrl: string, initialTime: number) => {
+    async (
+      video: HTMLVideoElement,
+      streamUrl: string,
+      initialTime: number,
+      settings?: ExperienceSettings
+    ) => {
       video.controls = !useDesktopEnhancedPlayer;
 
+      const playVideo = () => {
+        if (initialTime > 0) video.currentTime = initialTime;
+        void Promise.resolve(video.play()).catch((err) => console.log('Auto-play blocked', err));
+      };
+
       if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = streamUrl;
-        setActiveQualityLabel('');
-        video.addEventListener(
-          'loadedmetadata',
-          () => {
-            if (initialTime > 0) {
-              video.currentTime = initialTime;
+        try {
+          const resp = await fetch(streamUrl);
+          if (resp.ok) {
+            const text = await resp.text();
+            const allOptions = parseNativeHlsManifest(text, globalThis.location.origin);
+            const filtered = filterQualityOptions(allOptions, settings?.minVideoQuality);
+            setQualityOptions(filtered);
+
+            const targetIdx = getPreferredLevelIndex(filtered, settings?.preferredVideoQuality);
+            if (targetIdx === -1) {
+              video.src = streamUrl;
+              setActiveQualityLabel('');
+              setCurrentQuality(-1);
+            } else {
+              const opt = filtered.find((o) => o.id === targetIdx) || filtered[0];
+              video.src = opt?.url || streamUrl;
+              setActiveQualityLabel(opt?.label || '');
+              setCurrentQuality(targetIdx);
             }
-            void Promise.resolve(video.play()).catch((error: unknown) => {
-              console.log('Auto-play prevented', error);
-            });
-          },
-          { once: true }
-        );
+
+            video.addEventListener('loadedmetadata', playVideo, { once: true });
+            return;
+          }
+        } catch (e) {
+          console.error('Failed to parse native m3u8', e);
+        }
+        video.src = streamUrl;
+        video.addEventListener('loadedmetadata', playVideo, { once: true });
         return;
       }
 
@@ -219,37 +714,34 @@ export default function Player() {
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        const options = hls.levels.map((level: any, index: number) => ({
-          id: index,
-          label: level?.height ? `${level.height}p` : level?.name || `Quality ${index + 1}`,
+        const allOptions = hls.levels.map((lvl: any, idx: number) => ({
+          id: idx,
+          label: lvl?.height ? `${lvl.height}p` : lvl?.name || `Quality ${idx + 1}`,
+          height: lvl.height,
         }));
-        setQualityOptions(options);
 
-        if (hls.levels.length > 0) {
-          const highestQualityLevel = hls.levels.length - 1;
-          hls.currentLevel = highestQualityLevel;
-          hls.nextLevel = highestQualityLevel;
-          setCurrentQuality(highestQualityLevel);
-          setActiveQualityLabel(options[highestQualityLevel]?.label || '');
-        } else {
-          setCurrentQuality(-1);
-          setActiveQualityLabel('');
+        const filtered = filterQualityOptions(allOptions, settings?.minVideoQuality);
+        setQualityOptions(filtered);
+
+        // Configure Hls.js min bitrate
+        const minQ = Number.parseInt(settings?.minVideoQuality || 'none', 10);
+        if (!Number.isNaN(minQ)) {
+          const minLevel = hls.levels.find((l: any) => l.height >= minQ);
+          if (minLevel?.bitrate) hls.config.minAutoBitrate = minLevel.bitrate;
         }
 
-        if (initialTime > 0) {
-          video.currentTime = initialTime;
-        }
+        const targetIdx = getPreferredLevelIndex(allOptions, settings?.preferredVideoQuality);
+        hls.currentLevel = targetIdx;
+        hls.nextLevel = targetIdx;
+        setCurrentQuality(targetIdx);
+        setActiveQualityLabel(targetIdx === -1 ? '' : allOptions[targetIdx]?.label || '');
 
-        void Promise.resolve(video.play()).catch((error: unknown) => {
-          console.log('Auto-play prevented', error);
-        });
+        playVideo();
       });
 
-      hls.on(Hls.Events.LEVEL_SWITCHED, (_event: any, data: any) => {
-        const level = hls.levels?.[data?.level];
-        if (!level) return;
-        const label = level?.height ? `${level.height}p` : level?.name || '';
-        setActiveQualityLabel(label);
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_: any, data: any) => {
+        const lvl = hls.levels?.[data?.level];
+        if (lvl) setActiveQualityLabel(lvl.height ? `${lvl.height}p` : lvl.name || '');
       });
     },
     [useDesktopEnhancedPlayer]
@@ -344,10 +836,14 @@ export default function Player() {
       if (!vodId) return;
 
       let initialTime = 0;
+      let settingsRes: ExperienceSettings | undefined;
+
       try {
-        const [histRes, markersRes] = await Promise.all([
+        const [histRes, markersRes, settings, infoRes] = await Promise.all([
           fetch(`/api/history/${vodId}`),
           fetch(`/api/vod/${vodId}/markers`),
+          fetch('/api/settings'),
+          fetch(`/api/vod/${vodId}/info`),
         ]);
 
         if (histRes.ok) {
@@ -362,12 +858,20 @@ export default function Player() {
         } else {
           setMarkers([]);
         }
+
+        if (settings.ok) {
+          settingsRes = await settings.json();
+        }
+
+        if (infoRes.ok) {
+          setVodInfo(await infoRes.json());
+        }
       } catch (error) {
         console.error('Failed to fetch initial data', error);
       }
 
       if (disposed) return;
-      await initializeStream(video, `/api/vod/${vodId}/master.m3u8`, initialTime);
+      await initializeStream(video, `/api/vod/${vodId}/master.m3u8`, initialTime, settingsRes);
     };
 
     void run();
@@ -387,9 +891,30 @@ export default function Player() {
     const run = async () => {
       if (!liveId) return;
 
+      let settingsRes: ExperienceSettings | undefined;
+      try {
+        const [settings, infoRes] = await Promise.all([
+          fetch('/api/settings'),
+          fetch(`/api/user/${encodeURIComponent(liveId)}/live`),
+        ]);
+        if (settings.ok) {
+          settingsRes = await settings.json();
+        }
+        if (infoRes.ok) {
+          setLiveInfo(await infoRes.json());
+        }
+      } catch (error) {
+        console.error('Failed to fetch data', error);
+      }
+
       setMarkers([]);
       if (disposed) return;
-      await initializeStream(video, `/api/live/${encodeURIComponent(liveId)}/master.m3u8`, 0);
+      await initializeStream(
+        video,
+        `/api/live/${encodeURIComponent(liveId)}/master.m3u8`,
+        0,
+        settingsRes
+      );
     };
 
     void run();
@@ -434,64 +959,97 @@ export default function Player() {
     };
   }, [vodId]);
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (videoRef.current) {
+        handlePlayerKeyDown(e, videoRef.current, canSeek, playerViewportRef.current);
+      }
+    };
+    globalThis.addEventListener('keydown', onKeyDown);
+    return () => globalThis.removeEventListener('keydown', onKeyDown);
+  }, [canSeek]);
+
   const togglePlay = () => {
     const video = videoRef.current;
-    if (!video) return;
-
-    if (video.paused) {
-      void Promise.resolve(video.play()).catch((error: unknown) => {
-        console.log('Play failed', error);
-      });
-      return;
+    if (video) {
+      if (video.paused) void video.play().catch((err) => console.log('Play failed', err));
+      else video.pause();
     }
-
-    video.pause();
   };
 
   const handleSeek = (value: number) => {
-    const video = videoRef.current;
-    if (!video || !canSeek) return;
-    video.currentTime = value;
-    setCurrentTime(value);
+    if (videoRef.current && canSeek) {
+      videoRef.current.currentTime = value;
+      setCurrentTime(value);
+    }
   };
 
   const handleVolume = (nextVolume: number) => {
     const video = videoRef.current;
-    if (!video) return;
-
-    const clamped = Math.max(0, Math.min(1, nextVolume));
-    video.volume = clamped;
-    video.muted = clamped === 0;
-    setVolume(clamped);
-    setIsMuted(clamped === 0);
+    if (video) {
+      const clamped = Math.max(0, Math.min(1, nextVolume));
+      video.volume = clamped;
+      video.muted = clamped === 0;
+      setVolume(clamped);
+      setIsMuted(clamped === 0);
+    }
   };
 
   const toggleMute = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.muted = !video.muted;
-    setIsMuted(video.muted);
+    if (videoRef.current) {
+      videoRef.current.muted = !videoRef.current.muted;
+      setIsMuted(videoRef.current.muted);
+    }
   };
 
   const changeSpeed = (rate: number) => {
+    if (videoRef.current) {
+      videoRef.current.playbackRate = rate;
+      setPlaybackRate(rate);
+    }
+  };
+
+  const changeQualityHls = (value: number) => {
+    if (hlsRef.current) {
+      hlsRef.current.currentLevel = value;
+      hlsRef.current.nextLevel = value;
+    }
+  };
+
+  const changeQualityNative = (value: number) => {
     const video = videoRef.current;
-    if (!video) return;
-    video.playbackRate = rate;
-    setPlaybackRate(rate);
+    if (!video || qualityOptions.length === 0) return;
+
+    const time = video.currentTime;
+    const isPlayingBefore = !video.paused;
+
+    if (value < 0) {
+      video.src = vodId
+        ? `/api/vod/${vodId}/master.m3u8`
+        : `/api/live/${encodeURIComponent(liveId!)}/master.m3u8`;
+      setActiveQualityLabel('');
+    } else {
+      const opt = qualityOptions.find((o) => o.id === value);
+      if (opt?.url) {
+        video.src = opt.url;
+        setActiveQualityLabel(opt.label);
+      }
+    }
+
+    video.addEventListener(
+      'loadedmetadata',
+      () => {
+        video.currentTime = time;
+        if (isPlayingBefore) void video.play().catch(() => {});
+      },
+      { once: true }
+    );
   };
 
   const changeQuality = (value: number) => {
     setCurrentQuality(value);
-    if (!hlsRef.current) return;
-
-    if (value < 0) {
-      hlsRef.current.currentLevel = -1;
-      hlsRef.current.nextLevel = -1;
-      return;
-    }
-
-    hlsRef.current.currentLevel = value;
-    hlsRef.current.nextLevel = value;
+    if (hlsRef.current) changeQualityHls(value);
+    else changeQualityNative(value);
   };
 
   const toggleFullscreen = async () => {
@@ -510,413 +1068,283 @@ export default function Player() {
     <div
       style={{
         display: 'flex',
+        flexDirection: 'column',
         position: 'fixed',
         inset: 0,
         width: '100%',
         height: '100dvh',
-        backgroundColor: '#000',
+        backgroundColor: '#07080f',
         overflow: 'hidden',
         overscrollBehavior: 'none',
       }}
     >
-      <div
-        ref={playerViewportRef}
-        style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative' }}
-      >
-        {!isFullscreen && (
-          <div
-            style={{
-              backgroundColor: '#18181b',
-              padding: '10px 20px',
-              display: 'flex',
-              alignItems: 'center',
-              borderBottom: '1px solid #3a3a3d',
-              zIndex: 10,
-            }}
-          >
-            <button
-              onClick={() => navigate(-1)}
-              style={{
-                color: '#efeff1',
-                fontSize: '14px',
-                fontWeight: 'bold',
-                padding: '5px 10px',
-                backgroundColor: '#3a3a3d',
-                borderRadius: '4px',
-                marginRight: '15px',
-                border: 'none',
-                cursor: 'pointer',
-              }}
-            >
-              &larr; Back
-            </button>
+      {!isFullscreen && (
+        <PlayerHeader
+          navigate={navigate}
+          playerTitle={playerTitle}
+          qualityOptions={qualityOptions}
+          currentQuality={currentQuality}
+          changeQuality={changeQuality}
+          activeQualityLabel={activeQualityLabel}
+          liveId={liveId}
+          markers={markers}
+          showMarkers={showMarkers}
+          setShowMarkers={setShowMarkers}
+          showChat={showChat}
+          setShowChat={setShowChat}
+        />
+      )}
 
-            <h2
-              style={{
-                color: 'white',
-                fontSize: '14px',
-                margin: 0,
-                flexGrow: 1,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {playerTitle}
-            </h2>
-
-            {activeQualityLabel && (
-              <span
-                style={{
-                  color: '#efeff1',
-                  fontSize: '13px',
-                  fontWeight: 700,
-                  padding: '4px 8px',
-                  borderRadius: '8px',
-                  backgroundColor: '#242a43',
-                  marginRight: '10px',
-                }}
-              >
-                {activeQualityLabel}
-              </span>
-            )}
-
-            {!liveId && (
-              <button
-                onClick={() => setShowMarkers(!showMarkers)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#9146ff',
-                  cursor: 'pointer',
-                  fontWeight: 'bold',
-                  marginRight: '10px',
-                }}
-              >
-                Chapters ({markers.length})
-              </button>
-            )}
-
-            <button
-              onClick={() => setShowChat(!showChat)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#9146ff',
-                cursor: 'pointer',
-                fontWeight: 'bold',
-              }}
-            >
-              {showChat ? 'Hide Chat' : 'Show Chat'}
-            </button>
-          </div>
-        )}
-
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <div
           style={{
             flex: 1,
-            position: 'relative',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            backgroundColor: '#000',
-          }}
-        >
-          <video
-            ref={videoRef}
-            controls={!useDesktopEnhancedPlayer}
-            playsInline
-            onMouseMove={revealControls}
-            onMouseEnter={revealControls}
-            style={{ width: '100%', height: '100%', outline: 'none' }}
-          >
-            <track kind="captions" />
-          </video>
-
-          {!liveId && showMarkers && markers.length > 0 && (
-            <div
-              style={{
-                position: 'absolute',
-                top: '10px',
-                left: '10px',
-                backgroundColor: 'rgba(0,0,0,0.85)',
-                padding: '15px',
-                borderRadius: '8px',
-                zIndex: 20,
-                maxHeight: '80%',
-                overflowY: 'auto',
-                border: '1px solid #3a3a3d',
-              }}
-            >
-              <h3 style={{ marginTop: 0, fontSize: '1rem', color: '#fff' }}>Chapters</h3>
-              {markers.map((marker) => (
-                <button
-                  key={marker.id}
-                  onClick={() => {
-                    if (videoRef.current) {
-                      videoRef.current.currentTime = marker.displayTime;
-                      setShowMarkers(false);
-                    }
-                  }}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    textAlign: 'left',
-                    background: 'none',
-                    border: 'none',
-                    color: '#adadb8',
-                    padding: '8px 0',
-                    cursor: 'pointer',
-                    borderBottom: '1px solid #222',
-                  }}
-                >
-                  <span style={{ color: '#9146ff', fontWeight: 'bold', marginRight: '10px' }}>
-                    {Math.floor(marker.displayTime / 3600)}h
-                    {Math.floor((marker.displayTime % 3600) / 60)}m
-                  </span>
-                  {marker.description}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {useDesktopEnhancedPlayer && (
-          <div
-            style={{
-              position: 'absolute',
-              left: '12px',
-              right: '12px',
-              bottom: '12px',
-              backgroundColor: 'rgba(14, 16, 24, 0.88)',
-              border: '1px solid #2b2d38',
-              borderRadius: '12px',
-              padding: '11px 14px',
-              display: 'grid',
-              gap: '8px',
-              zIndex: 100,
-              pointerEvents: controlsVisible ? 'auto' : 'none',
-              backdropFilter: 'blur(6px)',
-              boxShadow: '0 8px 26px rgba(0,0,0,0.42)',
-              opacity: controlsVisible ? 1 : 0,
-              transform: controlsVisible ? 'translateY(0)' : 'translateY(8px)',
-              transition: 'opacity 180ms ease, transform 180ms ease',
-            }}
-          >
-            <input
-              type="range"
-              min={0}
-              max={canSeek ? Math.max(duration, 1) : 1}
-              step={0.1}
-              value={canSeek ? Math.min(currentTime, duration) : 0}
-              disabled={!canSeek}
-              onChange={(event) => handleSeek(Number(event.target.value))}
-              style={{
-                width: '100%',
-                accentColor: '#8f57ff',
-                cursor: canSeek ? 'pointer' : 'default',
-              }}
-            />
-
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                color: '#f1f1f1',
-                fontSize: '13px',
-                flexWrap: 'wrap',
-              }}
-            >
-              <button
-                onClick={togglePlay}
-                type="button"
-                style={{
-                  border: '1px solid #3a3a3d',
-                  background: '#1b1e2b',
-                  color: '#fff',
-                  borderRadius: '8px',
-                  padding: '7px 12px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                }}
-              >
-                {isPlaying ? 'Pause' : 'Play'}
-              </button>
-
-              <span style={{ minWidth: '110px' }}>
-                {liveId ? 'LIVE' : `${formatClock(currentTime)} / ${formatClock(duration)}`}
-              </span>
-
-              <button
-                onClick={toggleMute}
-                type="button"
-                style={{
-                  border: '1px solid #3a3a3d',
-                  background: '#1b1e2b',
-                  color: '#fff',
-                  borderRadius: '8px',
-                  padding: '7px 12px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                }}
-              >
-                {isMuted ? 'Unmute' : 'Mute'}
-              </button>
-
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={isMuted ? 0 : volume}
-                onChange={(event) => handleVolume(Number(event.target.value))}
-                style={{ width: '120px', accentColor: '#8f57ff', cursor: 'pointer' }}
-              />
-
-              <select
-                value={playbackRate}
-                onChange={(event) => changeSpeed(Number(event.target.value))}
-                style={{
-                  border: '1px solid #3a3a3d',
-                  background: '#1b1e2b',
-                  color: '#fff',
-                  borderRadius: '8px',
-                  padding: '7px 10px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                }}
-              >
-                {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((rate) => (
-                  <option key={rate} value={rate}>
-                    {rate}x
-                  </option>
-                ))}
-              </select>
-
-              {qualityOptions.length > 0 && (
-                <select
-                  value={currentQuality}
-                  onChange={(event) => changeQuality(Number(event.target.value))}
-                  style={{
-                    border: '1px solid #3a3a3d',
-                    background: '#1b1e2b',
-                    color: '#fff',
-                    borderRadius: '8px',
-                    padding: '7px 10px',
-                    cursor: 'pointer',
-                    fontWeight: 600,
-                  }}
-                >
-                  <option value={-1}>Auto</option>
-                  {qualityOptions.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              )}
-
-              <button
-                onClick={() => {
-                  void toggleFullscreen();
-                }}
-                type="button"
-                style={{
-                  marginLeft: 'auto',
-                  border: '1px solid #3a3a3d',
-                  background: '#1b1e2b',
-                  color: '#fff',
-                  borderRadius: '8px',
-                  padding: '7px 12px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                }}
-              >
-                {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {showChat && (
-        <div
-          style={{
-            width: '340px',
-            backgroundColor: '#0e0e10',
-            borderLeft: '1px solid #3a3a3d',
             display: 'flex',
             flexDirection: 'column',
+            overflowY: isFullscreen ? 'hidden' : 'auto',
           }}
         >
-          {liveId ? (
-            <div
-              style={{
-                padding: '15px',
-                color: '#efeff1',
-                fontSize: '0.9rem',
-                lineHeight: '1.5',
-              }}
+          <div
+            ref={playerViewportRef}
+            style={{
+              width: '100%',
+              backgroundColor: '#000',
+              position: 'relative',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              flexShrink: 0,
+              aspectRatio: isFullscreen ? 'auto' : '16 / 9',
+              maxHeight: isFullscreen ? 'none' : 'calc(100vh - 140px)',
+            }}
+          >
+            <video
+              ref={videoRef}
+              controls={!useDesktopEnhancedPlayer}
+              playsInline
+              onMouseMove={revealControls}
+              onMouseEnter={revealControls}
+              style={{ width: '100%', height: '100%', outline: 'none' }}
             >
-              <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>LIVE CHAT</div>
-              <div style={{ color: '#adadb8', marginBottom: '10px' }}>
-                Chat Twitch intégré indisponible en HTTP local.
-              </div>
-              <a
-                href={`https://www.twitch.tv/popout/${encodeURIComponent(liveId)}/chat?popout=`}
-                target="_blank"
-                rel="noreferrer"
-                style={{ color: '#9146ff', textDecoration: 'none', fontWeight: 'bold' }}
-              >
-                Ouvrir le chat Twitch
-              </a>
-            </div>
-          ) : (
-            <>
+              <track kind="captions" />
+            </video>
+
+            {!liveId && showMarkers && markers.length > 0 && (
               <div
                 style={{
+                  position: 'absolute',
+                  top: '10px',
+                  left: '10px',
+                  backgroundColor: 'rgba(0,0,0,0.85)',
                   padding: '15px',
-                  borderBottom: '1px solid #3a3a3d',
-                  fontWeight: 'bold',
-                  color: '#efeff1',
-                  fontSize: '0.9rem',
+                  borderRadius: '8px',
+                  zIndex: 20,
+                  maxHeight: '80%',
+                  overflowY: 'auto',
+                  border: '1px solid #3a3a3d',
                 }}
               >
-                STREAM CHAT REPLAY
-              </div>
-
-              <div
-                ref={chatScrollRef}
-                style={{ flex: 1, overflowY: 'auto', padding: '10px' }}
-                className="chat-container"
-              >
-                {visibleChat.map((message) => (
-                  <div
-                    key={message.id}
-                    style={{ marginBottom: '8px', fontSize: '0.85rem', lineHeight: '1.4' }}
+                <h3 style={{ marginTop: 0, fontSize: '1rem', color: '#fff' }}>Chapters</h3>
+                {markers.map((marker) => (
+                  <button
+                    key={marker.id}
+                    onClick={() => {
+                      if (videoRef.current) {
+                        videoRef.current.currentTime = marker.displayTime;
+                        setShowMarkers(false);
+                      }
+                    }}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      textAlign: 'left',
+                      background: 'none',
+                      border: 'none',
+                      color: '#adadb8',
+                      padding: '8px 0',
+                      cursor: 'pointer',
+                      borderBottom: '1px solid #222',
+                    }}
                   >
-                    <span style={{ color: '#adadb8', marginRight: '8px', fontSize: '0.75rem' }}>
-                      {Math.floor(message.contentOffsetSeconds / 3600)}:
-                      {Math.floor((message.contentOffsetSeconds % 3600) / 60)
-                        .toString()
-                        .padStart(2, '0')}
+                    <span style={{ color: '#9146ff', fontWeight: 'bold', marginRight: '10px' }}>
+                      {Math.floor(marker.displayTime / 3600)}h
+                      {Math.floor((marker.displayTime % 3600) / 60)}m
                     </span>
-                    <span style={{ fontWeight: 'bold', color: '#efeff1' }}>
-                      {message.commenter?.displayName || 'Unknown'}:{' '}
-                    </span>
-                    <span style={{ color: '#efeff1' }}>
-                      {(message as any).message?.fragments
-                        ?.map((fragment: any) => fragment.text)
-                        .join('')}
-                    </span>
-                  </div>
+                    {marker.description}
+                  </button>
                 ))}
               </div>
-            </>
-          )}
+            )}
+
+            {useDesktopEnhancedPlayer && (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: '12px',
+                  right: '12px',
+                  bottom: '12px',
+                  backgroundColor: 'rgba(14, 16, 24, 0.88)',
+                  border: '1px solid #2b2d38',
+                  borderRadius: '12px',
+                  padding: '11px 14px',
+                  display: 'grid',
+                  gap: '8px',
+                  zIndex: 100,
+                  pointerEvents: controlsVisible ? 'auto' : 'none',
+                  backdropFilter: 'blur(6px)',
+                  boxShadow: '0 8px 26px rgba(0,0,0,0.42)',
+                  opacity: controlsVisible ? 1 : 0,
+                  transform: controlsVisible ? 'translateY(0)' : 'translateY(8px)',
+                  transition: 'opacity 180ms ease, transform 180ms ease',
+                }}
+              >
+                <input
+                  type="range"
+                  min={0}
+                  max={canSeek ? Math.max(duration, 1) : 1}
+                  step={0.1}
+                  value={canSeek ? Math.min(currentTime, duration) : 0}
+                  disabled={!canSeek}
+                  onChange={(event) => handleSeek(Number(event.target.value))}
+                  style={{
+                    width: '100%',
+                    accentColor: '#8f57ff',
+                    cursor: canSeek ? 'pointer' : 'default',
+                  }}
+                />
+
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    color: '#f1f1f1',
+                    fontSize: '13px',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <button
+                    onClick={togglePlay}
+                    type="button"
+                    style={{
+                      border: '1px solid #3a3a3d',
+                      background: '#1b1e2b',
+                      color: '#fff',
+                      borderRadius: '8px',
+                      padding: '7px 12px',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {isPlaying ? 'Pause' : 'Play'}
+                  </button>
+
+                  <span style={{ minWidth: '110px' }}>
+                    {liveId ? 'LIVE' : `${formatClock(currentTime)} / ${formatClock(duration)}`}
+                  </span>
+
+                  <button
+                    onClick={toggleMute}
+                    type="button"
+                    style={{
+                      border: '1px solid #3a3a3d',
+                      background: '#1b1e2b',
+                      color: '#fff',
+                      borderRadius: '8px',
+                      padding: '7px 12px',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {isMuted ? 'Unmute' : 'Mute'}
+                  </button>
+
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={isMuted ? 0 : volume}
+                    onChange={(event) => handleVolume(Number(event.target.value))}
+                    style={{ width: '120px', accentColor: '#8f57ff', cursor: 'pointer' }}
+                  />
+
+                  <select
+                    value={playbackRate}
+                    onChange={(event) => changeSpeed(Number(event.target.value))}
+                    style={{
+                      border: '1px solid #3a3a3d',
+                      background: '#1b1e2b',
+                      color: '#fff',
+                      borderRadius: '8px',
+                      padding: '7px 10px',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((rate) => (
+                      <option key={rate} value={rate}>
+                        {rate}x
+                      </option>
+                    ))}
+                  </select>
+
+                  {qualityOptions.length > 0 && (
+                    <select
+                      value={currentQuality}
+                      onChange={(event) => changeQuality(Number(event.target.value))}
+                      style={{
+                        border: '1px solid #3a3a3d',
+                        background: '#1b1e2b',
+                        color: '#fff',
+                        borderRadius: '8px',
+                        padding: '7px 10px',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                      }}
+                    >
+                      <option value={-1}>Auto</option>
+                      {qualityOptions.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  <button
+                    onClick={() => {
+                      void toggleFullscreen();
+                    }}
+                    type="button"
+                    style={{
+                      marginLeft: 'auto',
+                      border: '1px solid #3a3a3d',
+                      background: '#1b1e2b',
+                      color: '#fff',
+                      borderRadius: '8px',
+                      padding: '7px 12px',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <InfoEncart liveInfo={liveInfo} vodInfo={vodInfo} isFullscreen={isFullscreen} />
         </div>
-      )}
+
+        <ChatSidebar
+          liveId={liveId}
+          showChat={showChat}
+          visibleChat={visibleChat}
+          chatScrollRef={chatScrollRef}
+        />
+      </div>
     </div>
   );
 }

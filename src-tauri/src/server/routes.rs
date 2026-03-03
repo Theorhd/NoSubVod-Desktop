@@ -142,6 +142,18 @@ async fn handle_vod_markers(
     }
 }
 
+async fn handle_vod_info(
+    Path(vod_id): Path<String>,
+    State(state): State<ApiState>,
+) -> Response {
+    let vods = state.twitch.fetch_vods_by_ids(vec![vod_id]).await;
+    if let Some(vod) = vods.into_iter().next() {
+        Json(vod).into_response()
+    } else {
+        not_found("VOD not found")
+    }
+}
+
 async fn handle_vod_master(
     Path(vod_id): Path<String>,
     State(state): State<ApiState>,
@@ -224,6 +236,71 @@ async fn handle_proxy_segment(
         }
         Err(e) => internal(e),
     }
+}
+
+async fn handle_chat_iframe(Path(login): Path<String>) -> Response {
+    let html = format!(
+        "<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+    <meta charset=\"UTF-8\">
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+    <title>Twitch Chat Proxy</title>
+    <style>
+        body, html {{
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #18181b;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #efeff1;
+            font-family: Inter, Roobert, \"Helvetica Neue\", Helvetica, Arial, sans-serif;
+            text-align: center;
+        }}
+        .container {{
+            padding: 20px;
+        }}
+        a {{
+            display: inline-block;
+            margin-top: 15px;
+            padding: 10px 15px;
+            background-color: #9146ff;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: bold;
+        }}
+        a:hover {{
+            background-color: #772ce8;
+        }}
+    </style>
+</head>
+<body>
+    <div class=\"container\">
+        <svg width=\"48\" height=\"48\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" style=\"margin-bottom: 10px;\">
+            <path d=\"M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM13 17H11V15H13V17ZM13 13H11V7H13V13Z\" fill=\"#adadb8\"/>
+        </svg>
+        <div style=\"font-weight: bold; font-size: 1.1rem; margin-bottom: 5px;\">Chat protégé par Twitch</div>
+        <div style=\"color: #adadb8; font-size: 0.9rem;\">
+            Sur navigateur mobile/local, le chat de <b>{login}</b> doit s'ouvrir séparément.
+        </div>
+        <a href=\"https://www.twitch.tv/popout/{login}/chat?popout=\" target=\"_blank\" rel=\"noreferrer\">
+            Ouvrir le chat
+        </a>
+    </div>
+</body>
+</html>"
+    );
+
+    Response::builder()
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .body(Body::from(html))
+        .unwrap()
+        .into_response()
 }
 
 async fn handle_get_watchlist(State(state): State<ApiState>) -> impl IntoResponse {
@@ -603,8 +680,10 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         // Video data
         .route("/vod/:vod_id/chat", get(handle_vod_chat))
         .route("/vod/:vod_id/markers", get(handle_vod_markers))
+        .route("/vod/:vod_id/info", get(handle_vod_info))
         .route("/vod/:vod_id/master.m3u8", get(handle_vod_master))
         .route("/live/:login/master.m3u8", get(handle_live_master))
+        .route("/live/:login/chat.html", get(handle_chat_iframe))
         .route("/stream/variant.m3u8", get(handle_proxy_variant))
         .route("/stream/variant.ts", get(handle_proxy_segment))
         // Watchlist

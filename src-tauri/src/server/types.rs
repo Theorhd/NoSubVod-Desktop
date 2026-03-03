@@ -186,6 +186,10 @@ pub struct ExperienceSettings {
     pub adblock_proxy: Option<String>,
     #[serde(rename = "adblockProxyMode", default)]
     pub adblock_proxy_mode: Option<String>, // "auto" or "manual"
+    #[serde(rename = "minVideoQuality", default)]
+    pub min_video_quality: Option<String>,
+    #[serde(rename = "preferredVideoQuality", default)]
+    pub preferred_video_quality: Option<String>,
 }
 
 /// Root of the persisted JSON file.
