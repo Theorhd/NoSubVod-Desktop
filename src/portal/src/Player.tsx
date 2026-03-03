@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ChatMessage, VideoMarker, ExperienceSettings, Vod, LiveStream } from '../../shared/types';
+import { ChatMessage, VideoMarker, ExperienceSettings, VOD, LiveStream } from '../../shared/types';
 
 const HLS_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
 
@@ -63,6 +63,102 @@ function resolvePlayerTitle(vodId: string | null, liveId: string | null): string
   return 'Error';
 }
 
+function parseNativeHlsManifest(text: string, baseOrigin: string): QualityOption[] {
+  const options: QualityOption[] = [];
+  let currentRes = 0;
+  let currentName = '';
+
+  text.split('\n').forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (line.startsWith('#EXT-X-STREAM-INF')) {
+      const resMatch = /RESOLUTION=\d+x(\d+)/.exec(line);
+      const nameMatch = /VIDEO="([^"]+)"/.exec(line);
+      if (resMatch) currentRes = Number.parseInt(resMatch[1], 10);
+      if (nameMatch) currentName = nameMatch[1];
+      return;
+    }
+
+    if (!line || line.startsWith('#')) return;
+
+    const label = currentName || (currentRes ? `${currentRes}p` : `Quality ${options.length + 1}`);
+    const isAbs = line.startsWith('http') || line.startsWith('/');
+
+    options.push({
+      id: options.length,
+      label,
+      url: isAbs ? line : new URL(line, baseOrigin).href,
+      height: currentRes,
+    });
+
+    currentRes = 0;
+    currentName = '';
+  });
+
+  return options;
+}
+
+function filterQualityOptions(options: QualityOption[], minVideoQuality?: string): QualityOption[] {
+  const minQ = Number.parseInt(minVideoQuality || 'none', 10);
+  if (Number.isNaN(minQ)) return options;
+  return options.filter((opt) => !opt.height || opt.height >= minQ);
+}
+
+function getPreferredLevelIndex(
+  options: { height?: number }[],
+  preferredVideoQuality?: string
+): number {
+  if (!preferredVideoQuality || preferredVideoQuality === 'auto') return -1;
+  const preferredHeight = Number.parseInt(preferredVideoQuality, 10);
+  const foundIndex = options.findIndex((o) => o.height === preferredHeight);
+  return foundIndex === -1 ? 0 : foundIndex;
+}
+
+function handlePlayerKeyDown(
+  e: KeyboardEvent,
+  video: HTMLVideoElement,
+  canSeek: boolean,
+  viewport: HTMLDivElement | null
+) {
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)) return;
+
+  switch (e.key.toLowerCase()) {
+    case ' ':
+    case 'k':
+      e.preventDefault();
+      if (video.paused) void video.play().catch(() => {});
+      else video.pause();
+      break;
+    case 'f':
+      e.preventDefault();
+      if (!viewport) break;
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      else viewport.requestFullscreen().catch(() => {});
+      break;
+    case 'm':
+      e.preventDefault();
+      video.muted = !video.muted;
+      break;
+    case 'arrowup':
+      e.preventDefault();
+      video.volume = Math.min(1, video.volume + 0.05);
+      break;
+    case 'arrowdown':
+      e.preventDefault();
+      video.volume = Math.max(0, video.volume - 0.05);
+      break;
+    case 'arrowleft':
+      e.preventDefault();
+      if (canSeek) video.currentTime = Math.max(0, video.currentTime - 5);
+      break;
+    case 'arrowright':
+      e.preventDefault();
+      if (canSeek && Number.isFinite(video.duration)) {
+        video.currentTime = Math.min(video.duration, video.currentTime + 5);
+      }
+      break;
+  }
+}
+
 const Uptime = ({ startedAt }: { startedAt: string }) => {
   const [uptime, setUptime] = useState('');
   useEffect(() => {
@@ -78,6 +174,354 @@ const Uptime = ({ startedAt }: { startedAt: string }) => {
     return () => clearInterval(int);
   }, [startedAt]);
   return <span>⏱️ {uptime}</span>;
+};
+
+interface PlayerHeaderProps {
+  navigate: ReturnType<typeof useNavigate>;
+  playerTitle: string;
+  qualityOptions: QualityOption[];
+  currentQuality: number;
+  changeQuality: (val: number) => void;
+  activeQualityLabel: string;
+  liveId: string | null;
+  markers: VideoMarker[];
+  showMarkers: boolean;
+  setShowMarkers: (v: boolean) => void;
+  showChat: boolean;
+  setShowChat: (v: boolean) => void;
+}
+
+const PlayerHeader = ({
+  navigate,
+  playerTitle,
+  qualityOptions,
+  currentQuality,
+  changeQuality,
+  activeQualityLabel,
+  liveId,
+  markers,
+  showMarkers,
+  setShowMarkers,
+  showChat,
+  setShowChat,
+}: PlayerHeaderProps) => (
+  <div
+    style={{
+      backgroundColor: '#18181b',
+      padding: '10px 20px',
+      display: 'flex',
+      alignItems: 'center',
+      borderBottom: '1px solid #3a3a3d',
+      zIndex: 10,
+      flexShrink: 0,
+    }}
+  >
+    <button
+      onClick={() => navigate(-1)}
+      style={{
+        color: '#efeff1',
+        fontSize: '14px',
+        fontWeight: 'bold',
+        padding: '5px 10px',
+        backgroundColor: '#3a3a3d',
+        borderRadius: '4px',
+        marginRight: '15px',
+        border: 'none',
+        cursor: 'pointer',
+      }}
+    >
+      &larr; Back
+    </button>
+
+    <h2
+      style={{
+        color: 'white',
+        fontSize: '14px',
+        margin: 0,
+        flexGrow: 1,
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+      }}
+    >
+      {playerTitle}
+    </h2>
+
+    {qualityOptions.length > 0 && (
+      <select
+        value={currentQuality}
+        onChange={(event) => changeQuality(Number(event.target.value))}
+        style={{
+          color: '#efeff1',
+          fontSize: '13px',
+          fontWeight: 700,
+          padding: '4px 8px',
+          borderRadius: '8px',
+          backgroundColor: '#242a43',
+          marginRight: '10px',
+          border: 'none',
+          outline: 'none',
+          cursor: 'pointer',
+        }}
+      >
+        <option value={-1}>Auto</option>
+        {qualityOptions.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    )}
+
+    {qualityOptions.length === 0 && activeQualityLabel && (
+      <span
+        style={{
+          color: '#efeff1',
+          fontSize: '13px',
+          fontWeight: 700,
+          padding: '4px 8px',
+          borderRadius: '8px',
+          backgroundColor: '#242a43',
+          marginRight: '10px',
+        }}
+      >
+        {activeQualityLabel}
+      </span>
+    )}
+
+    {!liveId && (
+      <button
+        onClick={() => setShowMarkers(!showMarkers)}
+        style={{
+          background: 'none',
+          border: 'none',
+          color: '#9146ff',
+          cursor: 'pointer',
+          fontWeight: 'bold',
+          marginRight: '10px',
+        }}
+      >
+        Chapters ({markers.length})
+      </button>
+    )}
+
+    <button
+      onClick={() => setShowChat(!showChat)}
+      style={{
+        background: 'none',
+        border: 'none',
+        color: '#9146ff',
+        cursor: 'pointer',
+        fontWeight: 'bold',
+      }}
+    >
+      {showChat ? 'Hide Chat' : 'Show Chat'}
+    </button>
+  </div>
+);
+
+const InfoEncart = ({
+  liveInfo,
+  vodInfo,
+  isFullscreen,
+}: {
+  liveInfo: LiveStream | null;
+  vodInfo: VOD | null;
+  isFullscreen: boolean;
+}) => {
+  if (isFullscreen || (!vodInfo && !liveInfo)) return null;
+
+  return (
+    <div style={{ padding: '20px', backgroundColor: '#07080f', color: '#efeff1', flex: 1 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '20px' }}>
+        <img
+          src={
+            liveInfo ? liveInfo.broadcaster?.profileImageURL : vodInfo?.owner?.profileImageURL || ''
+          }
+          alt="Profile"
+          style={{
+            width: '72px',
+            height: '72px',
+            borderRadius: '50%',
+            objectFit: 'cover',
+            border: '2px solid #3a3a3d',
+          }}
+        />
+        <div style={{ flex: 1 }}>
+          <h1 style={{ margin: '0 0 8px 0', fontSize: '1.4rem', lineHeight: '1.3' }}>
+            {liveInfo ? liveInfo.title : vodInfo?.title}
+          </h1>
+          <div
+            style={{
+              fontWeight: 'bold',
+              fontSize: '1.1rem',
+              marginBottom: '10px',
+              color: '#bf94ff',
+            }}
+          >
+            {liveInfo
+              ? liveInfo.broadcaster?.displayName
+              : vodInfo?.owner?.displayName || 'Unknown Streamer'}
+          </div>
+          <div
+            style={{
+              color: '#adadb8',
+              fontSize: '0.95rem',
+              display: 'flex',
+              gap: '20px',
+              flexWrap: 'wrap',
+            }}
+          >
+            <span
+              style={{
+                backgroundColor: '#18181b',
+                padding: '4px 8px',
+                borderRadius: '6px',
+                fontWeight: 'bold',
+              }}
+            >
+              🎮 {liveInfo ? liveInfo.game?.name : vodInfo?.game?.name || 'No Category'}
+            </span>
+
+            {liveInfo && (
+              <>
+                <span
+                  style={{
+                    color: '#eb0400',
+                    fontWeight: 'bold',
+                    backgroundColor: '#18181b',
+                    padding: '4px 8px',
+                    borderRadius: '6px',
+                  }}
+                >
+                  🔴 {(liveInfo.viewerCount || 0).toLocaleString()} viewers
+                </span>
+                <span
+                  style={{
+                    backgroundColor: '#18181b',
+                    padding: '4px 8px',
+                    borderRadius: '6px',
+                  }}
+                >
+                  <Uptime startedAt={liveInfo.startedAt} />
+                </span>
+              </>
+            )}
+            {vodInfo && (
+              <>
+                <span
+                  style={{
+                    backgroundColor: '#18181b',
+                    padding: '4px 8px',
+                    borderRadius: '6px',
+                  }}
+                >
+                  👁️ {(vodInfo.viewCount || 0).toLocaleString()} vues
+                </span>
+                <span
+                  style={{
+                    backgroundColor: '#18181b',
+                    padding: '4px 8px',
+                    borderRadius: '6px',
+                  }}
+                >
+                  📅 {new Date(vodInfo.createdAt).toLocaleDateString()}
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ChatSidebar = ({
+  liveId,
+  showChat,
+  visibleChat,
+  chatScrollRef,
+}: {
+  liveId: string | null;
+  showChat: boolean;
+  visibleChat: ChatMessage[];
+  chatScrollRef: React.RefObject<HTMLDivElement | null>;
+}) => {
+  if (!showChat) return null;
+
+  return (
+    <div
+      style={{
+        width: '340px',
+        backgroundColor: '#0e0e10',
+        borderLeft: '1px solid #3a3a3d',
+        display: 'flex',
+        flexDirection: 'column',
+        flexShrink: 0,
+      }}
+    >
+      {liveId ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+          {globalThis.location.hostname === 'localhost' ||
+          globalThis.location.hostname === '127.0.0.1' ||
+          globalThis.location.hostname === 'tauri.localhost' ? (
+            <iframe
+              src={`https://www.twitch.tv/embed/${encodeURIComponent(liveId)}/chat?parent=${globalThis.location.hostname}&darkpopout=true`}
+              width="100%"
+              height="100%"
+              style={{ border: 'none' }}
+              title="Twitch Chat"
+            />
+          ) : (
+            <iframe
+              src={`/api/live/${encodeURIComponent(liveId)}/chat.html`}
+              width="100%"
+              height="100%"
+              style={{ border: 'none' }}
+              title="Twitch Chat Proxy"
+            />
+          )}
+        </div>
+      ) : (
+        <>
+          <div
+            style={{
+              padding: '15px',
+              borderBottom: '1px solid #3a3a3d',
+              fontWeight: 'bold',
+              color: '#efeff1',
+              fontSize: '0.9rem',
+            }}
+          >
+            STREAM CHAT REPLAY
+          </div>
+
+          <div
+            ref={chatScrollRef}
+            style={{ flex: 1, overflowY: 'auto', padding: '10px' }}
+            className="chat-container"
+          >
+            {visibleChat.map((message) => (
+              <div key={message.id} style={{ marginBottom: '8px', fontSize: '0.85rem', lineHeight: '1.4' }}>
+                <span style={{ color: '#adadb8', marginRight: '8px', fontSize: '0.75rem' }}>
+                  {Math.floor(message.contentOffsetSeconds / 3600)}:
+                  {Math.floor((message.contentOffsetSeconds % 3600) / 60)
+                    .toString()
+                    .padStart(2, '0')}
+                </span>
+                <span style={{ fontWeight: 'bold', color: '#efeff1' }}>
+                  {message.commenter?.displayName || 'Unknown'}:{' '}
+                </span>
+                <span style={{ color: '#efeff1' }}>
+                  {(message as any).message?.fragments?.map((fragment: any) => fragment.text).join('')}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
 };
 
 export default function Player() {
@@ -112,7 +556,7 @@ export default function Player() {
   const [markers, setMarkers] = useState<VideoMarker[]>([]);
   const [showMarkers, setShowMarkers] = useState(false);
 
-  const [vodInfo, setVodInfo] = useState<Vod | null>(null);
+  const [vodInfo, setVodInfo] = useState<VOD | null>(null);
   const [liveInfo, setLiveInfo] = useState<LiveStream | null>(null);
 
   const useDesktopEnhancedPlayer = useMemo(() => {
@@ -216,112 +660,40 @@ export default function Player() {
     ) => {
       video.controls = !useDesktopEnhancedPlayer;
 
+      const playVideo = () => {
+        if (initialTime > 0) video.currentTime = initialTime;
+        void Promise.resolve(video.play()).catch((err) => console.log('Auto-play blocked', err));
+      };
+
       if (video.canPlayType('application/vnd.apple.mpegurl')) {
         try {
           const resp = await fetch(streamUrl);
           if (resp.ok) {
             const text = await resp.text();
-            const lines = text.split('\n');
-            const options: QualityOption[] = [];
-            let currentRes = 0;
-            let currentName = '';
+            const allOptions = parseNativeHlsManifest(text, globalThis.location.origin);
+            const filtered = filterQualityOptions(allOptions, settings?.minVideoQuality);
+            setQualityOptions(filtered);
 
-            for (let i = 0; i < lines.length; i++) {
-              const line = lines[i].trim();
-              if (line.startsWith('#EXT-X-STREAM-INF')) {
-                const resMatch = line.match(/RESOLUTION=\d+x(\d+)/);
-                const nameMatch = line.match(/VIDEO="([^"]+)"/);
-                if (resMatch) currentRes = parseInt(resMatch[1], 10);
-                if (nameMatch) currentName = nameMatch[1];
-              } else if (line && !line.startsWith('#')) {
-                const height = currentRes;
-                const label =
-                  currentName || (height ? `${height}p` : `Quality ${options.length + 1}`);
-                options.push({
-                  id: options.length,
-                  label,
-                  url:
-                    line.startsWith('http') || line.startsWith('/')
-                      ? line
-                      : new URL(line, window.location.origin).href,
-                  height,
-                });
-                currentRes = 0;
-                currentName = '';
-              }
-            }
-
-            let finalOptions = options;
-            const minQ = parseInt(settings?.minVideoQuality || 'none', 10);
-            if (!isNaN(minQ)) {
-              finalOptions = options.filter((opt) => !opt.height || opt.height >= minQ);
-            }
-            setQualityOptions(finalOptions);
-
-            let targetLevelIndex = -1; // Auto
-            if (finalOptions.length > 0) {
-              if (settings?.preferredVideoQuality && settings.preferredVideoQuality !== 'auto') {
-                const preferredHeight = parseInt(settings.preferredVideoQuality, 10);
-                const foundIndex = finalOptions.findIndex((o) => o.height === preferredHeight);
-                if (foundIndex !== -1) {
-                  targetLevelIndex = finalOptions[foundIndex].id;
-                } else {
-                  targetLevelIndex = finalOptions[0].id; // highest if not found
-                }
-              } else if (!settings?.preferredVideoQuality) {
-                targetLevelIndex = finalOptions[0].id; // fallback to highest
-              }
-            }
-
-            if (targetLevelIndex !== -1) {
-              const opt = finalOptions.find((o) => o.id === targetLevelIndex);
-              if (opt && opt.url) {
-                video.src = opt.url;
-                setActiveQualityLabel(opt.label);
-              } else {
-                video.src = streamUrl;
-                setActiveQualityLabel('');
-              }
-              setCurrentQuality(targetLevelIndex);
-            } else {
+            const targetIdx = getPreferredLevelIndex(filtered, settings?.preferredVideoQuality);
+            if (targetIdx === -1) {
               video.src = streamUrl;
               setActiveQualityLabel('');
               setCurrentQuality(-1);
+            } else {
+              const opt = filtered.find((o) => o.id === targetIdx) || filtered[0];
+              video.src = opt?.url || streamUrl;
+              setActiveQualityLabel(opt?.label || '');
+              setCurrentQuality(targetIdx);
             }
 
-            video.addEventListener(
-              'loadedmetadata',
-              () => {
-                if (initialTime > 0) {
-                  video.currentTime = initialTime;
-                }
-                void Promise.resolve(video.play()).catch((error: unknown) => {
-                  console.log('Auto-play prevented', error);
-                });
-              },
-              { once: true }
-            );
+            video.addEventListener('loadedmetadata', playVideo, { once: true });
             return;
           }
         } catch (e) {
           console.error('Failed to parse native m3u8', e);
         }
-
-        // Fallback if parsing fails
         video.src = streamUrl;
-        setActiveQualityLabel('');
-        video.addEventListener(
-          'loadedmetadata',
-          () => {
-            if (initialTime > 0) {
-              video.currentTime = initialTime;
-            }
-            void Promise.resolve(video.play()).catch((error: unknown) => {
-              console.log('Auto-play prevented', error);
-            });
-          },
-          { once: true }
-        );
+        video.addEventListener('loadedmetadata', playVideo, { once: true });
         return;
       }
 
@@ -337,66 +709,34 @@ export default function Player() {
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        const options = hls.levels.map((level: any, index: number) => ({
-          id: index,
-          label: level?.height ? `${level.height}p` : level?.name || `Quality ${index + 1}`,
+        const allOptions = hls.levels.map((lvl: any, idx: number) => ({
+          id: idx,
+          label: lvl?.height ? `${lvl.height}p` : lvl?.name || `Quality ${idx + 1}`,
+          height: lvl.height,
         }));
 
-        const minQ = parseInt(settings?.minVideoQuality || 'none', 10);
-        if (!isNaN(minQ)) {
+        const filtered = filterQualityOptions(allOptions, settings?.minVideoQuality);
+        setQualityOptions(filtered);
+
+        // Configure Hls.js min bitrate
+        const minQ = Number.parseInt(settings?.minVideoQuality || 'none', 10);
+        if (!Number.isNaN(minQ)) {
           const minLevel = hls.levels.find((l: any) => l.height >= minQ);
-          if (minLevel && minLevel.bitrate) {
-            hls.config.minAutoBitrate = minLevel.bitrate;
-          }
-          const filteredOptions = options.filter((opt: any, idx: number) => {
-            const lvl = hls.levels[idx];
-            return !lvl.height || lvl.height >= minQ;
-          });
-          setQualityOptions(filteredOptions);
-        } else {
-          setQualityOptions(options);
+          if (minLevel?.bitrate) hls.config.minAutoBitrate = minLevel.bitrate;
         }
 
-        if (hls.levels.length > 0) {
-          let targetLevelIndex = -1; // Default to auto
+        const targetIdx = getPreferredLevelIndex(allOptions, settings?.preferredVideoQuality);
+        hls.currentLevel = targetIdx;
+        hls.nextLevel = targetIdx;
+        setCurrentQuality(targetIdx);
+        setActiveQualityLabel(targetIdx === -1 ? '' : allOptions[targetIdx]?.label || '');
 
-          if (settings?.preferredVideoQuality && settings.preferredVideoQuality !== 'auto') {
-            const preferredHeight = parseInt(settings.preferredVideoQuality, 10);
-            const foundIndex = hls.levels.findIndex((l: any) => l.height === preferredHeight);
-            if (foundIndex !== -1) {
-              targetLevelIndex = foundIndex;
-            } else {
-              targetLevelIndex = hls.levels.length - 1; // highest if not found
-            }
-          } else if (!settings?.preferredVideoQuality) {
-            targetLevelIndex = hls.levels.length - 1; // Default to highest if no pref
-          }
-
-          hls.currentLevel = targetLevelIndex;
-          hls.nextLevel = targetLevelIndex;
-          setCurrentQuality(targetLevelIndex);
-          if (targetLevelIndex !== -1) {
-            setActiveQualityLabel(options[targetLevelIndex]?.label || '');
-          }
-        } else {
-          setCurrentQuality(-1);
-          setActiveQualityLabel('');
-        }
-
-        if (initialTime > 0) {
-          video.currentTime = initialTime;
-        }
-
-        void Promise.resolve(video.play()).catch((error: unknown) => {
-          console.log('Auto-play prevented', error);
-        });
+        playVideo();
       });
 
-      hls.on(Hls.Events.LEVEL_SWITCHED, (_event: any, data: any) => {
-        const level = hls.levels?.[data?.level];
-        if (!level) return;
-        const label = level?.height ? `${level.height}p` : level?.name || '';
-        setActiveQualityLabel(label);
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_: any, data: any) => {
+        const lvl = hls.levels?.[data?.level];
+        if (lvl) setActiveQualityLabel(lvl.height ? `${lvl.height}p` : lvl.name || '');
       });
     },
     [useDesktopEnhancedPlayer]
@@ -615,154 +955,96 @@ export default function Player() {
   }, [vodId]);
 
   useEffect(() => {
-    const handleKeyDown = async (e: KeyboardEvent) => {
-      const video = videoRef.current;
-      if (!video) return;
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)) return;
-
-      switch (e.key.toLowerCase()) {
-        case ' ':
-        case 'k':
-          e.preventDefault();
-          if (video.paused) {
-            void Promise.resolve(video.play()).catch(() => {});
-          } else {
-            video.pause();
-          }
-          break;
-        case 'f':
-          e.preventDefault();
-          const viewport = playerViewportRef.current;
-          if (viewport) {
-            if (document.fullscreenElement) {
-              await document.exitFullscreen().catch(() => {});
-            } else {
-              await viewport.requestFullscreen().catch(() => {});
-            }
-          }
-          break;
-        case 'm':
-          e.preventDefault();
-          video.muted = !video.muted;
-          break;
-        case 'arrowup':
-          e.preventDefault();
-          video.volume = Math.min(1, video.volume + 0.05);
-          video.muted = video.volume === 0;
-          break;
-        case 'arrowdown':
-          e.preventDefault();
-          video.volume = Math.max(0, video.volume - 0.05);
-          video.muted = video.volume === 0;
-          break;
-        case 'arrowleft':
-          e.preventDefault();
-          if (canSeek) video.currentTime = Math.max(0, video.currentTime - 5);
-          break;
-        case 'arrowright':
-          e.preventDefault();
-          if (canSeek && Number.isFinite(video.duration)) {
-            video.currentTime = Math.min(video.duration, video.currentTime + 5);
-          }
-          break;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (videoRef.current) {
+        handlePlayerKeyDown(e, videoRef.current, canSeek, playerViewportRef.current);
       }
     };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    globalThis.addEventListener('keydown', onKeyDown);
+    return () => globalThis.removeEventListener('keydown', onKeyDown);
   }, [canSeek]);
 
   const togglePlay = () => {
     const video = videoRef.current;
-    if (!video) return;
-
-    if (video.paused) {
-      void Promise.resolve(video.play()).catch((error: unknown) => {
-        console.log('Play failed', error);
-      });
-      return;
+    if (video) {
+      if (video.paused) void video.play().catch((err) => console.log('Play failed', err));
+      else video.pause();
     }
-
-    video.pause();
   };
 
   const handleSeek = (value: number) => {
-    const video = videoRef.current;
-    if (!video || !canSeek) return;
-    video.currentTime = value;
-    setCurrentTime(value);
+    if (videoRef.current && canSeek) {
+      videoRef.current.currentTime = value;
+      setCurrentTime(value);
+    }
   };
 
   const handleVolume = (nextVolume: number) => {
     const video = videoRef.current;
-    if (!video) return;
-
-    const clamped = Math.max(0, Math.min(1, nextVolume));
-    video.volume = clamped;
-    video.muted = clamped === 0;
-    setVolume(clamped);
-    setIsMuted(clamped === 0);
+    if (video) {
+      const clamped = Math.max(0, Math.min(1, nextVolume));
+      video.volume = clamped;
+      video.muted = clamped === 0;
+      setVolume(clamped);
+      setIsMuted(clamped === 0);
+    }
   };
 
   const toggleMute = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.muted = !video.muted;
-    setIsMuted(video.muted);
+    if (videoRef.current) {
+      videoRef.current.muted = !videoRef.current.muted;
+      setIsMuted(videoRef.current.muted);
+    }
   };
 
   const changeSpeed = (rate: number) => {
+    if (videoRef.current) {
+      videoRef.current.playbackRate = rate;
+      setPlaybackRate(rate);
+    }
+  };
+
+  const changeQualityHls = (value: number) => {
+    if (hlsRef.current) {
+      hlsRef.current.currentLevel = value;
+      hlsRef.current.nextLevel = value;
+    }
+  };
+
+  const changeQualityNative = (value: number) => {
     const video = videoRef.current;
-    if (!video) return;
-    video.playbackRate = rate;
-    setPlaybackRate(rate);
+    if (!video || qualityOptions.length === 0) return;
+
+    const time = video.currentTime;
+    const isPlayingBefore = !video.paused;
+
+    if (value < 0) {
+      video.src = vodId
+        ? `/api/vod/${vodId}/master.m3u8`
+        : `/api/live/${encodeURIComponent(liveId!)}/master.m3u8`;
+      setActiveQualityLabel('');
+    } else {
+      const opt = qualityOptions.find((o) => o.id === value);
+      if (opt?.url) {
+        video.src = opt.url;
+        setActiveQualityLabel(opt.label);
+      }
+    }
+
+    video.addEventListener(
+      'loadedmetadata',
+      () => {
+        video.currentTime = time;
+        if (isPlayingBefore) void video.play().catch(() => {});
+      },
+      { once: true }
+    );
   };
 
   const changeQuality = (value: number) => {
     setCurrentQuality(value);
-
-    if (hlsRef.current) {
-      if (value < 0) {
-        hlsRef.current.currentLevel = -1;
-        hlsRef.current.nextLevel = -1;
-        return;
-      }
-
-      hlsRef.current.currentLevel = value;
-      hlsRef.current.nextLevel = value;
-      return;
-    }
-
-    // Native fallback branch (iOS)
-    const video = videoRef.current;
-    if (video && qualityOptions.length > 0) {
-      const time = video.currentTime;
-      const isVideoPlaying = !video.paused;
-
-      if (value < 0) {
-        video.src = vodId
-          ? `/api/vod/${vodId}/master.m3u8`
-          : `/api/live/${encodeURIComponent(liveId!)}/master.m3u8`;
-        setActiveQualityLabel('');
-      } else {
-        const opt = qualityOptions.find((o) => o.id === value);
-        if (opt && opt.url) {
-          video.src = opt.url;
-          setActiveQualityLabel(opt.label);
-        }
-      }
-
-      video.addEventListener(
-        'loadedmetadata',
-        () => {
-          video.currentTime = time;
-          if (isVideoPlaying) {
-            void Promise.resolve(video.play()).catch(() => {});
-          }
-        },
-        { once: true }
-      );
-    }
+    if (hlsRef.current) changeQualityHls(value);
+    else changeQualityNative(value);
   };
 
   const toggleFullscreen = async () => {
@@ -792,117 +1074,20 @@ export default function Player() {
       }}
     >
       {!isFullscreen && (
-        <div
-          style={{
-            backgroundColor: '#18181b',
-            padding: '10px 20px',
-            display: 'flex',
-            alignItems: 'center',
-            borderBottom: '1px solid #3a3a3d',
-            zIndex: 10,
-            flexShrink: 0,
-          }}
-        >
-          <button
-            onClick={() => navigate(-1)}
-            style={{
-              color: '#efeff1',
-              fontSize: '14px',
-              fontWeight: 'bold',
-              padding: '5px 10px',
-              backgroundColor: '#3a3a3d',
-              borderRadius: '4px',
-              marginRight: '15px',
-              border: 'none',
-              cursor: 'pointer',
-            }}
-          >
-            &larr; Back
-          </button>
-
-          <h2
-            style={{
-              color: 'white',
-              fontSize: '14px',
-              margin: 0,
-              flexGrow: 1,
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
-            {playerTitle}
-          </h2>
-
-          {qualityOptions.length > 0 ? (
-            <select
-              value={currentQuality}
-              onChange={(event) => changeQuality(Number(event.target.value))}
-              style={{
-                color: '#efeff1',
-                fontSize: '13px',
-                fontWeight: 700,
-                padding: '4px 8px',
-                borderRadius: '8px',
-                backgroundColor: '#242a43',
-                marginRight: '10px',
-                border: 'none',
-                outline: 'none',
-                cursor: 'pointer',
-              }}
-            >
-              <option value={-1}>Auto</option>
-              {qualityOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          ) : activeQualityLabel ? (
-            <span
-              style={{
-                color: '#efeff1',
-                fontSize: '13px',
-                fontWeight: 700,
-                padding: '4px 8px',
-                borderRadius: '8px',
-                backgroundColor: '#242a43',
-                marginRight: '10px',
-              }}
-            >
-              {activeQualityLabel}
-            </span>
-          ) : null}
-
-          {!liveId && (
-            <button
-              onClick={() => setShowMarkers(!showMarkers)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#9146ff',
-                cursor: 'pointer',
-                fontWeight: 'bold',
-                marginRight: '10px',
-              }}
-            >
-              Chapters ({markers.length})
-            </button>
-          )}
-
-          <button
-            onClick={() => setShowChat(!showChat)}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#9146ff',
-              cursor: 'pointer',
-              fontWeight: 'bold',
-            }}
-          >
-            {showChat ? 'Hide Chat' : 'Show Chat'}
-          </button>
-        </div>
+        <PlayerHeader
+          navigate={navigate}
+          playerTitle={playerTitle}
+          qualityOptions={qualityOptions}
+          currentQuality={currentQuality}
+          changeQuality={changeQuality}
+          activeQualityLabel={activeQualityLabel}
+          liveId={liveId}
+          markers={markers}
+          showMarkers={showMarkers}
+          setShowMarkers={setShowMarkers}
+          showChat={showChat}
+          setShowChat={setShowChat}
+        />
       )}
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
@@ -1145,194 +1330,15 @@ export default function Player() {
             )}
           </div>
 
-          {/* Info Encart */}
-          {!isFullscreen && (vodInfo || liveInfo) && (
-            <div style={{ padding: '20px', backgroundColor: '#07080f', color: '#efeff1', flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '20px' }}>
-                <img
-                  src={
-                    liveInfo
-                      ? liveInfo.broadcaster?.profileImageURL
-                      : vodInfo?.owner?.profileImageURL || ''
-                  }
-                  alt="Profile"
-                  style={{
-                    width: '72px',
-                    height: '72px',
-                    borderRadius: '50%',
-                    objectFit: 'cover',
-                    border: '2px solid #3a3a3d',
-                  }}
-                />
-                <div style={{ flex: 1 }}>
-                  <h1 style={{ margin: '0 0 8px 0', fontSize: '1.4rem', lineHeight: '1.3' }}>
-                    {liveInfo ? liveInfo.title : vodInfo?.title}
-                  </h1>
-                  <div
-                    style={{
-                      fontWeight: 'bold',
-                      fontSize: '1.1rem',
-                      marginBottom: '10px',
-                      color: '#bf94ff',
-                    }}
-                  >
-                    {liveInfo
-                      ? liveInfo.broadcaster?.displayName
-                      : vodInfo?.owner?.displayName || 'Unknown Streamer'}
-                  </div>
-                  <div
-                    style={{
-                      color: '#adadb8',
-                      fontSize: '0.95rem',
-                      display: 'flex',
-                      gap: '20px',
-                      flexWrap: 'wrap',
-                    }}
-                  >
-                    <span
-                      style={{
-                        backgroundColor: '#18181b',
-                        padding: '4px 8px',
-                        borderRadius: '6px',
-                        fontWeight: 'bold',
-                      }}
-                    >
-                      🎮 {liveInfo ? liveInfo.game?.name : vodInfo?.game?.name || 'No Category'}
-                    </span>
-
-                    {liveInfo && (
-                      <>
-                        <span
-                          style={{
-                            color: '#eb0400',
-                            fontWeight: 'bold',
-                            backgroundColor: '#18181b',
-                            padding: '4px 8px',
-                            borderRadius: '6px',
-                          }}
-                        >
-                          🔴 {(liveInfo.viewerCount || 0).toLocaleString()} viewers
-                        </span>
-                        <span
-                          style={{
-                            backgroundColor: '#18181b',
-                            padding: '4px 8px',
-                            borderRadius: '6px',
-                          }}
-                        >
-                          <Uptime startedAt={liveInfo.startedAt} />
-                        </span>
-                      </>
-                    )}
-                    {vodInfo && (
-                      <>
-                        <span
-                          style={{
-                            backgroundColor: '#18181b',
-                            padding: '4px 8px',
-                            borderRadius: '6px',
-                          }}
-                        >
-                          👁️ {(vodInfo.viewCount || 0).toLocaleString()} vues
-                        </span>
-                        <span
-                          style={{
-                            backgroundColor: '#18181b',
-                            padding: '4px 8px',
-                            borderRadius: '6px',
-                          }}
-                        >
-                          📅 {new Date(vodInfo.createdAt).toLocaleDateString()}
-                        </span>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+          <InfoEncart liveInfo={liveInfo} vodInfo={vodInfo} isFullscreen={isFullscreen} />
         </div>
 
-        {showChat && (
-          <div
-            style={{
-              width: '340px',
-              backgroundColor: '#0e0e10',
-              borderLeft: '1px solid #3a3a3d',
-              display: 'flex',
-              flexDirection: 'column',
-              flexShrink: 0,
-            }}
-          >
-            {liveId ? (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                {window.location.hostname === 'localhost' ||
-                window.location.hostname === '127.0.0.1' ||
-                window.location.hostname === 'tauri.localhost' ? (
-                  <iframe
-                    src={`https://www.twitch.tv/embed/${encodeURIComponent(liveId)}/chat?parent=${window.location.hostname}&darkpopout=true`}
-                    width="100%"
-                    height="100%"
-                    frameBorder="0"
-                    scrolling="no"
-                    title="Twitch Chat"
-                  />
-                ) : (
-                  <iframe
-                    src={`/api/live/${encodeURIComponent(liveId)}/chat.html`}
-                    width="100%"
-                    height="100%"
-                    frameBorder="0"
-                    scrolling="no"
-                    title="Twitch Chat Proxy"
-                  />
-                )}
-              </div>
-            ) : (
-              <>
-                <div
-                  style={{
-                    padding: '15px',
-                    borderBottom: '1px solid #3a3a3d',
-                    fontWeight: 'bold',
-                    color: '#efeff1',
-                    fontSize: '0.9rem',
-                  }}
-                >
-                  STREAM CHAT REPLAY
-                </div>
-
-                <div
-                  ref={chatScrollRef}
-                  style={{ flex: 1, overflowY: 'auto', padding: '10px' }}
-                  className="chat-container"
-                >
-                  {visibleChat.map((message) => (
-                    <div
-                      key={message.id}
-                      style={{ marginBottom: '8px', fontSize: '0.85rem', lineHeight: '1.4' }}
-                    >
-                      <span style={{ color: '#adadb8', marginRight: '8px', fontSize: '0.75rem' }}>
-                        {Math.floor(message.contentOffsetSeconds / 3600)}:
-                        {Math.floor((message.contentOffsetSeconds % 3600) / 60)
-                          .toString()
-                          .padStart(2, '0')}
-                      </span>
-                      <span style={{ fontWeight: 'bold', color: '#efeff1' }}>
-                        {message.commenter?.displayName || 'Unknown'}:{' '}
-                      </span>
-                      <span style={{ color: '#efeff1' }}>
-                        {(message as any).message?.fragments
-                          ?.map((fragment: any) => fragment.text)
-                          .join('')}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        )}
+        <ChatSidebar
+          liveId={liveId}
+          showChat={showChat}
+          visibleChat={visibleChat}
+          chatScrollRef={chatScrollRef}
+        />
       </div>
     </div>
   );
