@@ -502,7 +502,10 @@ const ChatSidebar = ({
             className="chat-container"
           >
             {visibleChat.map((message) => (
-              <div key={message.id} style={{ marginBottom: '8px', fontSize: '0.85rem', lineHeight: '1.4' }}>
+              <div
+                key={message.id}
+                style={{ marginBottom: '8px', fontSize: '0.85rem', lineHeight: '1.4' }}
+              >
                 <span style={{ color: '#adadb8', marginRight: '8px', fontSize: '0.75rem' }}>
                   {Math.floor(message.contentOffsetSeconds / 3600)}:
                   {Math.floor((message.contentOffsetSeconds % 3600) / 60)
@@ -513,7 +516,9 @@ const ChatSidebar = ({
                   {message.commenter?.displayName || 'Unknown'}:{' '}
                 </span>
                 <span style={{ color: '#efeff1' }}>
-                  {(message as any).message?.fragments?.map((fragment: any) => fragment.text).join('')}
+                  {(message as any).message?.fragments
+                    ?.map((fragment: any) => fragment.text)
+                    .join('')}
                 </span>
               </div>
             ))}
