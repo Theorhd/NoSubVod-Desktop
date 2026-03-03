@@ -2,6 +2,18 @@
 
 NoSubVOD Desktop est une application locale pour regarder des VODs et des lives Twitch depuis n’importe quel appareil du réseau local (mobile, tablette, TV, PC), avec historique, watchlist et portail web intégré.
 
+## 🆕 v0.2.1 — Adblocking live + fiabilité Search/Channel
+
+La version 0.2.1 apporte des ajouts majeurs sur le live (adblocking expérimental) et corrige les retours VOD sur certaines catégories.
+
+### Points clés v0.2.1
+
+- **Adblocking Live (expérimental)**: nouvelle section Adblock dans Settings, mode Auto/Manual, proxy actif et liste des proxies disponibles.
+- **Settings serveur enrichis**: persistance de `adblockEnabled`, `adblockProxy`, `adblockProxyMode` en plus de OneSync.
+- **Live discovery renforcé**: routes `top-categories`, `search` et `status` consolidées pour ouvrir un live plus rapidement.
+- **Correctifs Search/Channel**: transmission de l’ID de catégorie + fallback nom pour récupérer les VODs de façon plus fiable.
+- **Qualité backend Rust**: correction Clippy `new_without_default` sur `ProxyManager`.
+
 ## 🆕 v0.2.0 — Nouvelle architecture Tauri (Rust)
 
 La version 0.2.0 migre le desktop vers **Tauri**.
@@ -21,6 +33,7 @@ Résultat: démarrage plus rapide, binaire bien plus léger et meilleure stabili
 - Lecture des VOD via HLS généré côté serveur local.
 - Lecture des lives via endpoint local `/api/live/:login/master.m3u8`.
 - Sélecteur de qualité (Auto + niveaux manuels) dans le player.
+- Adblocking live expérimental (configurable dans Settings).
 
 ### 🏠 Portail local multi-appareils
 
@@ -39,6 +52,7 @@ Résultat: démarrage plus rapide, binaire bien plus léger et meilleure stabili
 - Historique de lecture avec reprise.
 - Watchlist.
 - Synchronisation locale optionnelle (OneSync).
+- Paramètres serveur persistants (dont adblock proxy/mode).
 
 ---
 
