@@ -7,6 +7,8 @@ const defaultSettings: ExperienceSettings = {
   adblockEnabled: false,
   adblockProxy: '',
   adblockProxyMode: 'auto',
+  minVideoQuality: 'none',
+  preferredVideoQuality: 'auto',
 };
 
 export default function Settings() {
@@ -142,6 +144,79 @@ export default function Settings() {
                 }}
               />
             </div>
+          )}
+        </div>
+
+        <div className="card settings-card">
+          <h2 style={{ marginTop: 0 }}>Video Player</h2>
+          <p className="settings-description">Configure la qualité par défaut du lecteur vidéo.</p>
+          {!loading && (
+            <>
+              <div style={{ marginBottom: '16px' }}>
+                <label
+                  htmlFor="preferredVideoQuality"
+                  style={{ display: 'block', marginBottom: '8px' }}
+                >
+                  Preferred Video Quality
+                </label>
+                <select
+                  id="preferredVideoQuality"
+                  value={settings.preferredVideoQuality || 'auto'}
+                  onChange={(e) =>
+                    setSettings((prev) => ({ ...prev, preferredVideoQuality: e.target.value }))
+                  }
+                  style={{
+                    width: '100%',
+                    padding: '8px',
+                    borderRadius: '4px',
+                    background: 'var(--bg-elevated)',
+                    color: 'var(--text)',
+                    border: '1px solid var(--surface-soft)',
+                  }}
+                >
+                  <option value="auto">Auto</option>
+                  <option value="1080">1080p</option>
+                  <option value="720">720p</option>
+                  <option value="480">480p</option>
+                  <option value="360">360p</option>
+                  <option value="160">160p</option>
+                </select>
+                <small style={{ display: 'block', marginTop: '4px', color: 'var(--text-muted)' }}>
+                  La qualité que nous voulons quand il y a aucun problème de connexion.
+                </small>
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label htmlFor="minVideoQuality" style={{ display: 'block', marginBottom: '8px' }}>
+                  Minimal Video Quality
+                </label>
+                <select
+                  id="minVideoQuality"
+                  value={settings.minVideoQuality || 'none'}
+                  onChange={(e) =>
+                    setSettings((prev) => ({ ...prev, minVideoQuality: e.target.value }))
+                  }
+                  style={{
+                    width: '100%',
+                    padding: '8px',
+                    borderRadius: '4px',
+                    background: 'var(--bg-elevated)',
+                    color: 'var(--text)',
+                    border: '1px solid var(--surface-soft)',
+                  }}
+                >
+                  <option value="none">None</option>
+                  <option value="1080">1080p</option>
+                  <option value="720">720p</option>
+                  <option value="480">480p</option>
+                  <option value="360">360p</option>
+                  <option value="160">160p</option>
+                </select>
+                <small style={{ display: 'block', marginTop: '4px', color: 'var(--text-muted)' }}>
+                  Le programme n&apos;affichera jamais une qualité inférieure à celle-ci.
+                </small>
+              </div>
+            </>
           )}
         </div>
 

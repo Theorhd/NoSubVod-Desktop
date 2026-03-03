@@ -716,7 +716,7 @@ fn register_variant_proxy_target(
     variant_cache.set(
         format!("variant_proxy_{proxy_id}"),
         sanitized,
-        300,
+        3600 * 24, // Keep for 24 hours to prevent mid-stream expiration
     );
     Ok(proxy_id)
 }
@@ -2213,11 +2213,11 @@ impl TwitchService {
         settings: &ExperienceSettings,
     ) -> Result<(String, String), String> {
         let platform = if settings.adblock_enabled {
-            "amazon"
+            "ios" // iOS platform avoids many hardcoded ads
         } else {
             "web"
         };
-        
+
         let device_id = create_device_id();
         let session_id = create_serving_id();
 
@@ -2227,40 +2227,95 @@ impl TwitchService {
             "variables": { "login": channel_login }
         });
 
-        let mut req = self
-            .client
-            .post("https://gql.twitch.tv/gql")
-            .header("Client-Id", "kimne78kx3ncx6brgo4mv6wki5h1ko")
-            .header("X-Device-Id", device_id)
-            .header("Client-Session-Id", session_id);
+        // Try with adblock proxy first
+        let client = self.get_client(settings).await;
+
+        let make_req = |c: &Client| {
+            let mut r = c
+                .post("https://gql.twitch.tv/gql")
+                .header("Client-Id", "kimne78kx3ncx6brgo4mv6wki5h1ko")
+                .header("X-Device-Id", &device_id)
+                .header("Client-Session-Id", &session_id);
+
+            if settings.adblock_enabled {
+                r = r.header("Client-Adblock-Extension", "ttv-lol-pro");
+            }
+            r.json(&body)
+        };
+
+        let mut data_opt: Option<Value> = None;
 
         if settings.adblock_enabled {
-            req = req.header("Client-Adblock-Extension", "ttv-lol-pro");
+            if let Ok(resp) = make_req(&client).send().await {
+                if resp.status().is_success() {
+                    if let Ok(json) = resp.json::<Value>().await {
+                        // Ensure proxy didn't return a valid JSON format but denied access
+                        if !json["data"]["streamPlaybackAccessToken"].is_null() {
+                            data_opt = Some(json);
+                        }
+                    }
+                }
+            }
+
+            if data_opt.is_none() {
+                eprintln!("[adblock] Proxy failed to fetch valid GQL token (Connection reset or Token denied), falling back to direct connection...");
+            }
         }
 
-        let resp = req
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
+        // Fallback or Direct Mode (always runs if adblock is off OR if proxy failed)
+        let data = match data_opt {
+            Some(d) => d,
+            None => {
+                // IMPORTANT: When falling back, we must change platform back to web
+                // because iOS requests from direct IPs are often blocked or flagged by Twitch.
+                let fallback_body = serde_json::json!({
+                    "operationName": "PlaybackAccessToken_Template",
+                    "query": "query PlaybackAccessToken_Template($login: String!) { streamPlaybackAccessToken(channelName: $login, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: \"site\"}) { value signature } }",
+                    "variables": { "login": channel_login }
+                });
+                
+                let resp = self.client
+                    .post("https://gql.twitch.tv/gql")
+                    .header("Client-Id", "kimne78kx3ncx6brgo4mv6wki5h1ko")
+                    .header("X-Device-Id", &device_id)
+                    .header("Client-Session-Id", &session_id)
+                    .json(&fallback_body)
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
 
-        if !resp.status().is_success() {
-            return Err(format!(
-                "Failed to fetch live playback token ({})",
-                resp.status()
-            ));
-        }
+                if !resp.status().is_success() {
+                    return Err(format!(
+                        "Failed to fetch live playback token ({})",
+                        resp.status()
+                    ));
+                }
+                resp.json().await.map_err(|e| e.to_string())?
+            }
+        };
 
-        let data: Value = resp.json().await.map_err(|e| e.to_string())?;
         let token = &data["data"]["streamPlaybackAccessToken"];
-        let value = token["value"]
-            .as_str()
-            .ok_or("Missing token value")?
-            .to_string();
-        let sig = token["signature"]
-            .as_str()
-            .ok_or("Missing token signature")?
-            .to_string();
+        
+        if token.is_null() {
+            return Err("Missing streamPlaybackAccessToken in response".to_string());
+        }
+
+        // Sometimes the 'value' itself is an object (or string depending on endpoints), make sure we handle it robustly
+        let value = if token["value"].is_string() {
+             token["value"].as_str().unwrap().to_string()
+        } else {
+             token["value"].to_string()
+        };
+
+        let sig = if token["signature"].is_string() {
+             token["signature"].as_str().unwrap().to_string()
+        } else {
+             token["signature"].to_string()
+        };
+
+        if value.is_empty() || value == "null" || sig.is_empty() || sig == "null" {
+            return Err("Missing token value or signature".to_string());
+        }
 
         Ok((value, sig))
     }
@@ -2297,10 +2352,8 @@ impl TwitchService {
             }
         };
 
-        if settings.adblock_enabled {
-            body = filter_live_playlist(&body);
-        }
-
+        // Always apply local filtering as a fallback protection even if proxy disabled
+        body = filter_live_playlist(&body);
         body = body.replace("-unmuted", "-muted");
 
         let base_url = target_url
@@ -2328,11 +2381,9 @@ impl TwitchService {
                     l.to_string()
                 };
 
-                // Register segment for proxying if adblock is enabled
-                if settings.adblock_enabled {
-                    if let Ok(proxy_id) = register_variant_proxy_target(&self.variant_cache, &abs_url) {
-                        return format!("/api/stream/variant.ts?id={}", urlencoding_simple(&proxy_id));
-                    }
+                // Register segment for proxying to ensure continuity of requests through the system
+                if let Ok(proxy_id) = register_variant_proxy_target(&self.variant_cache, &abs_url) {
+                    return format!("/api/stream/variant.ts?id={}", urlencoding_simple(&proxy_id));
                 }
 
                 abs_url
@@ -2378,6 +2429,8 @@ fn filter_live_playlist(body: &str) -> String {
         if skipping_ad {
             if l.starts_with("#EXT-X-TWITCH-CONTENT-TYPE:live") {
                 skipping_ad = false;
+                // Add discontinuity tag so the HLS player doesn't freeze when timestamps jump
+                filtered.push("#EXT-X-DISCONTINUITY");
                 filtered.push(line);
                 continue;
             }
@@ -2399,7 +2452,9 @@ fn filter_live_playlist(body: &str) -> String {
             continue;
         }
 
-        filtered.push(line);
+        if !skipping_ad {
+            filtered.push(line);
+        }
     }
     filtered.join("\n")
 }
