@@ -80,6 +80,8 @@ export interface ExperienceSettings {
   adblockEnabled?: boolean;
   adblockProxy?: string;
   adblockProxyMode?: 'auto' | 'manual';
+  minVideoQuality?: string;
+  preferredVideoQuality?: string;
 }
 
 export interface ProxyInfo {

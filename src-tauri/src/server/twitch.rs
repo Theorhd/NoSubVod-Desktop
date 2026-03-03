@@ -716,7 +716,7 @@ fn register_variant_proxy_target(
     variant_cache.set(
         format!("variant_proxy_{proxy_id}"),
         sanitized,
-        300,
+        3600 * 24, // Keep for 24 hours to prevent mid-stream expiration
     );
     Ok(proxy_id)
 }
@@ -2213,11 +2213,11 @@ impl TwitchService {
         settings: &ExperienceSettings,
     ) -> Result<(String, String), String> {
         let platform = if settings.adblock_enabled {
-            "amazon"
+            "ios" // iOS platform avoids many hardcoded ads
         } else {
             "web"
         };
-        
+
         let device_id = create_device_id();
         let session_id = create_serving_id();
 
@@ -2227,8 +2227,10 @@ impl TwitchService {
             "variables": { "login": channel_login }
         });
 
-        let mut req = self
-            .client
+        // Use the adblock client to fetch the token so Twitch sees the proxy's IP
+        let client = self.get_client(settings).await;
+
+        let mut req = client
             .post("https://gql.twitch.tv/gql")
             .header("Client-Id", "kimne78kx3ncx6brgo4mv6wki5h1ko")
             .header("X-Device-Id", device_id)
@@ -2247,8 +2249,7 @@ impl TwitchService {
         if !resp.status().is_success() {
             return Err(format!(
                 "Failed to fetch live playback token ({})",
-                resp.status()
-            ));
+                resp.status()            ));
         }
 
         let data: Value = resp.json().await.map_err(|e| e.to_string())?;
@@ -2378,6 +2379,8 @@ fn filter_live_playlist(body: &str) -> String {
         if skipping_ad {
             if l.starts_with("#EXT-X-TWITCH-CONTENT-TYPE:live") {
                 skipping_ad = false;
+                // Add discontinuity tag so the HLS player doesn't freeze when timestamps jump
+                filtered.push("#EXT-X-DISCONTINUITY");
                 filtered.push(line);
                 continue;
             }
@@ -2399,7 +2402,9 @@ fn filter_live_playlist(body: &str) -> String {
             continue;
         }
 
-        filtered.push(line);
+        if !skipping_ad {
+            filtered.push(line);
+        }
     }
     filtered.join("\n")
 }
