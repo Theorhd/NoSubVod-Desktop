@@ -1266,14 +1266,27 @@ export default function Player() {
           >
             {liveId ? (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                <iframe
-                  src={`/api/live/${encodeURIComponent(liveId)}/chat.html`}
-                  width="100%"
-                  height="100%"
-                  frameBorder="0"
-                  scrolling="no"
-                  title="Twitch Chat"
-                />
+                {window.location.hostname === 'localhost' ||
+                window.location.hostname === '127.0.0.1' ||
+                window.location.hostname === 'tauri.localhost' ? (
+                  <iframe
+                    src={`https://www.twitch.tv/embed/${encodeURIComponent(liveId)}/chat?parent=${window.location.hostname}&darkpopout=true`}
+                    width="100%"
+                    height="100%"
+                    frameBorder="0"
+                    scrolling="no"
+                    title="Twitch Chat"
+                  />
+                ) : (
+                  <iframe
+                    src={`/api/live/${encodeURIComponent(liveId)}/chat.html`}
+                    width="100%"
+                    height="100%"
+                    frameBorder="0"
+                    scrolling="no"
+                    title="Twitch Chat Proxy"
+                  />
+                )}
               </div>
             ) : (
               <>
