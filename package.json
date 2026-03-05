@@ -24,6 +24,7 @@
   "license": "ISC",
   "dependencies": {
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-shell": "^2",
     "lucide-react": "^0.575.0",
     "react": "^19.2.4",

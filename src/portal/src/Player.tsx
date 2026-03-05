@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ChatMessage, VideoMarker, ExperienceSettings, VOD, LiveStream } from '../../shared/types';
+import { Download as DownloadIcon } from 'lucide-react';
+import DownloadMenu from './components/DownloadMenu';
 
 const HLS_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
 
@@ -324,11 +326,14 @@ const InfoEncart = ({
   liveInfo,
   vodInfo,
   isFullscreen,
+  duration,
 }: {
   liveInfo: LiveStream | null;
   vodInfo: VOD | null;
   isFullscreen: boolean;
+  duration?: number;
 }) => {
+  const [showDownloadMenu, setShowDownloadMenu] = useState(false);
   if (isFullscreen || (!vodInfo && !liveInfo)) return null;
 
   return (
@@ -348,9 +353,48 @@ const InfoEncart = ({
           }}
         />
         <div style={{ flex: 1 }}>
-          <h1 style={{ margin: '0 0 8px 0', fontSize: '1.4rem', lineHeight: '1.3' }}>
-            {liveInfo ? liveInfo.title : vodInfo?.title}
-          </h1>
+          <div
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}
+          >
+            <h1 style={{ margin: '0 0 8px 0', fontSize: '1.4rem', lineHeight: '1.3' }}>
+              {liveInfo ? liveInfo.title : vodInfo?.title}
+            </h1>
+            {vodInfo && (
+              <div style={{ position: 'relative' }}>
+                <button
+                  onClick={() => setShowDownloadMenu(!showDownloadMenu)}
+                  className="action-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    background: '#9146ff',
+                    color: '#fff',
+                    border: 'none',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <DownloadIcon size={18} />
+                  Download
+                </button>
+                {showDownloadMenu && (
+                  <div
+                    style={{ position: 'absolute', bottom: '100%', right: 0, marginBottom: '8px' }}
+                  >
+                    <DownloadMenu
+                      vodId={vodInfo.id}
+                      title={vodInfo.title}
+                      duration={duration}
+                      onClose={() => setShowDownloadMenu(false)}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
           <div
             style={{
               fontWeight: 'bold',
@@ -533,6 +577,7 @@ export default function Player() {
   const [searchParams] = useSearchParams();
   const vodId = searchParams.get('vod');
   const liveId = searchParams.get('live');
+  const downloadMode = searchParams.get('downloadMode') === 'true';
   const navigate = useNavigate();
 
   const playerViewportRef = useRef<HTMLDivElement>(null);
@@ -563,6 +608,9 @@ export default function Player() {
 
   const [vodInfo, setVodInfo] = useState<VOD | null>(null);
   const [liveInfo, setLiveInfo] = useState<LiveStream | null>(null);
+
+  const [clipStart, setClipStart] = useState<number | null>(null);
+  const [clipEnd, setClipEnd] = useState<number | null>(null);
 
   const useDesktopEnhancedPlayer = useMemo(() => {
     if (typeof navigator === 'undefined') return true;
@@ -656,6 +704,65 @@ export default function Player() {
     [isFetchingChat, vodId]
   );
 
+  const applyNativeHls = useCallback(
+    async (video: HTMLVideoElement, streamUrl: string, settings?: ExperienceSettings) => {
+      try {
+        const resp = await fetch(streamUrl);
+        if (resp.ok) {
+          const text = await resp.text();
+          const allOptions = parseNativeHlsManifest(text, globalThis.location.origin);
+          const filtered = filterQualityOptions(allOptions, settings?.minVideoQuality);
+          setQualityOptions(filtered);
+
+          const targetIdx = getPreferredLevelIndex(filtered, settings?.preferredVideoQuality);
+          if (targetIdx === -1) {
+            video.src = streamUrl;
+            setActiveQualityLabel('');
+            setCurrentQuality(-1);
+          } else {
+            const opt = filtered.find((o) => o.id === targetIdx) || filtered[0];
+            video.src = opt?.url || streamUrl;
+            setActiveQualityLabel(opt?.label || '');
+            setCurrentQuality(targetIdx);
+          }
+          return;
+        }
+      } catch (e) {
+        console.error('Failed to parse native m3u8', e);
+      }
+      video.src = streamUrl;
+    },
+    []
+  );
+
+  const applyHlsJs = useCallback(
+    (hls: any, settings: ExperienceSettings | undefined, playVideo: () => void) => {
+      const allOptions = hls.levels.map((lvl: any, idx: number) => ({
+        id: idx,
+        label: lvl?.height ? `${lvl.height}p` : lvl?.name || `Quality ${idx + 1}`,
+        height: lvl.height,
+      }));
+
+      const filtered = filterQualityOptions(allOptions, settings?.minVideoQuality);
+      setQualityOptions(filtered);
+
+      const minQ = Number.parseInt(settings?.minVideoQuality || 'none', 10);
+      if (!Number.isNaN(minQ)) {
+        const minLevel = hls.levels.find((l: any) => l.height >= minQ);
+        if (minLevel?.bitrate) hls.config.minAutoBitrate = minLevel.bitrate;
+      }
+
+      const targetIdx = getPreferredLevelIndex(allOptions, settings?.preferredVideoQuality);
+      hls.currentLevel = targetIdx;
+      hls.nextLevel = targetIdx;
+      setCurrentQuality(targetIdx);
+      setActiveQualityLabel(targetIdx === -1 ? '' : allOptions[targetIdx]?.label || '');
+
+      playVideo();
+    },
+    []
+  );
+
   const initializeStream = useCallback(
     async (
       video: HTMLVideoElement,
@@ -671,33 +778,7 @@ export default function Player() {
       };
 
       if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        try {
-          const resp = await fetch(streamUrl);
-          if (resp.ok) {
-            const text = await resp.text();
-            const allOptions = parseNativeHlsManifest(text, globalThis.location.origin);
-            const filtered = filterQualityOptions(allOptions, settings?.minVideoQuality);
-            setQualityOptions(filtered);
-
-            const targetIdx = getPreferredLevelIndex(filtered, settings?.preferredVideoQuality);
-            if (targetIdx === -1) {
-              video.src = streamUrl;
-              setActiveQualityLabel('');
-              setCurrentQuality(-1);
-            } else {
-              const opt = filtered.find((o) => o.id === targetIdx) || filtered[0];
-              video.src = opt?.url || streamUrl;
-              setActiveQualityLabel(opt?.label || '');
-              setCurrentQuality(targetIdx);
-            }
-
-            video.addEventListener('loadedmetadata', playVideo, { once: true });
-            return;
-          }
-        } catch (e) {
-          console.error('Failed to parse native m3u8', e);
-        }
-        video.src = streamUrl;
+        await applyNativeHls(video, streamUrl, settings);
         video.addEventListener('loadedmetadata', playVideo, { once: true });
         return;
       }
@@ -714,29 +795,7 @@ export default function Player() {
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        const allOptions = hls.levels.map((lvl: any, idx: number) => ({
-          id: idx,
-          label: lvl?.height ? `${lvl.height}p` : lvl?.name || `Quality ${idx + 1}`,
-          height: lvl.height,
-        }));
-
-        const filtered = filterQualityOptions(allOptions, settings?.minVideoQuality);
-        setQualityOptions(filtered);
-
-        // Configure Hls.js min bitrate
-        const minQ = Number.parseInt(settings?.minVideoQuality || 'none', 10);
-        if (!Number.isNaN(minQ)) {
-          const minLevel = hls.levels.find((l: any) => l.height >= minQ);
-          if (minLevel?.bitrate) hls.config.minAutoBitrate = minLevel.bitrate;
-        }
-
-        const targetIdx = getPreferredLevelIndex(allOptions, settings?.preferredVideoQuality);
-        hls.currentLevel = targetIdx;
-        hls.nextLevel = targetIdx;
-        setCurrentQuality(targetIdx);
-        setActiveQualityLabel(targetIdx === -1 ? '' : allOptions[targetIdx]?.label || '');
-
-        playVideo();
+        applyHlsJs(hls, settings, playVideo);
       });
 
       hls.on(Hls.Events.LEVEL_SWITCHED, (_: any, data: any) => {
@@ -744,7 +803,7 @@ export default function Player() {
         if (lvl) setActiveQualityLabel(lvl.height ? `${lvl.height}p` : lvl.name || '');
       });
     },
-    [useDesktopEnhancedPlayer]
+    [useDesktopEnhancedPlayer, applyNativeHls, applyHlsJs]
   );
 
   useEffect(() => {
@@ -1198,20 +1257,124 @@ export default function Player() {
                   transition: 'opacity 180ms ease, transform 180ms ease',
                 }}
               >
-                <input
-                  type="range"
-                  min={0}
-                  max={canSeek ? Math.max(duration, 1) : 1}
-                  step={0.1}
-                  value={canSeek ? Math.min(currentTime, duration) : 0}
-                  disabled={!canSeek}
-                  onChange={(event) => handleSeek(Number(event.target.value))}
+                <div
                   style={{
+                    position: 'relative',
                     width: '100%',
-                    accentColor: '#8f57ff',
-                    cursor: canSeek ? 'pointer' : 'default',
+                    height: '24px',
+                    display: 'flex',
+                    alignItems: 'center',
                   }}
-                />
+                >
+                  {downloadMode && duration > 0 && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: `${((clipStart || 0) / duration) * 100}%`,
+                        width: `${(((clipEnd ?? duration) - (clipStart || 0)) / duration) * 100}%`,
+                        height: '8px',
+                        backgroundColor: 'rgba(74, 222, 128, 0.6)',
+                        zIndex: 1,
+                        pointerEvents: 'none',
+                        borderRadius: '4px',
+                      }}
+                    />
+                  )}
+                  <input
+                    type="range"
+                    min={0}
+                    max={canSeek ? Math.max(duration, 1) : 1}
+                    step={0.1}
+                    value={canSeek ? Math.min(currentTime, duration) : 0}
+                    disabled={!canSeek}
+                    onChange={(event) => handleSeek(Number(event.target.value))}
+                    style={{
+                      width: '100%',
+                      accentColor: '#8f57ff',
+                      cursor: canSeek ? 'pointer' : 'default',
+                      position: 'absolute',
+                      zIndex: 2,
+                      margin: 0,
+                    }}
+                  />
+                </div>
+
+                {downloadMode && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: '10px',
+                      alignItems: 'center',
+                      marginBottom: '8px',
+                      background: 'rgba(0,0,0,0.5)',
+                      padding: '8px',
+                      borderRadius: '8px',
+                    }}
+                  >
+                    <span style={{ color: '#4ade80', fontWeight: 'bold', fontSize: '0.9rem' }}>
+                      Mode Clipping
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setClipStart(currentTime)}
+                      className="action-btn secondary-btn"
+                      style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                    >
+                      Set Start
+                    </button>
+                    <span style={{ fontSize: '0.8rem', color: '#adadb8' }}>
+                      {formatClock(clipStart || 0)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setClipEnd(currentTime)}
+                      className="action-btn secondary-btn"
+                      style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                    >
+                      Set End
+                    </button>
+                    <span style={{ fontSize: '0.8rem', color: '#adadb8' }}>
+                      {formatClock(clipEnd ?? duration)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!vodId) return;
+                        try {
+                          const res = await fetch('/api/download/start', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              vodId,
+                              title: vodInfo?.title || `Clip ${vodId}`,
+                              quality: 'best',
+                              startTime: clipStart || 0,
+                              endTime: clipEnd ?? duration,
+                              duration: duration,
+                            }),
+                          });
+                          if (res.ok) {
+                            alert('Téléchargement du clip lancé en arrière-plan !');
+                          } else {
+                            throw new Error('Failed to start download');
+                          }
+                        } catch (e) {
+                          alert('Erreur: ' + e);
+                        }
+                      }}
+                      className="action-btn"
+                      style={{
+                        marginLeft: 'auto',
+                        padding: '4px 12px',
+                        fontSize: '0.8rem',
+                        background: '#4ade80',
+                        color: '#000',
+                      }}
+                    >
+                      Télécharger la sélection
+                    </button>
+                  </div>
+                )}
 
                 <div
                   style={{
@@ -1335,7 +1498,12 @@ export default function Player() {
             )}
           </div>
 
-          <InfoEncart liveInfo={liveInfo} vodInfo={vodInfo} isFullscreen={isFullscreen} />
+          <InfoEncart
+            liveInfo={liveInfo}
+            vodInfo={vodInfo}
+            isFullscreen={isFullscreen}
+            duration={duration}
+          />
         </div>
 
         <ChatSidebar

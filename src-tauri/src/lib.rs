@@ -15,6 +15,7 @@ use server::AppState;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // ── Tray icon ──────────────────────────────────────────────────
             let show_item = MenuItem::with_id(app, "show", "Show App", true, None::<&str>)?;
@@ -78,7 +79,10 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![commands::get_server_info])
+        .invoke_handler(tauri::generate_handler![
+            commands::get_server_info,
+            commands::start_download
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

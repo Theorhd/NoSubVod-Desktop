@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { HistoryVodEntry } from '../../shared/types';
+import { Download as DownloadIcon } from 'lucide-react';
+import DownloadMenu from './components/DownloadMenu';
 
 function formatRelative(updatedAt: number): string {
   const diffMs = Date.now() - updatedAt;
@@ -17,6 +19,7 @@ export default function History() {
   const [items, setItems] = useState<HistoryVodEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/history/list')
@@ -69,7 +72,7 @@ export default function History() {
                   : 0;
 
               return (
-                <div key={entry.vodId} className="history-item">
+                <div key={entry.vodId} className="history-item" style={{ position: 'relative' }}>
                   <button
                     type="button"
                     className="history-item-main"
@@ -96,6 +99,24 @@ export default function History() {
                       </div>
                     </div>
                   </button>
+                  <div style={{ position: 'absolute', bottom: '16px', right: '16px' }}>
+                    <button
+                      onClick={() => setOpenMenuId(openMenuId === entry.vodId ? null : entry.vodId)}
+                      className="action-btn secondary-btn"
+                      style={{ padding: '6px', borderRadius: '50%' }}
+                      title="Télécharger"
+                    >
+                      <DownloadIcon size={20} />
+                    </button>
+                    {openMenuId === entry.vodId && (
+                      <DownloadMenu
+                        vodId={entry.vodId}
+                        title={entry.vod?.title}
+                        duration={entry.duration}
+                        onClose={() => setOpenMenuId(null)}
+                      />
+                    )}
+                  </div>
                 </div>
               );
             })}

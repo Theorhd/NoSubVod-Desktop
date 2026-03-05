@@ -1,3 +1,4 @@
+pub mod download;
 pub mod history;
 pub mod routes;
 pub mod twitch;
@@ -15,6 +16,7 @@ use tauri::AppHandle;
 use tauri::Manager;
 use tokio::net::TcpListener;
 
+use download::DownloadManager;
 use history::HistoryStore;
 use routes::{build_router, ApiState};
 use twitch::TwitchService;
@@ -31,6 +33,7 @@ impl AppState {
     pub fn new(app_data_dir: PathBuf) -> Self {
         let history = Arc::new(HistoryStore::load(app_data_dir));
         let twitch = Arc::new(TwitchService::new());
+        let download = Arc::new(DownloadManager::new());
 
         let ip = get_local_ipv4();
         let port = SERVER_PORT;
@@ -50,7 +53,11 @@ impl AppState {
             qrcode,
         };
 
-        let api_state = ApiState { twitch, history };
+        let api_state = ApiState {
+            twitch,
+            history,
+            download,
+        };
 
         Self {
             server_info,

@@ -13,9 +13,11 @@ use axum::{http::HeaderMap, response::Redirect};
 use serde::Deserialize;
 use serde_json::Value;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
+use tower::ServiceExt;
 
 use super::{
+    download::DownloadManager,
     history::HistoryStore,
     twitch::TwitchService,
     types::{SubEntry, WatchlistEntry},
@@ -27,6 +29,7 @@ use super::{
 pub struct ApiState {
     pub twitch: Arc<TwitchService>,
     pub history: Arc<HistoryStore>,
+    pub download: Arc<DownloadManager>,
 }
 
 // ── Error helpers ─────────────────────────────────────────────────────────────
@@ -345,6 +348,14 @@ struct SettingsPatch {
     adblock_proxy: Option<Option<String>>,
     #[serde(rename = "adblockProxyMode")]
     adblock_proxy_mode: Option<Option<String>>,
+    #[serde(rename = "minVideoQuality")]
+    min_video_quality: Option<Option<String>>,
+    #[serde(rename = "preferredVideoQuality")]
+    preferred_video_quality: Option<Option<String>>,
+    #[serde(rename = "downloadLocalPath")]
+    download_local_path: Option<Option<String>>,
+    #[serde(rename = "downloadNetworkSharedPath")]
+    download_network_shared_path: Option<Option<String>>,
 }
 
 async fn handle_update_settings(
@@ -359,6 +370,10 @@ async fn handle_update_settings(
                 patch.adblock_enabled,
                 patch.adblock_proxy,
                 patch.adblock_proxy_mode,
+                patch.min_video_quality,
+                patch.preferred_video_quality,
+                patch.download_local_path,
+                patch.download_network_shared_path,
             )
             .await,
     )
@@ -668,6 +683,143 @@ async fn handle_dev_portal_redirect(headers: HeaderMap, uri: axum::http::Uri) ->
     Redirect::temporary(&format!("http://{host_without_port}:5173{path_and_query}"))
 }
 
+async fn handle_shared_downloads(
+    Path(file_path): Path<String>,
+    State(state): State<ApiState>,
+    req: axum::extract::Request,
+) -> Response {
+    let settings = state.history.get_settings().await;
+    let Some(base_path) = settings.download_network_shared_path else {
+        return not_found("Network sharing is not configured");
+    };
+    
+    let full_path = std::path::PathBuf::from(base_path).join(&file_path);
+    
+    // Prevent directory traversal
+    if full_path.components().any(|c| c.as_os_str() == "..") {
+        return bad_request("Invalid path");
+    }
+
+    match ServeFile::new(&full_path).oneshot(req).await {
+        Ok(res) => res.into_response(),
+        Err(_) => not_found("File not found"),
+    }
+}
+
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct DownloadedFile {
+    name: String,
+    size: u64,
+    url: String,
+    metadata: Option<Value>,
+}
+
+async fn handle_get_downloads(State(state): State<ApiState>) -> Response {
+    let settings = state.history.get_settings().await;
+    let Some(base_path) = settings.download_local_path.or(settings.download_network_shared_path) else {
+        return Json(Vec::<DownloadedFile>::new()).into_response();
+    };
+
+    let mut files = Vec::new();
+    if let Ok(mut entries) = tokio::fs::read_dir(&base_path).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if let Ok(fs_meta) = entry.metadata().await {
+                if fs_meta.is_file() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.ends_with(".mp4") || name.ends_with(".ts") || name.ends_with(".mkv") {
+                        let path = entry.path();
+                        let json_path = path.with_extension("json");
+                        let mut metadata = None;
+                        
+                        if let Ok(json_content) = tokio::fs::read_to_string(&json_path).await {
+                            if let Ok(parsed) = serde_json::from_str(&json_content) {
+                                metadata = Some(parsed);
+                            }
+                        }
+
+                        files.push(DownloadedFile {
+                            name: name.clone(),
+                            size: fs_meta.len(),
+                            url: format!("/shared-downloads/{}", name),
+                            metadata,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    
+    Json(files).into_response()
+}
+
+async fn handle_system_dialog_folder() -> Response {
+    if let Some(folder) = rfd::AsyncFileDialog::new().pick_folder().await {
+        return Json(serde_json::json!({ "path": folder.path().to_string_lossy().to_string() })).into_response();
+    }
+    Json(serde_json::json!({ "path": null })).into_response()
+}
+
+async fn handle_get_active_downloads(State(state): State<ApiState>) -> impl IntoResponse {
+    Json(state.download.get_all_downloads().await)
+}
+
+#[derive(Deserialize)]
+struct DownloadRequest {
+    #[serde(rename = "vodId")]
+    vod_id: String,
+    title: Option<String>,
+    quality: String,
+    #[serde(rename = "startTime")]
+    start_time: Option<f64>,
+    #[serde(rename = "endTime")]
+    end_time: Option<f64>,
+    duration: Option<f64>,
+}
+
+async fn handle_start_download(
+    State(state): State<ApiState>,
+    Json(req): Json<DownloadRequest>,
+) -> Response {
+    let settings = state.history.get_settings().await;
+    let out_dir = settings.download_local_path.unwrap_or_else(|| {
+        dirs::download_dir()
+            .map(|p: std::path::PathBuf| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| ".".to_string())
+    });
+
+    let port = super::SERVER_PORT;
+    let master_m3u8_url = format!("http://127.0.0.1:{}/api/vod/{}/master.m3u8", port, req.vod_id);
+    let output_file_base = format!("{}/{}_{}", out_dir, req.vod_id, req.quality);
+    let output_file = format!("{}.ts", output_file_base);
+    let output_json = format!("{}.json", output_file_base);
+
+    let title = req.title.unwrap_or_else(|| format!("VOD {}", req.vod_id));
+    let duration = req.duration.unwrap_or(0.0);
+
+    // Fetch and save metadata
+    let vods = state.twitch.fetch_vods_by_ids(vec![req.vod_id.clone()]).await;
+    if let Some(vod) = vods.into_iter().next() {
+        if let Ok(json_str) = serde_json::to_string_pretty(&vod) {
+            let _ = tokio::fs::write(&output_json, json_str).await;
+        }
+    }
+
+    match state.download.start_download(
+        req.vod_id,
+        title,
+        master_m3u8_url,
+        output_file,
+        req.start_time,
+        req.end_time,
+        duration,
+    ).await {
+        Ok(_) => Json(serde_json::json!({ "message": "Download started" })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
 // ── Router factory ────────────────────────────────────────────────────────────
 
 pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) -> Router {
@@ -686,6 +838,12 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         .route("/live/:login/chat.html", get(handle_chat_iframe))
         .route("/stream/variant.m3u8", get(handle_proxy_variant))
         .route("/stream/variant.ts", get(handle_proxy_segment))
+        // Shared Downloads
+        .route("/downloads", get(handle_get_downloads))
+        .route("/downloads/active", get(handle_get_active_downloads))
+        .route("/shared-downloads/*path", get(handle_shared_downloads))
+        .route("/download/start", axum::routing::post(handle_start_download))
+        .route("/system/dialog/folder", get(handle_system_dialog_folder))
         // Watchlist
         .route("/watchlist", get(handle_get_watchlist).post(handle_add_watchlist))
         .route("/watchlist/:vod_id", delete(handle_remove_watchlist))

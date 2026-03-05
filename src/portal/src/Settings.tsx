@@ -99,6 +99,34 @@ export default function Settings() {
     }
   };
 
+  const selectLocalPath = async () => {
+    try {
+      const res = await fetch('/api/system/dialog/folder');
+      if (res.ok) {
+        const { path } = await res.json();
+        if (path) {
+          setSettings((prev) => ({ ...prev, downloadLocalPath: path }));
+        }
+      }
+    } catch (e) {
+      console.error('Failed to open dialog', e);
+    }
+  };
+
+  const selectNetworkPath = async () => {
+    try {
+      const res = await fetch('/api/system/dialog/folder');
+      if (res.ok) {
+        const { path } = await res.json();
+        if (path) {
+          setSettings((prev) => ({ ...prev, downloadNetworkSharedPath: path }));
+        }
+      }
+    } catch (e) {
+      console.error('Failed to open dialog', e);
+    }
+  };
+
   return (
     <>
       <div className="top-bar">
@@ -419,6 +447,74 @@ export default function Settings() {
                   </div>
                 </div>
               )}
+            </>
+          )}
+        </div>
+
+        <div className="card settings-card">
+          <h2 style={{ marginTop: 0 }}>Downloads</h2>
+          <p className="settings-description">
+            Configure où les VODs téléchargées sont stockées et partagées.
+          </p>
+
+          {!loading && (
+            <>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
+                  Dossier de téléchargement local
+                </label>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <input
+                    type="text"
+                    value={settings.downloadLocalPath || ''}
+                    readOnly
+                    placeholder="Aucun dossier sélectionné"
+                    style={{
+                      flex: 1,
+                      padding: '8px',
+                      borderRadius: '4px',
+                      background: 'var(--bg-elevated)',
+                      color: 'var(--text)',
+                      border: '1px solid var(--surface-soft)',
+                    }}
+                  />
+                  <button onClick={selectLocalPath} className="action-btn secondary-btn">
+                    Choisir
+                  </button>
+                </div>
+                <small style={{ display: 'block', marginTop: '4px', color: 'var(--text-muted)' }}>
+                  Où les vidéos téléchargées depuis cette machine seront enregistrées.
+                </small>
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
+                  Dossier de partage réseau
+                </label>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <input
+                    type="text"
+                    value={settings.downloadNetworkSharedPath || ''}
+                    readOnly
+                    placeholder="Aucun dossier sélectionné"
+                    style={{
+                      flex: 1,
+                      padding: '8px',
+                      borderRadius: '4px',
+                      background: 'var(--bg-elevated)',
+                      color: 'var(--text)',
+                      border: '1px solid var(--surface-soft)',
+                    }}
+                  />
+                  <button onClick={selectNetworkPath} className="action-btn secondary-btn">
+                    Choisir
+                  </button>
+                </div>
+                <small style={{ display: 'block', marginTop: '4px', color: 'var(--text-muted)' }}>
+                  Ce dossier sera exposé sur le réseau local via l&apos;onglet Downloads pour les
+                  autres appareils.
+                </small>
+              </div>
             </>
           )}
         </div>

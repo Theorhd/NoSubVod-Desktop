@@ -190,6 +190,10 @@ pub struct ExperienceSettings {
     pub min_video_quality: Option<String>,
     #[serde(rename = "preferredVideoQuality", default)]
     pub preferred_video_quality: Option<String>,
+    #[serde(rename = "downloadLocalPath", default)]
+    pub download_local_path: Option<String>,
+    #[serde(rename = "downloadNetworkSharedPath", default)]
+    pub download_network_shared_path: Option<String>,
 }
 
 /// Root of the persisted JSON file.

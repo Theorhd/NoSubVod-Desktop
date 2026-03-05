@@ -82,6 +82,8 @@ export interface ExperienceSettings {
   adblockProxyMode?: 'auto' | 'manual';
   minVideoQuality?: string;
   preferredVideoQuality?: string;
+  downloadLocalPath?: string;
+  downloadNetworkSharedPath?: string;
 }
 
 export interface ProxyInfo {
