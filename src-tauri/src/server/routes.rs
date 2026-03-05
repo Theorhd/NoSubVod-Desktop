@@ -689,8 +689,8 @@ async fn handle_shared_downloads(
     req: axum::extract::Request,
 ) -> Response {
     let settings = state.history.get_settings().await;
-    let Some(base_path) = settings.download_network_shared_path else {
-        return not_found("Network sharing is not configured");
+    let Some(base_path) = settings.download_local_path.or(settings.download_network_shared_path) else {
+        return not_found("Download path is not configured");
     };
     
     let full_path = std::path::PathBuf::from(base_path).join(&file_path);
