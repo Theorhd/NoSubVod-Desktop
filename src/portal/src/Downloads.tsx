@@ -133,6 +133,7 @@ export default function Downloads() {
               src={playingFile.url}
               style={{ width: '100%', borderRadius: '8px', maxHeight: '60vh', background: 'black' }}
             >
+              <track kind="captions" />
               Votre navigateur ne supporte pas la balise vidéo.
             </video>
           </div>
@@ -210,88 +211,92 @@ export default function Downloads() {
         <h2 style={{ fontSize: '1.2rem', marginBottom: '16px', color: 'var(--text-muted)' }}>
           Fichiers terminés
         </h2>
-        {loading && files.length === 0 ? (
-          <div className="status-line">Chargement des fichiers...</div>
-        ) : files.length === 0 ? (
-          <div className="status-line">Aucun fichier téléchargé trouvé.</div>
-        ) : (
-          <div
-            style={{
-              display: 'grid',
-              gap: '16px',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-            }}
-          >
-            {files.map((file) => (
-              <div
-                key={file.name}
-                className="card"
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '8px',
-                  padding: '16px',
-                }}
-              >
-                <div style={{ fontWeight: 'bold', wordBreak: 'break-all' }}>
-                  {file.metadata ? file.metadata.title : file.name}
-                </div>
-                {file.metadata && (
-                  <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                    {file.metadata.owner?.displayName || 'Unknown Streamer'}
-                    {file.metadata.game?.name ? ` • ${file.metadata.game.name}` : ''}
+        {(() => {
+          if (loading && files.length === 0) {
+            return <div className="status-line">Chargement des fichiers...</div>;
+          }
+          if (files.length === 0) {
+            return <div className="status-line">Aucun fichier téléchargé trouvé.</div>;
+          }
+          return (
+            <div
+              style={{
+                display: 'grid',
+                gap: '16px',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+              }}
+            >
+              {files.map((file) => (
+                <div
+                  key={file.name}
+                  className="card"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                    padding: '16px',
+                  }}
+                >
+                  <div style={{ fontWeight: 'bold', wordBreak: 'break-all' }}>
+                    {file.metadata ? file.metadata.title : file.name}
                   </div>
-                )}
-                <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                  {formatSize(file.size)}
-                  {file.metadata?.lengthSeconds
-                    ? ` • ${formatDuration(file.metadata.lengthSeconds)}`
-                    : ''}
+                  {file.metadata && (
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                      {file.metadata.owner?.displayName || 'Unknown Streamer'}
+                      {file.metadata.game?.name ? ` • ${file.metadata.game.name}` : ''}
+                    </div>
+                  )}
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                    {formatSize(file.size)}
+                    {file.metadata?.lengthSeconds
+                      ? ` • ${formatDuration(file.metadata.lengthSeconds)}`
+                      : ''}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                    <button
+                      onClick={() => {
+                        setPlayingFile(file);
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      }}
+                      className="action-btn"
+                      style={{
+                        flex: 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        background: '#9146ff',
+                        color: 'white',
+                        border: 'none',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      ▶ Lire
+                    </button>
+                    <a
+                      href={file.url}
+                      download={file.name}
+                      className="action-btn"
+                      style={{
+                        flex: 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        textDecoration: 'none',
+                        background: '#3a3a3d',
+                        color: 'white',
+                      }}
+                    >
+                      <DownloadIcon size={16} />
+                      Télécharger
+                    </a>
+                  </div>
                 </div>
-                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                  <button
-                    onClick={() => {
-                      setPlayingFile(file);
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                    className="action-btn"
-                    style={{
-                      flex: 1,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      background: '#9146ff',
-                      color: 'white',
-                      border: 'none',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    ▶ Lire
-                  </button>
-                  <a
-                    href={file.url}
-                    download={file.name}
-                    className="action-btn"
-                    style={{
-                      flex: 1,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      textDecoration: 'none',
-                      background: '#3a3a3d',
-                      color: 'white',
-                    }}
-                  >
-                    <DownloadIcon size={16} />
-                    Télécharger
-                  </a>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          );
+        })()}
       </div>
 
       <style>{`

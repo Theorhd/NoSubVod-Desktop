@@ -460,11 +460,15 @@ export default function Settings() {
           {!loading && (
             <>
               <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
+                <label
+                  htmlFor="local-download-path"
+                  style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}
+                >
                   Dossier de téléchargement local
                 </label>
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <input
+                    id="local-download-path"
                     type="text"
                     value={settings.downloadLocalPath || ''}
                     readOnly
@@ -488,11 +492,15 @@ export default function Settings() {
               </div>
 
               <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
+                <label
+                  htmlFor="network-share-path"
+                  style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}
+                >
                   Dossier de partage réseau
                 </label>
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <input
+                    id="network-share-path"
                     type="text"
                     value={settings.downloadNetworkSharedPath || ''}
                     readOnly
