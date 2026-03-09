@@ -36,7 +36,12 @@ function loadHlsLibrary(): Promise<any> {
   return hlsScriptPromise;
 }
 
-function bindHlsEvents(hlsInstance: any, Hls: any, video: HTMLVideoElement, setPlaybackError: (err: string | null) => void) {
+function bindHlsEvents(
+  hlsInstance: any,
+  Hls: any,
+  video: HTMLVideoElement,
+  setPlaybackError: (err: string | null) => void
+) {
   hlsInstance.on(Hls.Events.MANIFEST_PARSED, (_event: any, data: any) => {
     console.log('[Downloads][hls] MANIFEST_PARSED', { levels: data?.levels?.length });
     void video.play().catch((e: any) => {
@@ -44,13 +49,19 @@ function bindHlsEvents(hlsInstance: any, Hls: any, video: HTMLVideoElement, setP
     });
   });
   hlsInstance.on(Hls.Events.LEVEL_LOADED, (_event: any, data: any) => {
-    console.log('[Downloads][hls] LEVEL_LOADED', { fragments: data?.details?.fragments?.length, totalduration: data?.details?.totalduration });
+    console.log('[Downloads][hls] LEVEL_LOADED', {
+      fragments: data?.details?.fragments?.length,
+      totalduration: data?.details?.totalduration,
+    });
   });
   hlsInstance.on(Hls.Events.FRAG_LOADING, (_event: any, data: any) => {
     console.log('[Downloads][hls] FRAG_LOADING', { url: data?.frag?.url?.substring(0, 120) });
   });
   hlsInstance.on(Hls.Events.FRAG_LOADED, (_event: any, data: any) => {
-    console.log('[Downloads][hls] FRAG_LOADED', { bytes: data?.frag?.stats?.total, url: data?.frag?.url?.substring(0, 120) });
+    console.log('[Downloads][hls] FRAG_LOADED', {
+      bytes: data?.frag?.stats?.total,
+      url: data?.frag?.url?.substring(0, 120),
+    });
   });
   hlsInstance.on(Hls.Events.BUFFER_APPENDING, () => {
     console.log('[Downloads][hls] BUFFER_APPENDING');
@@ -59,7 +70,13 @@ function bindHlsEvents(hlsInstance: any, Hls: any, video: HTMLVideoElement, setP
     console.log('[Downloads][hls] BUFFER_APPENDED');
   });
   hlsInstance.on(Hls.Events.ERROR, (_event: any, data: any) => {
-    console.error('[Downloads][hls] ERROR', { type: data?.type, details: data?.details, fatal: data?.fatal, reason: data?.reason, response: data?.response?.code });
+    console.error('[Downloads][hls] ERROR', {
+      type: data?.type,
+      details: data?.details,
+      fatal: data?.fatal,
+      reason: data?.reason,
+      response: data?.response?.code,
+    });
     if (!data?.fatal) return;
     setPlaybackError('Lecture impossible: format non supporte dans le lecteur integre.');
   });
@@ -67,7 +84,12 @@ function bindHlsEvents(hlsInstance: any, Hls: any, video: HTMLVideoElement, setP
 
 function bindVideoEvents(video: HTMLVideoElement) {
   const onLoadStart = () => console.log('[Downloads][video] loadstart');
-  const onLoadedMetadata = () => console.log('[Downloads][video] loadedmetadata', { duration: video.duration, videoWidth: video.videoWidth, videoHeight: video.videoHeight });
+  const onLoadedMetadata = () =>
+    console.log('[Downloads][video] loadedmetadata', {
+      duration: video.duration,
+      videoWidth: video.videoWidth,
+      videoHeight: video.videoHeight,
+    });
   const onLoadedData = () => console.log('[Downloads][video] loadeddata');
   const onCanPlay = () => console.log('[Downloads][video] canplay');
   const onCanPlayThrough = () => console.log('[Downloads][video] canplaythrough');
@@ -141,10 +163,19 @@ export default function Downloads() {
 
       if (filesRes.ok) {
         const data = await filesRes.json();
-        console.log('[Downloads] files received:', data.length, 'files', data.map((f: any) => ({ name: f.name, size: f.size, url: f.url })));
+        console.log(
+          '[Downloads] files received:',
+          data.length,
+          'files',
+          data.map((f: any) => ({ name: f.name, size: f.size, url: f.url }))
+        );
         setFiles(data);
       } else {
-        console.error('[Downloads] /api/downloads failed:', filesRes.status, await filesRes.text().catch(() => ''));
+        console.error(
+          '[Downloads] /api/downloads failed:',
+          filesRes.status,
+          await filesRes.text().catch(() => '')
+        );
       }
 
       if (activeRes.ok) {
@@ -180,7 +211,10 @@ export default function Downloads() {
   };
 
   const resolveDownloadUrl = (url: string) => {
-    if (!url) { console.warn('[Downloads] resolveDownloadUrl: empty url'); return ''; }
+    if (!url) {
+      console.warn('[Downloads] resolveDownloadUrl: empty url');
+      return '';
+    }
     let resolved: string;
     if (url.startsWith('/api/')) resolved = url;
     else if (url.startsWith('/shared-downloads/')) resolved = `/api${url}`;
@@ -190,8 +224,7 @@ export default function Downloads() {
     return resolved;
   };
 
-  const isTsFile = (file: DownloadedFile | null) =>
-    !!file?.name.toLowerCase().endsWith('.ts');
+  const isTsFile = (file: DownloadedFile | null) => !!file?.name.toLowerCase().endsWith('.ts');
 
   useEffect(() => {
     setPlaybackError(null);
@@ -199,7 +232,9 @@ export default function Downloads() {
     const video = videoRef.current;
     console.log('[Downloads] playback useEffect triggered', {
       hasVideo: !!video,
-      playingFile: playingFile ? { name: playingFile.name, url: playingFile.url, size: playingFile.size } : null,
+      playingFile: playingFile
+        ? { name: playingFile.name, url: playingFile.url, size: playingFile.size }
+        : null,
       isTs: isTsFile(playingFile),
     });
 
@@ -216,9 +251,19 @@ export default function Downloads() {
       console.log('[Downloads] non-TS file, using direct src:', directUrl);
 
       // Probe the URL first
-      fetch(directUrl, { method: 'HEAD' }).then(r => {
-        console.log('[Downloads] HEAD probe', directUrl, ':', r.status, r.headers.get('content-type'), 'content-length:', r.headers.get('content-length'));
-      }).catch(e => console.error('[Downloads] HEAD probe failed', directUrl, e));
+      fetch(directUrl, { method: 'HEAD' })
+        .then((r) => {
+          console.log(
+            '[Downloads] HEAD probe',
+            directUrl,
+            ':',
+            r.status,
+            r.headers.get('content-type'),
+            'content-length:',
+            r.headers.get('content-length')
+          );
+        })
+        .catch((e) => console.error('[Downloads] HEAD probe failed', directUrl, e));
 
       return cleanupVideoListeners;
     }
@@ -230,17 +275,27 @@ export default function Downloads() {
     console.log('[Downloads] .ts file detected, using HLS url:', hlsUrl);
 
     // Probe the HLS playlist
-    fetch(hlsUrl).then(async r => {
-      const text = await r.text();
-      console.log('[Downloads] HLS playlist response:', r.status, r.headers.get('content-type'), '\n---\n' + text + '\n---');
-    }).catch(e => console.error('[Downloads] HLS playlist fetch failed', e));
+    fetch(hlsUrl)
+      .then(async (r) => {
+        const text = await r.text();
+        console.log(
+          '[Downloads] HLS playlist response:',
+          r.status,
+          r.headers.get('content-type'),
+          '\n---\n' + text + '\n---'
+        );
+      })
+      .catch((e) => console.error('[Downloads] HLS playlist fetch failed', e));
 
     const setupHlsPlayback = async () => {
       try {
         console.log('[Downloads] loading hls.js library...');
         const Hls = await loadHlsLibrary();
         console.log('[Downloads] hls.js loaded, isSupported:', Hls?.isSupported?.());
-        if (disposed) { console.log('[Downloads] disposed before setup, aborting'); return; }
+        if (disposed) {
+          console.log('[Downloads] disposed before setup, aborting');
+          return;
+        }
 
         if (Hls?.isSupported?.()) {
           hlsInstance = new Hls({ debug: false });
@@ -280,7 +335,7 @@ export default function Downloads() {
       }
     };
   }, [playingFile]);
- 
+
   const getStatusDisplay = (status: any) => {
     if (status === 'Queued')
       return { label: 'En attente', icon: <Clock size={16} />, color: 'var(--text-muted)' };
@@ -348,8 +403,16 @@ export default function Downloads() {
               src={isTsFile(playingFile) ? undefined : resolveDownloadUrl(playingFile.url)}
               onError={(e) => {
                 const vid = e.currentTarget;
-                console.error('[Downloads][video] onError in JSX', { code: vid.error?.code, message: vid.error?.message, src: vid.src?.substring(0, 120), networkState: vid.networkState, readyState: vid.readyState });
-                setPlaybackError('Lecture impossible: verifiez le format ou telechargez le fichier.');
+                console.error('[Downloads][video] onError in JSX', {
+                  code: vid.error?.code,
+                  message: vid.error?.message,
+                  src: vid.src?.substring(0, 120),
+                  networkState: vid.networkState,
+                  readyState: vid.readyState,
+                });
+                setPlaybackError(
+                  'Lecture impossible: verifiez le format ou telechargez le fichier.'
+                );
               }}
               style={{ width: '100%', borderRadius: '8px', maxHeight: '60vh', background: 'black' }}
             >
@@ -486,7 +549,12 @@ export default function Downloads() {
                   <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                     <button
                       onClick={() => {
-                        console.log('[Downloads] Lire clicked:', { name: file.name, url: file.url, size: file.size, isTs: isTsFile(file) });
+                        console.log('[Downloads] Lire clicked:', {
+                          name: file.name,
+                          url: file.url,
+                          size: file.size,
+                          isTs: isTsFile(file),
+                        });
                         setPlayingFile(file);
                         window.scrollTo({ top: 0, behavior: 'smooth' });
                       }}

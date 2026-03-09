@@ -4,20 +4,63 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine;
+use sha2::{Digest, Sha256};
+
 use super::types::{ExperienceSettings, HistoryEntry, PersistedData, SubEntry, WatchlistEntry};
+
+// ── Token encryption helpers ───────────────────────────────────────────────────
+// Uses a machine-specific key derived from the data dir path + a salt.
+// Not cryptographically unbreakable, but prevents trivial plaintext token theft
+// from the JSON file by other apps or casual filesystem access.
+
+fn derive_key(data_dir: &std::path::Path) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"NoSubVOD-token-key-v1");
+    hasher.update(data_dir.to_string_lossy().as_bytes());
+    // Add hostname for extra machine-specificity
+    if let Ok(name) = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")) {
+        hasher.update(name.as_bytes());
+    }
+    hasher.finalize().to_vec()
+}
+
+fn encrypt_token(token: &str, key: &[u8]) -> String {
+    let encrypted: Vec<u8> = token
+        .as_bytes()
+        .iter()
+        .enumerate()
+        .map(|(i, b)| b ^ key[i % key.len()])
+        .collect();
+    B64.encode(&encrypted)
+}
+
+fn decrypt_token(encoded: &str, key: &[u8]) -> Option<String> {
+    let data = B64.decode(encoded).ok()?;
+    let decrypted: Vec<u8> = data
+        .iter()
+        .enumerate()
+        .map(|(i, b)| b ^ key[i % key.len()])
+        .collect();
+    String::from_utf8(decrypted).ok()
+}
 
 // ── HistoryStore – wraps all persisted state ───────────────────────────────────
 
 pub struct HistoryStore {
     data: Arc<RwLock<PersistedData>>,
     file_path: PathBuf,
+    /// Encryption key derived from the data dir path
+    token_key: Vec<u8>,
 }
 
 impl HistoryStore {
     /// Load from disk synchronously (file is small – safe to block on startup).
     pub fn load(data_dir: PathBuf) -> Self {
         let file_path = data_dir.join("history.json");
-        let data = match std::fs::read_to_string(&file_path) {
+        let token_key = derive_key(&data_dir);
+        let mut data = match std::fs::read_to_string(&file_path) {
             Ok(raw) => serde_json::from_str::<PersistedData>(&raw).unwrap_or_default(),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => PersistedData::default(),
             Err(e) => {
@@ -26,15 +69,26 @@ impl HistoryStore {
             }
         };
 
+        // Decrypt token from disk format
+        if let Some(ref encrypted) = data.twitch_token {
+            data.twitch_token = decrypt_token(encrypted, &token_key);
+        }
+
         Self {
             data: Arc::new(RwLock::new(data)),
             file_path,
+            token_key,
         }
     }
 
     async fn save(&self) {
         let data = self.data.read().await;
-        match serde_json::to_string_pretty(&*data) {
+        // Create a copy with the token encrypted for on-disk storage
+        let mut disk_data = data.clone();
+        if let Some(ref plaintext) = disk_data.twitch_token {
+            disk_data.twitch_token = Some(encrypt_token(plaintext, &self.token_key));
+        }
+        match serde_json::to_string_pretty(&disk_data) {
             Ok(json) => {
                 if let Some(parent) = self.file_path.parent() {
                     let _ = tokio::fs::create_dir_all(parent).await;

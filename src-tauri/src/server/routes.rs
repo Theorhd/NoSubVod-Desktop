@@ -4,6 +4,7 @@ use axum::{
     body::Body,
     extract::{Path, Query, State},
     http::{header, StatusCode},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
     Json, Router,
@@ -12,7 +13,7 @@ use axum::{
 use axum::{http::HeaderMap, response::Redirect};
 use serde::Deserialize;
 use serde_json::Value;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tower::ServiceExt;
 
@@ -32,6 +33,62 @@ pub struct ApiState {
     pub history: Arc<HistoryStore>,
     pub download: Arc<DownloadManager>,
     pub oauth: Arc<OAuthStateStore>,
+    /// Per-session token required for API access (prevents unauthorized LAN access).
+    pub server_token: String,
+}
+
+// ── Authentication middleware ──────────────────────────────────────────────────
+
+/// Validates requests carry a valid server token via the `X-NSV-Token` header
+/// or `t` query parameter. Rejects unauthorized requests with 401.
+async fn auth_middleware(
+    State(state): State<ApiState>,
+    req: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let token_from_header = req
+        .headers()
+        .get("x-nsv-token")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    let token_from_query = req
+        .uri()
+        .query()
+        .and_then(|q| {
+            q.split('&')
+                .find_map(|pair| {
+                    let mut parts = pair.splitn(2, '=');
+                    if parts.next() == Some("t") {
+                        parts.next().map(|v| v.to_string())
+                    } else {
+                        None
+                    }
+                })
+        });
+
+    let provided = token_from_header.or(token_from_query);
+
+    if provided.as_deref() != Some(&state.server_token) {
+        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Unauthorized" }))).into_response();
+    }
+
+    next.run(req).await
+}
+
+// ── Input validation helpers ──────────────────────────────────────────────────
+
+/// Returns true if the string looks like a valid VOD / numeric ID.
+fn is_valid_id(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 20 && s.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Returns true if the string looks like a valid Twitch login/username.
+fn is_valid_login(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 25
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 // ── Error helpers ─────────────────────────────────────────────────────────────
@@ -130,6 +187,9 @@ async fn handle_vod_chat(
     Query(q): Query<ChatQuery>,
     State(state): State<ApiState>,
 ) -> Response {
+    if !is_valid_id(&vod_id) {
+        return bad_request("Invalid VOD ID");
+    }
     let offset = q.offset.unwrap_or(0.0);
     match state.twitch.fetch_video_chat(&vod_id, offset).await {
         Ok(data) => Json(data).into_response(),
@@ -141,6 +201,9 @@ async fn handle_vod_markers(
     Path(vod_id): Path<String>,
     State(state): State<ApiState>,
 ) -> Response {
+    if !is_valid_id(&vod_id) {
+        return bad_request("Invalid VOD ID");
+    }
     match state.twitch.fetch_video_markers(&vod_id).await {
         Ok(data) => Json(data).into_response(),
         Err(e) => internal(e),
@@ -151,6 +214,9 @@ async fn handle_vod_info(
     Path(vod_id): Path<String>,
     State(state): State<ApiState>,
 ) -> Response {
+    if !is_valid_id(&vod_id) {
+        return bad_request("Invalid VOD ID");
+    }
     let vods = state.twitch.fetch_vods_by_ids(vec![vod_id]).await;
     if let Some(vod) = vods.into_iter().next() {
         Json(vod).into_response()
@@ -164,6 +230,9 @@ async fn handle_vod_master(
     State(state): State<ApiState>,
     headers: axum::http::HeaderMap,
 ) -> Response {
+    if !is_valid_id(&vod_id) {
+        return bad_request("Invalid VOD ID");
+    }
     let host = headers
         .get(header::HOST)
         .and_then(|h| h.to_str().ok())
@@ -182,8 +251,8 @@ async fn handle_live_master(
     headers: axum::http::HeaderMap,
 ) -> Response {
     let login = login.trim().to_lowercase();
-    if login.is_empty() {
-        return bad_request("Missing channel login");
+    if !is_valid_login(&login) {
+        return bad_request("Invalid channel login");
     }
     let host = headers
         .get(header::HOST)
@@ -578,6 +647,9 @@ async fn handle_get_user(
     Path(username): Path<String>,
     State(state): State<ApiState>,
 ) -> Response {
+    if !is_valid_login(&username) {
+        return bad_request("Invalid username");
+    }
     match state.twitch.fetch_user_info(&username).await {
         Ok(user) => Json(user).into_response(),
         Err(e) => not_found(e),
@@ -588,6 +660,9 @@ async fn handle_get_user_vods(
     Path(username): Path<String>,
     State(state): State<ApiState>,
 ) -> Response {
+    if !is_valid_login(&username) {
+        return bad_request("Invalid username");
+    }
     match state.twitch.fetch_user_vods(&username).await {
         Ok(vods) => Json(vods).into_response(),
         Err(e) => internal(e),
@@ -598,6 +673,9 @@ async fn handle_get_user_live(
     Path(username): Path<String>,
     State(state): State<ApiState>,
 ) -> Response {
+    if !is_valid_login(&username) {
+        return bad_request("Invalid username");
+    }
     match state.twitch.fetch_user_live_stream(&username).await {
         Ok(stream) => Json(stream).into_response(),
         Err(e) => internal(e),
@@ -919,13 +997,52 @@ async fn handle_start_download(
     }
 }
 
+// ── Security headers middleware ─────────────────────────────────────────────
+
+async fn security_headers_middleware(
+    req: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let mut response = next.run(req).await;
+    let headers = response.headers_mut();
+    headers.insert("x-content-type-options", "nosniff".parse().unwrap());
+    headers.insert("x-frame-options", "DENY".parse().unwrap());
+    headers.insert("x-xss-protection", "1; mode=block".parse().unwrap());
+    headers.insert("referrer-policy", "no-referrer".parse().unwrap());
+    headers.insert(
+        "permissions-policy",
+        "camera=(), microphone=(), geolocation=(), interest-cohort=()".parse().unwrap(),
+    );
+    headers.insert(
+        "cache-control",
+        "no-store, private".parse().unwrap(),
+    );
+    response
+}
+
 // ── Router factory ────────────────────────────────────────────────────────────
 
 pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) -> Router {
+    // CORS: allow only same-origin and local network origins (not Any)
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_origin(tower_http::cors::AllowOrigin::mirror_request())
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PUT,
+            axum::http::Method::DELETE,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers([
+            header::CONTENT_TYPE,
+            header::AUTHORIZATION,
+            "x-nsv-token".parse().unwrap(),
+        ]);
+
+    // Auth callback must remain unauthenticated (Twitch redirects here)
+    let auth_callback = Router::new()
+        .route("/auth/twitch/callback", get(crate::server::auth::handle_auth_callback))
+        .with_state(state.clone());
 
     let api = Router::new()
         // Video data
@@ -968,7 +1085,6 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         .route("/live/:login/chat/send", post(handle_live_chat_send))
         // Twitch auth
         .route("/auth/twitch/start", get(crate::server::auth::handle_auth_start))
-        .route("/auth/twitch/callback", get(crate::server::auth::handle_auth_callback))
         .route("/auth/twitch/status", get(crate::server::auth::handle_auth_status))
         .route("/auth/twitch", delete(crate::server::auth::handle_auth_unlink))
         .route("/auth/twitch/import-follows", post(crate::server::auth::handle_auth_import_follows))
@@ -981,9 +1097,15 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         .route("/user/:username", get(handle_get_user))
         .route("/user/:username/vods", get(handle_get_user_vods))
         .route("/user/:username/live", get(handle_get_user_live))
-        .with_state(state);
+        // Auth middleware protects all these routes
+        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
+        .with_state(state.clone());
 
-    let mut router = Router::new().nest("/api", api).layer(cors);
+    let mut router = Router::new()
+        .nest("/api", auth_callback)
+        .nest("/api", api)
+        .layer(middleware::from_fn(security_headers_middleware))
+        .layer(cors);
 
     // Serve portal static files if available
     if let Some(portal_path) = portal_dist {

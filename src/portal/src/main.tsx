@@ -3,6 +3,51 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 
+// ── Extract and store server auth token from URL ─────────────────────────────
+// The QR code URL includes ?t=<token>. We extract it on first load, store it
+// in sessionStorage (survives navigations but not tab close), and strip it from
+// the URL to avoid leaking it in referrer headers or browser history.
+(function initAuthToken() {
+  const params = new URLSearchParams(globalThis.location.search);
+  const token = params.get('t');
+  if (token) {
+    sessionStorage.setItem('nsv_token', token);
+    // Clean the URL without reloading
+    params.delete('t');
+    const clean = params.toString();
+    const newUrl =
+      globalThis.location.pathname + (clean ? `?${clean}` : '') + globalThis.location.hash;
+    globalThis.history.replaceState({}, '', newUrl);
+  }
+})();
+
+// ── Patch global fetch to auto-inject auth token on API calls ────────────────
+(function patchFetch() {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    let url: string;
+    if (typeof input === 'string') {
+      url = input;
+    } else if (input instanceof URL) {
+      url = input.toString();
+    } else {
+      url = input.url;
+    }
+    // Only inject token on our own API calls
+    if (url.startsWith('/api/') || url.startsWith('api/')) {
+      const token = sessionStorage.getItem('nsv_token');
+      if (token) {
+        const headers = new Headers(init?.headers);
+        if (!headers.has('x-nsv-token')) {
+          headers.set('x-nsv-token', token);
+        }
+        init = { ...init, headers };
+      }
+    }
+    return originalFetch.call(globalThis, input, init);
+  };
+})();
+
 type AppErrorBoundaryState = {
   hasError: boolean;
   message: string;

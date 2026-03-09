@@ -17,6 +17,7 @@ use tauri::AppHandle;
 #[cfg(not(debug_assertions))]
 use tauri::Manager;
 use tokio::net::TcpListener;
+use uuid::Uuid;
 
 use download::DownloadManager;
 use history::HistoryStore;
@@ -45,7 +46,11 @@ impl AppState {
         let portal_port = 5173u16;
         #[cfg(not(debug_assertions))]
         let portal_port = port;
-        let url = format!("http://{ip}:{portal_port}");
+
+        // Generate a per-session authentication token to protect API endpoints
+        let server_token = Uuid::new_v4().to_string().replace('-', "");
+
+        let url = format!("http://{ip}:{portal_port}?t={server_token}");
         let qrcode = generate_qr_data_url(&url);
 
         let server_info = ServerInfo {
@@ -62,6 +67,7 @@ impl AppState {
             history,
             download,
             oauth,
+            server_token,
         };
 
         Self {

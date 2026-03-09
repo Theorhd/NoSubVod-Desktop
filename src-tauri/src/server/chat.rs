@@ -16,11 +16,11 @@ async fn handle_socket(socket: WebSocket, login: String) {
         TwitchIRCClient::<SecureTCPTransport, StaticLoginCredentials>::new(config);
 
     if let Err(e) = client.join(login.clone()) {
-        eprintln!("[Chat] Failed to join channel {}: {}", login, e);
+        eprintln!("[Chat] Failed to join channel: {}", e);
         return;
     }
 
-    eprintln!("[Chat] Connected to {} chat", login);
+    eprintln!("[Chat] Connected to channel chat");
 
     let (mut sender, mut receiver) = socket.split();
 
@@ -105,5 +105,5 @@ async fn handle_socket(socket: WebSocket, login: String) {
         },
     }
 
-    eprintln!("[Chat] Disconnected from {} chat", login);
+    eprintln!("[Chat] Disconnected from channel chat");
 }

@@ -15,8 +15,8 @@ const ServerExperienceSection = ({ settings, loading, setSettings, setSuccess }:
   <div className="card settings-card">
     <h2 style={{ marginTop: 0 }}>Server Experience</h2>
     <p className="settings-description">
-      Active OneSync pour partager les abonnements, l&apos;historique et les éléments
-      synchronisés entre tous les appareils connectés à ton serveur NoSubVOD.
+      Active OneSync pour partager les abonnements, l&apos;historique et les éléments synchronisés
+      entre tous les appareils connectés à ton serveur NoSubVOD.
     </p>
     {loading ? (
       <div style={{ color: 'var(--text-muted)' }}>Loading settings...</div>
@@ -68,7 +68,8 @@ const VideoPlayerSection = ({ settings, setSettings, setSuccess }: any) => (
         <option value="1080">1080p</option>
       </select>
       <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: '6px' }}>
-        Les résolutions inférieures seront masquées du lecteur. Si la connexion est mauvaise, cela peut causer des coupures.
+        Les résolutions inférieures seront masquées du lecteur. Si la connexion est mauvaise, cela
+        peut causer des coupures.
       </small>
     </div>
 
@@ -101,8 +102,9 @@ const AdblockSection = ({ settings, setSettings, setSuccess, proxies, activeProx
   <div className="card settings-card">
     <h2 style={{ marginTop: 0 }}>Adblock Proxies</h2>
     <p className="settings-description">
-      Utilise un proxy tiers pour contourner les pubs Twitch sur les lives et les VODs.
-      Attention: L&apos;utilisation d&apos;un proxy public peut ralentir le flux vidéo ou se bloquer temporairement.
+      Utilise un proxy tiers pour contourner les pubs Twitch sur les lives et les VODs. Attention:
+      L&apos;utilisation d&apos;un proxy public peut ralentir le flux vidéo ou se bloquer
+      temporairement.
     </p>
 
     <div className="toggle-row">
@@ -159,27 +161,45 @@ const AdblockSection = ({ settings, setSettings, setSuccess, proxies, activeProx
                 setSuccess('');
               }}
             >
-              <option value="" disabled>Sélectionnez un proxy</option>
+              <option value="" disabled>
+                Sélectionnez un proxy
+              </option>
               {proxies.map((p: any) => (
-                <option key={p.url} value={p.url}>{p.name} - {p.url}</option>
+                <option key={p.url} value={p.url}>
+                  {p.name} - {p.url}
+                </option>
               ))}
             </select>
           </div>
         )}
 
         {activeProxy && (
-          <div style={{ marginTop: '16px', padding: '12px', backgroundColor: 'var(--bg)', borderRadius: '8px', border: '1px solid var(--border)' }}>
-            <strong style={{ display: 'block', marginBottom: '8px', color: 'var(--text)' }}>Proxy Actif Actuellement :</strong>
+          <div
+            style={{
+              marginTop: '16px',
+              padding: '12px',
+              backgroundColor: 'var(--bg)',
+              borderRadius: '8px',
+              border: '1px solid var(--border)',
+            }}
+          >
+            <strong style={{ display: 'block', marginBottom: '8px', color: 'var(--text)' }}>
+              Proxy Actif Actuellement :
+            </strong>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
               {(() => {
                 let dotColor = '#facc15';
                 if (activeProxy.status === 'success') dotColor = '#4ade80';
                 else if (activeProxy.status === 'error') dotColor = '#f87171';
                 return (
-                  <span style={{
-                    width: '10px', height: '10px', borderRadius: '50%',
-                    backgroundColor: dotColor,
-                  }} />
+                  <span
+                    style={{
+                      width: '10px',
+                      height: '10px',
+                      borderRadius: '50%',
+                      backgroundColor: dotColor,
+                    }}
+                  />
                 );
               })()}
               <span style={{ fontWeight: 600, color: 'var(--text)' }}>{activeProxy.name}</span>
@@ -202,7 +222,9 @@ const AdblockSection = ({ settings, setSettings, setSuccess, proxies, activeProx
 const DownloadsSection = ({ settings, setSettings, setSuccess, selectFolder }: any) => (
   <div className="card settings-card">
     <h2 style={{ marginTop: 0 }}>Downloads (Server Backend)</h2>
-    <p className="settings-description">Configure l&apos;emplacement où le serveur de fond NoSubVOD stockera les VODs téléchargées.</p>
+    <p className="settings-description">
+      Configure l&apos;emplacement où le serveur de fond NoSubVOD stockera les VODs téléchargées.
+    </p>
 
     <div className="settings-group">
       <label htmlFor="downloadLocalPath" className="settings-label">
@@ -221,7 +243,11 @@ const DownloadsSection = ({ settings, setSettings, setSuccess, selectFolder }: a
           }}
           style={{ flex: 1 }}
         />
-        <button type="button" onClick={() => selectFolder('downloadLocalPath')} className="action-btn">
+        <button
+          type="button"
+          onClick={() => selectFolder('downloadLocalPath')}
+          className="action-btn"
+        >
           Parcourir
         </button>
       </div>
@@ -247,105 +273,17 @@ const DownloadsSection = ({ settings, setSettings, setSuccess, selectFolder }: a
           }}
           style={{ flex: 1 }}
         />
-         <button type="button" onClick={() => selectFolder('downloadNetworkSharedPath')} className="action-btn">
+        <button
+          type="button"
+          onClick={() => selectFolder('downloadNetworkSharedPath')}
+          className="action-btn"
+        >
           Parcourir
         </button>
       </div>
       <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: '6px' }}>
         Chemin d&apos;accès réseau si vous enregistrez sur un NAS. Utilisé en priorité si spécifié.
       </small>
-    </div>
-  </div>
-);
-
-const TwitchIntegrationSection = ({
-  twitchStatus,
-  twitchPolling,
-  twitchImporting,
-  linkTwitch,
-  unlinkTwitch,
-  importFollows,
-  setImportFollowsSetting
-}: any) => (
-  <div className="card settings-card">
-    <h2 style={{ marginTop: 0 }}>Twitch Integration</h2>
-    <p className="settings-description">
-      Associe ton compte Twitch pour pouvoir écrire dans le chat, suivre l&apos;état de tes streamers favoris
-      et importer automatiquement tes abonnements.
-    </p>
-
-    <div style={{ marginTop: '20px', padding: '15px', backgroundColor: 'var(--bg)', borderRadius: '8px', border: '1px solid var(--border)' }}>
-      {twitchStatus === null && (
-        <div style={{ color: 'var(--text-muted)' }}>Vérification de l&apos;état...</div>
-      )}
-      {twitchStatus !== null && twitchStatus.linked && (
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginBottom: '15px' }}>
-            {twitchStatus.userProfileImage && (
-              <img src={twitchStatus.userProfileImage} alt="Profile" style={{ width: '50px', height: '50px', borderRadius: '50%' }} />
-            )}
-            <div>
-              <strong style={{ fontSize: '1.1rem', color: '#9146ff' }}>{twitchStatus.userDisplayName || twitchStatus.userLogin}</strong>
-              <div style={{ fontSize: '0.9rem', color: '#4ade80' }}>✓ Compte connecté</div>
-            </div>
-            <button
-              onClick={unlinkTwitch}
-              className="action-btn secondary-btn"
-              style={{ marginLeft: 'auto' }}
-            >
-              Déconnecter
-            </button>
-          </div>
-
-          <div className="toggle-row" style={{ marginTop: '15px', paddingTop: '15px', borderTop: '1px solid var(--border)' }}>
-            <span>
-              <strong>
-                <label htmlFor="importFollowsToggle" style={{ marginBottom: 0 }}>
-                  Synchroniser mes follows
-                </label>
-              </strong>
-              <small>Ajouter automatiquement à NoSubVOD les chaînes que je suis sur Twitch</small>
-            </span>
-            <input
-              id="importFollowsToggle"
-              type="checkbox"
-              checked={twitchStatus.importFollows || false}
-              onChange={(e) => setImportFollowsSetting(e.target.checked)}
-            />
-          </div>
-
-          <div style={{ marginTop: '15px' }}>
-             <button
-                onClick={importFollows}
-                disabled={twitchImporting}
-                className="action-btn"
-                style={{ width: '100%', justifyContent: 'center' }}
-              >
-                {twitchImporting ? 'Importation en cours...' : 'Forcer l\'importation des follows maintenant'}
-              </button>
-          </div>
-        </div>
-      )}
-      {twitchStatus !== null && !twitchStatus.linked && (
-        <div style={{ textAlign: 'center', padding: '10px 0' }}>
-          <div style={{ marginBottom: '15px', color: 'var(--text-muted)' }}>
-            Aucun compte Twitch connecté.
-          </div>
-          <button
-            onClick={linkTwitch}
-            disabled={twitchPolling}
-            className="action-btn"
-            style={{ backgroundColor: '#9146ff', color: 'white', padding: '10px 24px', fontSize: '1rem' }}
-          >
-            {twitchPolling ? 'En attente de connexion...' : 'Se connecter avec Twitch'}
-          </button>
-          {twitchPolling && (
-            <div style={{ marginTop: '10px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-              Une fenêtre s&apos;est ouverte. Veuillez autoriser NoSubVOD sur Twitch.
-            </div>
-          )}
-        </div>
-      )}
     </div>
   </div>
 );
@@ -365,9 +303,9 @@ const TwitchClientWarning = ({ twitchStatus }: { twitchStatus: TwitchStatus | nu
         color: '#fbbf24',
       }}
     >
-      Configuration Twitch incomplète. Configure ton application sur{' '}
-      <strong>dev.twitch.tv</strong> et renseigne <code>TWITCH_CLIENT_ID</code> et{' '}
-      <code>TWITCH_CLIENT_SECRET</code> dans <code>src-tauri/.env</code>.
+      Configuration Twitch incomplète. Configure ton application sur <strong>dev.twitch.tv</strong>{' '}
+      et renseigne <code>TWITCH_CLIENT_ID</code> et <code>TWITCH_CLIENT_SECRET</code> dans{' '}
+      <code>src-tauri/.env</code>.
     </div>
   );
 };
@@ -384,8 +322,8 @@ const TwitchAccountSection = ({
   <div className="card settings-card">
     <h2 style={{ marginTop: 0 }}>Compte Twitch</h2>
     <p className="settings-description">
-      Lie ton compte Twitch pour envoyer des messages dans les lives et importer tes
-      chaînes suivies dans tes Subs NoSubVOD.
+      Lie ton compte Twitch pour envoyer des messages dans les lives et importer tes chaînes suivies
+      dans tes Subs NoSubVOD.
     </p>
 
     <TwitchClientWarning twitchStatus={twitchStatus} />
@@ -588,12 +526,18 @@ export default function Settings() {
         attempts++;
         const r = await fetch('/api/auth/twitch/status');
         if (!r.ok) {
-          if (attempts >= 60) { clearInterval(poll); setTwitchPolling(false); }
+          if (attempts >= 60) {
+            clearInterval(poll);
+            setTwitchPolling(false);
+          }
           return;
         }
         const data = await r.json();
         setTwitchStatus(data);
-        if (data.linked || attempts >= 60) { clearInterval(poll); setTwitchPolling(false); }
+        if (data.linked || attempts >= 60) {
+          clearInterval(poll);
+          setTwitchPolling(false);
+        }
       }, 2000);
     } catch (e) {
       console.error('Failed to start Twitch auth', e);
@@ -649,389 +593,30 @@ export default function Settings() {
       </div>
 
       <div className="container" style={{ maxWidth: '760px' }}>
-        <div className="card settings-card">
-          <h2 style={{ marginTop: 0 }}>Server Experience</h2>
-          <p className="settings-description">
-            Active OneSync pour partager les abonnements, l&apos;historique et les éléments
-            synchronisés entre tous les appareils connectés à ton serveur NoSubVOD.
-          </p>
+        <ServerExperienceSection
+          settings={settings}
+          loading={loading}
+          setSettings={setSettings}
+          setSuccess={setSuccess}
+        />
 
-          {loading ? (
-            <div style={{ color: 'var(--text-muted)' }}>Loading settings...</div>
-          ) : (
-            <div className="toggle-row">
-              <span>
-                <strong>
-                  <label htmlFor="oneSyncToggle" style={{ marginBottom: 0 }}>
-                    OneSync
-                  </label>
-                </strong>
-                <small>Synchronise les données entre devices</small>
-              </span>
-              <input
-                id="oneSyncToggle"
-                type="checkbox"
-                checked={settings.oneSync}
-                onChange={(e) => {
-                  setSettings((prev) => ({ ...prev, oneSync: e.target.checked }));
-                  setSuccess('');
-                }}
-              />
-            </div>
-          )}
-        </div>
+        <VideoPlayerSection settings={settings} setSettings={setSettings} setSuccess={setSuccess} />
 
-        <div className="card settings-card">
-          <h2 style={{ marginTop: 0 }}>Video Player</h2>
-          <p className="settings-description">Configure la qualité par défaut du lecteur vidéo.</p>
-          {!loading && (
-            <>
-              <div style={{ marginBottom: '16px' }}>
-                <label
-                  htmlFor="preferredVideoQuality"
-                  style={{ display: 'block', marginBottom: '8px' }}
-                >
-                  Preferred Video Quality
-                </label>
-                <select
-                  id="preferredVideoQuality"
-                  value={settings.preferredVideoQuality || 'auto'}
-                  onChange={(e) =>
-                    setSettings((prev) => ({ ...prev, preferredVideoQuality: e.target.value }))
-                  }
-                  style={{
-                    width: '100%',
-                    padding: '8px',
-                    borderRadius: '4px',
-                    background: 'var(--bg-elevated)',
-                    color: 'var(--text)',
-                    border: '1px solid var(--surface-soft)',
-                  }}
-                >
-                  <option value="auto">Auto</option>
-                  <option value="1080">1080p</option>
-                  <option value="720">720p</option>
-                  <option value="480">480p</option>
-                  <option value="360">360p</option>
-                  <option value="160">160p</option>
-                </select>
-                <small style={{ display: 'block', marginTop: '4px', color: 'var(--text-muted)' }}>
-                  La qualité que nous voulons quand il y a aucun problème de connexion.
-                </small>
-              </div>
+        <AdblockSection
+          settings={settings}
+          setSettings={setSettings}
+          setSuccess={setSuccess}
+          proxies={proxies}
+          activeProxy={activeProxy}
+        />
 
-              <div style={{ marginBottom: '16px' }}>
-                <label htmlFor="minVideoQuality" style={{ display: 'block', marginBottom: '8px' }}>
-                  Minimal Video Quality
-                </label>
-                <select
-                  id="minVideoQuality"
-                  value={settings.minVideoQuality || 'none'}
-                  onChange={(e) =>
-                    setSettings((prev) => ({ ...prev, minVideoQuality: e.target.value }))
-                  }
-                  style={{
-                    width: '100%',
-                    padding: '8px',
-                    borderRadius: '4px',
-                    background: 'var(--bg-elevated)',
-                    color: 'var(--text)',
-                    border: '1px solid var(--surface-soft)',
-                  }}
-                >
-                  <option value="none">None</option>
-                  <option value="1080">1080p</option>
-                  <option value="720">720p</option>
-                  <option value="480">480p</option>
-                  <option value="360">360p</option>
-                  <option value="160">160p</option>
-                </select>
-                <small style={{ display: 'block', marginTop: '4px', color: 'var(--text-muted)' }}>
-                  Le programme n&apos;affichera jamais une qualité inférieure à celle-ci.
-                </small>
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="card settings-card">
-          <h2 style={{ marginTop: 0 }}>Adblock (Experimental)</h2>
-          <p className="settings-description">
-            Contourne les publicités Twitch en utilisant un proxy et le filtrage des segments. Le
-            mode Auto sélectionne automatiquement le proxy le plus rapide parmi les pays sans pub.
-          </p>
-
-          {!loading && (
-            <>
-              <div className="toggle-row">
-                <span>
-                  <strong>
-                    <label htmlFor="adblockToggle" style={{ marginBottom: 0 }}>
-                      Enable Adblock
-                    </label>
-                  </strong>
-                  <small>Bypass les pubs Twitch sur les lives</small>
-                </span>
-                <input
-                  id="adblockToggle"
-                  type="checkbox"
-                  checked={settings.adblockEnabled}
-                  onChange={(e) => {
-                    setSettings((prev) => ({ ...prev, adblockEnabled: e.target.checked }));
-                    setSuccess('');
-                  }}
-                />
-              </div>
-
-              {settings.adblockEnabled && (
-                <div
-                  style={{
-                    marginTop: '20px',
-                    borderTop: '1px solid var(--surface-soft)',
-                    paddingTop: '20px',
-                  }}
-                >
-                  <div style={{ marginBottom: '16px' }}>
-                    <span
-                      style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)' }}
-                    >
-                      Proxy Selection Mode
-                    </span>
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                      <button
-                        className={`action-btn ${settings.adblockProxyMode === 'auto' ? '' : 'secondary-btn'}`}
-                        style={{
-                          flex: 1,
-                          border:
-                            settings.adblockProxyMode === 'auto'
-                              ? 'none'
-                              : '1px solid var(--surface-hover)',
-                        }}
-                        onClick={() => setSettings({ ...settings, adblockProxyMode: 'auto' })}
-                      >
-                        Auto (Recommended)
-                      </button>
-                      <button
-                        className={`action-btn ${settings.adblockProxyMode === 'manual' ? '' : 'secondary-btn'}`}
-                        style={{
-                          flex: 1,
-                          border:
-                            settings.adblockProxyMode === 'manual'
-                              ? 'none'
-                              : '1px solid var(--surface-hover)',
-                        }}
-                        onClick={() => setSettings({ ...settings, adblockProxyMode: 'manual' })}
-                      >
-                        Manual
-                      </button>
-                    </div>
-                  </div>
-
-                  {settings.adblockProxyMode === 'auto' && (
-                    <div
-                      style={{
-                        background: 'var(--bg-elevated)',
-                        padding: '15px',
-                        borderRadius: '8px',
-                        marginBottom: '16px',
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize: '0.9rem',
-                          color: 'var(--text-muted)',
-                          marginBottom: '4px',
-                        }}
-                      >
-                        Active Proxy
-                      </div>
-                      {activeProxy ? (
-                        <div
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                          }}
-                        >
-                          <div style={{ fontWeight: 'bold' }}>
-                            {activeProxy.url} ({activeProxy.country})
-                          </div>
-                          <div
-                            style={{
-                              color: activeProxy.ping < 300 ? '#4ade80' : '#fbbf24',
-                              fontSize: '0.85rem',
-                            }}
-                          >
-                            Ping: {activeProxy.ping}ms
-                          </div>
-                        </div>
-                      ) : (
-                        <div style={{ fontSize: '0.85rem' }}>Searching for best proxy...</div>
-                      )}
-                    </div>
-                  )}
-
-                  {settings.adblockProxyMode === 'manual' && (
-                    <div style={{ marginBottom: '16px' }}>
-                      <label htmlFor="adblockProxy">Custom Proxy URL (HTTP)</label>
-                      <input
-                        id="adblockProxy"
-                        type="text"
-                        value={settings.adblockProxy || ''}
-                        onChange={(e) =>
-                          setSettings((prev) => ({ ...prev, adblockProxy: e.target.value }))
-                        }
-                        placeholder="ex: http://user:pass@host:port"
-                      />
-                    </div>
-                  )}
-
-                  <div style={{ marginTop: '16px' }}>
-                    <span
-                      style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)' }}
-                    >
-                      Available Proxies
-                    </span>
-                    <div
-                      style={{
-                        maxHeight: '200px',
-                        overflowY: 'auto',
-                        background: 'var(--bg)',
-                        borderRadius: '8px',
-                        border: '1px solid var(--surface-soft)',
-                      }}
-                    >
-                      {proxies.length === 0 ? (
-                        <div
-                          style={{
-                            padding: '15px',
-                            textAlign: 'center',
-                            color: 'var(--text-muted)',
-                            fontSize: '0.9rem',
-                          }}
-                        >
-                          No proxies found yet. Scraping in progress...
-                        </div>
-                      ) : (
-                        [...proxies]
-                          .sort((a: ProxyInfo, b: ProxyInfo) => a.ping - b.ping)
-                          .map((p) => (
-                            <div
-                              key={p.url}
-                              style={{
-                                padding: '10px 15px',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                borderBottom: '1px solid var(--surface-soft)',
-                              }}
-                            >
-                              <div style={{ fontSize: '0.9rem' }}>
-                                <span style={{ fontWeight: 'bold' }}>{p.url}</span>
-                                <span
-                                  style={{
-                                    marginLeft: '8px',
-                                    color: 'var(--text-muted)',
-                                    fontSize: '0.8rem',
-                                  }}
-                                >
-                                  [{p.country}]
-                                </span>
-                              </div>
-                              <div
-                                style={{
-                                  color: p.ping < 300 ? '#4ade80' : '#fbbf24',
-                                  fontSize: '0.8rem',
-                                }}
-                              >
-                                {p.ping}ms
-                              </div>
-                            </div>
-                          ))
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        <div className="card settings-card">
-          <h2 style={{ marginTop: 0 }}>Downloads</h2>
-          <p className="settings-description">
-            Configure où les VODs téléchargées sont stockées et partagées.
-          </p>
-
-          {!loading && (
-            <>
-              <div style={{ marginBottom: '16px' }}>
-                <label
-                  htmlFor="local-download-path"
-                  style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}
-                >
-                  Dossier de téléchargement local
-                </label>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <input
-                    id="local-download-path"
-                    type="text"
-                    value={settings.downloadLocalPath || ''}
-                    readOnly
-                    placeholder="Aucun dossier sélectionné"
-                    style={{
-                      flex: 1,
-                      padding: '8px',
-                      borderRadius: '4px',
-                      background: 'var(--bg-elevated)',
-                      color: 'var(--text)',
-                      border: '1px solid var(--surface-soft)',
-                    }}
-                  />
-                  <button onClick={() => selectFolder('downloadLocalPath')} className="action-btn secondary-btn">
-                    Choisir
-                  </button>
-                </div>
-                <small style={{ display: 'block', marginTop: '4px', color: 'var(--text-muted)' }}>
-                  Où les vidéos téléchargées depuis cette machine seront enregistrées.
-                </small>
-              </div>
-
-              <div style={{ marginBottom: '16px' }}>
-                <label
-                  htmlFor="network-share-path"
-                  style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}
-                >
-                  Dossier de partage réseau
-                </label>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <input
-                    id="network-share-path"
-                    type="text"
-                    value={settings.downloadNetworkSharedPath || ''}
-                    readOnly
-                    placeholder="Aucun dossier sélectionné"
-                    style={{
-                      flex: 1,
-                      padding: '8px',
-                      borderRadius: '4px',
-                      background: 'var(--bg-elevated)',
-                      color: 'var(--text)',
-                      border: '1px solid var(--surface-soft)',
-                    }}
-                  />
-                  <button onClick={() => selectFolder('downloadNetworkSharedPath')} className="action-btn secondary-btn">
-                    Choisir
-                  </button>
-                </div>
-                <small style={{ display: 'block', marginTop: '4px', color: 'var(--text-muted)' }}>
-                  Ce dossier sera exposé sur le réseau local via l&apos;onglet Downloads pour les
-                  autres appareils.
-                </small>
-              </div>
-            </>
-          )}
-        </div>
+        <DownloadsSection
+          settings={settings}
+          setSettings={setSettings}
+          setSuccess={setSuccess}
+          selectLocalPath={() => selectFolder('downloadLocalPath')}
+          selectNetworkPath={() => selectFolder('downloadNetworkSharedPath')}
+        />
 
         <TwitchAccountSection
           twitchStatus={twitchStatus}

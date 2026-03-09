@@ -212,7 +212,6 @@ impl ProxyManager {
         let mut working: Vec<ProxyInfo> = Vec::new();
         while let Some(result) = set.join_next().await {
             if let Ok((url, country, Some(ping))) = result {
-                eprintln!("[adblock] ✓ {url} ({country}) {ping}ms");
                 working.push(ProxyInfo { url, country, ping });
             }
         }

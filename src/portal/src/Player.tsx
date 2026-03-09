@@ -4,7 +4,9 @@ import { ChatMessage, VideoMarker, ExperienceSettings, VOD, LiveStream } from '.
 import { Download as DownloadIcon } from 'lucide-react';
 import DownloadMenu from './components/DownloadMenu';
 
-const HLS_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
+const HLS_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js';
+const HLS_SCRIPT_INTEGRITY =
+  'sha384-RFXF/yUX4X//WL0Y48B7wIEbG+lMyS0sdxlSFf+qR3rJm0MpI8cFx5Dt70+qDK5d';
 
 let hlsScriptPromise: Promise<any> | null = null;
 
@@ -29,6 +31,8 @@ function loadHlsLibrary(): Promise<any> {
 
     const script = document.createElement('script');
     script.src = HLS_SCRIPT_URL;
+    script.integrity = HLS_SCRIPT_INTEGRITY;
+    script.crossOrigin = 'anonymous';
     script.async = true;
     script.onload = () => resolve((globalThis as any).Hls);
     script.onerror = () => reject(new Error('Failed to load hls.js'));
@@ -480,7 +484,13 @@ const InfoEncart = ({
   );
 };
 
-const LiveChat = ({ liveId, chatScrollRef }: { liveId: string, chatScrollRef: React.RefObject<HTMLDivElement | null> }) => {
+const LiveChat = ({
+  liveId,
+  chatScrollRef,
+}: {
+  liveId: string;
+  chatScrollRef: React.RefObject<HTMLDivElement | null>;
+}) => {
   const [messages, setMessages] = useState<any[]>([]);
   const [twitchLinked, setTwitchLinked] = useState(false);
   const [twitchDisplayName, setTwitchDisplayName] = useState('');
@@ -519,44 +529,47 @@ const LiveChat = ({ liveId, chatScrollRef }: { liveId: string, chatScrollRef: Re
       }
     } catch (e) {
       console.error('Failed to send chat message', e);
-      setSendError('Erreur réseau lors de l\'envoi du message.');
+      setSendError("Erreur réseau lors de l'envoi du message.");
     } finally {
       setSending(false);
     }
   };
 
-  const handleWsMessage = useCallback((event: MessageEvent) => {
-    try {
-      const data = JSON.parse(event.data);
-      if (data.type === 'clear_chat') {
-        setMessages([]);
-      } else if (data.type === 'clear_msg') {
-         setMessages(prev => prev.filter(m => m.id !== data.id));
-      } else if (data.id) {
-        setMessages((prev) => {
-          const newMsgs = [...prev, data];
-          // Keep last 150 messages
-          if (newMsgs.length > 150) return newMsgs.slice(-150);
-          return newMsgs;
-        });
+  const handleWsMessage = useCallback(
+    (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'clear_chat') {
+          setMessages([]);
+        } else if (data.type === 'clear_msg') {
+          setMessages((prev) => prev.filter((m) => m.id !== data.id));
+        } else if (data.id) {
+          setMessages((prev) => {
+            const newMsgs = [...prev, data];
+            // Keep last 150 messages
+            if (newMsgs.length > 150) return newMsgs.slice(-150);
+            return newMsgs;
+          });
 
-        // Auto-scroll
-        if (chatScrollRef.current) {
-          const { scrollTop, scrollHeight, clientHeight } = chatScrollRef.current;
-          // Only auto-scroll if user is near the bottom
-          if (scrollHeight - scrollTop - clientHeight < 150) {
-            setTimeout(() => {
-              if (chatScrollRef.current) {
-                chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-              }
-            }, 50);
+          // Auto-scroll
+          if (chatScrollRef.current) {
+            const { scrollTop, scrollHeight, clientHeight } = chatScrollRef.current;
+            // Only auto-scroll if user is near the bottom
+            if (scrollHeight - scrollTop - clientHeight < 150) {
+              setTimeout(() => {
+                if (chatScrollRef.current) {
+                  chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+                }
+              }, 50);
+            }
           }
         }
+      } catch (e) {
+        console.error('Failed to parse chat message', e);
       }
-    } catch (e) {
-      console.error('Failed to parse chat message', e);
-    }
-  }, [chatScrollRef]);
+    },
+    [chatScrollRef]
+  );
 
   useEffect(() => {
     let ws: WebSocket;
@@ -567,8 +580,8 @@ const LiveChat = ({ liveId, chatScrollRef }: { liveId: string, chatScrollRef: Re
       if (disposed) return;
       const protocol = globalThis.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = globalThis.location.host;
-      const wsUrl = `${protocol}//${host}/api/live/${encodeURIComponent(liveId)}/chat/ws`;
-      console.log('Connecting to chat:', wsUrl);
+      const token = sessionStorage.getItem('nsv_token') || '';
+      const wsUrl = `${protocol}//${host}/api/live/${encodeURIComponent(liveId)}/chat/ws?t=${encodeURIComponent(token)}`;
       ws = new WebSocket(wsUrl);
 
       ws.onmessage = handleWsMessage;
@@ -588,28 +601,56 @@ const LiveChat = ({ liveId, chatScrollRef }: { liveId: string, chatScrollRef: Re
       clearTimeout(reconnectTimeout);
       if (ws) ws.close();
     };
-  }, [liveId, chatScrollRef]);
+  }, [liveId, chatScrollRef, handleWsMessage]);
 
   return (
     <>
-      <div style={{ padding: '15px', borderBottom: '1px solid #3a3a3d', fontWeight: 'bold', color: '#efeff1', fontSize: '0.9rem', display: 'flex', justifyContent: 'space-between' }}>
+      <div
+        style={{
+          padding: '15px',
+          borderBottom: '1px solid #3a3a3d',
+          fontWeight: 'bold',
+          color: '#efeff1',
+          fontSize: '0.9rem',
+          display: 'flex',
+          justifyContent: 'space-between',
+        }}
+      >
         <span>LIVE CHAT</span>
         <span style={{ fontSize: '0.75rem', color: '#4ade80' }}>● Connecté</span>
       </div>
-      <div ref={chatScrollRef} style={{ flex: 1, overflowY: 'auto', padding: '10px' }} className="chat-container">
+      <div
+        ref={chatScrollRef}
+        style={{ flex: 1, overflowY: 'auto', padding: '10px' }}
+        className="chat-container"
+      >
         {messages.map((message, idx) => (
-          <div key={message.id || idx} style={{ marginBottom: '8px', fontSize: '0.85rem', lineHeight: '1.4', wordWrap: 'break-word' }}>
+          <div
+            key={message.id || idx}
+            style={{
+              marginBottom: '8px',
+              fontSize: '0.85rem',
+              lineHeight: '1.4',
+              wordWrap: 'break-word',
+            }}
+          >
             <span style={{ fontWeight: 'bold', color: message.color || '#bf94ff' }}>
               {message.displayName}:{' '}
             </span>
-            <span style={{ color: '#efeff1' }}>
-              {message.message}
-            </span>
+            <span style={{ color: '#efeff1' }}>{message.message}</span>
           </div>
         ))}
       </div>
       {twitchLinked && (
-        <div style={{ padding: '8px', borderTop: '1px solid #3a3a3d', display: 'flex', gap: '6px', flexShrink: 0 }}>
+        <div
+          style={{
+            padding: '8px',
+            borderTop: '1px solid #3a3a3d',
+            display: 'flex',
+            gap: '6px',
+            flexShrink: 0,
+          }}
+        >
           <input
             type="text"
             value={chatInput}
@@ -617,7 +658,9 @@ const LiveChat = ({ liveId, chatScrollRef }: { liveId: string, chatScrollRef: Re
               setChatInput(e.target.value);
               if (sendError) setSendError('');
             }}
-            onKeyDown={(e) => { if (e.key === 'Enter') void sendMessage(); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void sendMessage();
+            }}
             placeholder={`Message en tant que ${twitchDisplayName}`}
             maxLength={500}
             style={{
