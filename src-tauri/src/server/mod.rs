@@ -1,3 +1,5 @@
+pub mod auth;
+pub mod chat;
 pub mod download;
 pub mod history;
 pub mod routes;
@@ -53,10 +55,13 @@ impl AppState {
             qrcode,
         };
 
+        let oauth = Arc::new(auth::OAuthStateStore::new());
+
         let api_state = ApiState {
             twitch,
             history,
             download,
+            oauth,
         };
 
         Self {

@@ -197,4 +197,56 @@ impl HistoryStore {
         self.save().await;
         self.data.read().await.subs.clone()
     }
+
+    // ── Twitch token (kept server-side only, never serialised to API) ─────────
+
+    pub async fn get_twitch_token(&self) -> Option<String> {
+        self.data.read().await.twitch_token.clone()
+    }
+
+    pub async fn set_twitch_token(&self, token: Option<String>) {
+        {
+            let mut data = self.data.write().await;
+            data.twitch_token = token;
+        }
+        self.save().await;
+    }
+
+    // ── Twitch linked account ─────────────────────────────────────────────────
+
+    pub async fn update_twitch_account(
+        &self,
+        user_id: String,
+        user_login: String,
+        user_display_name: String,
+        user_avatar: String,
+    ) {
+        {
+            let mut data = self.data.write().await;
+            data.settings.twitch_user_id = Some(user_id);
+            data.settings.twitch_user_login = Some(user_login);
+            data.settings.twitch_user_display_name = Some(user_display_name);
+            data.settings.twitch_user_avatar = Some(user_avatar);
+        }
+        self.save().await;
+    }
+
+    pub async fn clear_twitch_account(&self) {
+        {
+            let mut data = self.data.write().await;
+            data.settings.twitch_user_id = None;
+            data.settings.twitch_user_login = None;
+            data.settings.twitch_user_display_name = None;
+            data.settings.twitch_user_avatar = None;
+        }
+        self.save().await;
+    }
+
+    pub async fn update_import_follows_setting(&self, value: bool) {
+        {
+            let mut data = self.data.write().await;
+            data.settings.twitch_import_follows = value;
+        }
+        self.save().await;
+    }
 }

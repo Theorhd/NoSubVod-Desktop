@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 #[cfg(debug_assertions)]
@@ -17,6 +17,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower::ServiceExt;
 
 use super::{
+    auth::OAuthStateStore,
     download::DownloadManager,
     history::HistoryStore,
     twitch::TwitchService,
@@ -30,6 +31,7 @@ pub struct ApiState {
     pub twitch: Arc<TwitchService>,
     pub history: Arc<HistoryStore>,
     pub download: Arc<DownloadManager>,
+    pub oauth: Arc<OAuthStateStore>,
 }
 
 // ── Error helpers ─────────────────────────────────────────────────────────────
@@ -239,71 +241,6 @@ async fn handle_proxy_segment(
         }
         Err(e) => internal(e),
     }
-}
-
-async fn handle_chat_iframe(Path(login): Path<String>) -> Response {
-    let html = format!(
-        "<!DOCTYPE html>
-<html lang=\"en\">
-<head>
-    <meta charset=\"UTF-8\">
-    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
-    <title>Twitch Chat Proxy</title>
-    <style>
-        body, html {{
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            background-color: #18181b;
-            overflow: hidden;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            color: #efeff1;
-            font-family: Inter, Roobert, \"Helvetica Neue\", Helvetica, Arial, sans-serif;
-            text-align: center;
-        }}
-        .container {{
-            padding: 20px;
-        }}
-        a {{
-            display: inline-block;
-            margin-top: 15px;
-            padding: 10px 15px;
-            background-color: #9146ff;
-            color: white;
-            text-decoration: none;
-            border-radius: 6px;
-            font-weight: bold;
-        }}
-        a:hover {{
-            background-color: #772ce8;
-        }}
-    </style>
-</head>
-<body>
-    <div class=\"container\">
-        <svg width=\"48\" height=\"48\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" style=\"margin-bottom: 10px;\">
-            <path d=\"M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM13 17H11V15H13V17ZM13 13H11V7H13V13Z\" fill=\"#adadb8\"/>
-        </svg>
-        <div style=\"font-weight: bold; font-size: 1.1rem; margin-bottom: 5px;\">Chat protégé par Twitch</div>
-        <div style=\"color: #adadb8; font-size: 0.9rem;\">
-            Sur navigateur mobile/local, le chat de <b>{login}</b> doit s'ouvrir séparément.
-        </div>
-        <a href=\"https://www.twitch.tv/popout/{login}/chat?popout=\" target=\"_blank\" rel=\"noreferrer\">
-            Ouvrir le chat
-        </a>
-    </div>
-</body>
-</html>"
-    );
-
-    Response::builder()
-        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .body(Body::from(html))
-        .unwrap()
-        .into_response()
 }
 
 async fn handle_get_watchlist(State(state): State<ApiState>) -> impl IntoResponse {
@@ -765,6 +702,126 @@ async fn handle_get_active_downloads(State(state): State<ApiState>) -> impl Into
     Json(state.download.get_all_downloads().await)
 }
 
+// ── Live chat send ─────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ChatSendBody {
+    message: String,
+}
+
+async fn handle_live_chat_send(
+    Path(login): Path<String>,
+    State(state): State<ApiState>,
+    Json(body): Json<ChatSendBody>,
+) -> Response {
+    let message = body.message.trim().to_string();
+    if message.is_empty() {
+        return bad_request("Empty message");
+    }
+    if message.len() > 500 {
+        return bad_request("Message too long (max 500 chars)");
+    }
+
+    let settings = state.history.get_settings().await;
+    let token = state.history.get_twitch_token().await;
+
+    let (Some(access_token), Some(sender_id)) = (token, settings.twitch_user_id) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "Not linked to a Twitch account" })),
+        )
+            .into_response();
+    };
+
+    let client = reqwest::Client::new();
+
+    // Resolve login → broadcaster_id
+    let broadcaster_id = match client
+        .get(format!(
+            "https://api.twitch.tv/helix/users?login={}",
+            login
+        ))
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("Client-Id", crate::server::auth::TWITCH_CLIENT_ID.as_str())
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => {
+            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            body.get("data")
+                .and_then(|d| d.as_array())
+                .and_then(|a| a.first())
+                .and_then(|u| u.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        }
+        _ => return internal("Failed to resolve broadcaster ID"),
+    };
+
+    if broadcaster_id.is_empty() {
+        return not_found("Channel not found");
+    }
+
+    // Send via Helix chat messages API (requires user:write:chat scope)
+    match client
+        .post("https://api.twitch.tv/helix/chat/messages")
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("Client-Id", crate::server::auth::TWITCH_CLIENT_ID.as_str())
+        .json(&serde_json::json!({
+            "broadcaster_id": broadcaster_id,
+            "sender_id": sender_id,
+            "message": message,
+        }))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => {
+            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            let result = body
+                .get("data")
+                .and_then(|d| d.as_array())
+                .and_then(|a| a.first())
+                .cloned()
+                .unwrap_or_default();
+
+            let is_sent = result
+                .get("is_sent")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+
+            if is_sent {
+                Json(serde_json::json!({ "ok": true })).into_response()
+            } else {
+                let drop_code = result
+                    .get("drop_reason")
+                    .and_then(|d| d.get("code"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let drop_message = result
+                    .get("drop_reason")
+                    .and_then(|d| d.get("message"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Twitch a refusé le message.");
+
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!("Message non envoyé par Twitch ({drop_code}): {drop_message}")
+                    })),
+                )
+                    .into_response()
+            }
+        }
+        Ok(r) => {
+            let status = r.status();
+            let body = r.text().await.unwrap_or_default();
+            (status, Json(serde_json::json!({ "error": body }))).into_response()
+        }
+        Err(e) => internal(e),
+    }
+}
+
 async fn handle_download_hls(
     Path(file_name): Path<String>,
     State(state): State<ApiState>,
@@ -877,7 +934,7 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         .route("/vod/:vod_id/info", get(handle_vod_info))
         .route("/vod/:vod_id/master.m3u8", get(handle_vod_master))
         .route("/live/:login/master.m3u8", get(handle_live_master))
-        .route("/live/:login/chat.html", get(handle_chat_iframe))
+        .route("/live/:login/chat/ws", get(crate::server::chat::handle_chat_ws))
         .route("/stream/variant.m3u8", get(handle_proxy_variant))
         .route("/stream/variant.ts", get(handle_proxy_segment))
         // Shared Downloads
@@ -908,6 +965,14 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         .route("/live/search", get(handle_live_search))
         .route("/live/category", get(handle_live_category))
         .route("/live/status", get(handle_live_status))
+        .route("/live/:login/chat/send", post(handle_live_chat_send))
+        // Twitch auth
+        .route("/auth/twitch/start", get(crate::server::auth::handle_auth_start))
+        .route("/auth/twitch/callback", get(crate::server::auth::handle_auth_callback))
+        .route("/auth/twitch/status", get(crate::server::auth::handle_auth_status))
+        .route("/auth/twitch", delete(crate::server::auth::handle_auth_unlink))
+        .route("/auth/twitch/import-follows", post(crate::server::auth::handle_auth_import_follows))
+        .route("/auth/twitch/import-follows-setting", put(crate::server::auth::handle_auth_set_import_follows))
         // History
         .route("/history", get(handle_get_history).post(handle_post_history))
         .route("/history/list", get(handle_get_history_list))

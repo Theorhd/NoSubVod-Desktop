@@ -84,6 +84,17 @@ export interface ExperienceSettings {
   preferredVideoQuality?: string;
   downloadLocalPath?: string;
   downloadNetworkSharedPath?: string;
+  twitchImportFollows?: boolean;
+}
+
+export interface TwitchStatus {
+  linked: boolean;
+  clientConfigured: boolean;
+  userId?: string;
+  userLogin?: string;
+  userDisplayName?: string;
+  userAvatar?: string;
+  importFollows?: boolean;
 }
 
 export interface ProxyInfo {
