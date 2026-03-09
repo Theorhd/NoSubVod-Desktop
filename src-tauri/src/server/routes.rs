@@ -765,6 +765,48 @@ async fn handle_get_active_downloads(State(state): State<ApiState>) -> impl Into
     Json(state.download.get_all_downloads().await)
 }
 
+async fn handle_download_hls(
+    Path(file_name): Path<String>,
+    State(state): State<ApiState>,
+) -> Response {
+    if file_name.contains('/') || file_name.contains('\\') || file_name.contains("..") {
+        return bad_request("Invalid file name");
+    }
+
+    let settings = state.history.get_settings().await;
+    let Some(base_path) = settings.download_local_path.or(settings.download_network_shared_path) else {
+        return not_found("Download path is not configured");
+    };
+
+    let full_path = std::path::PathBuf::from(&base_path).join(&file_name);
+    let file_size = match tokio::fs::metadata(&full_path).await {
+        Ok(m) if m.is_file() => m.len(),
+        _ => return not_found("File not found"),
+    };
+
+    // Build a byte-range HLS playlist so hls.js can load the file progressively.
+    const CHUNK_BYTES: u64 = 10 * 1024 * 1024; // 10 MB per segment
+    const EST_SECS: f64 = 10.0;
+    let num_chunks = (file_size + CHUNK_BYTES - 1) / CHUNK_BYTES;
+
+    let mut playlist = format!(
+        "#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-TARGETDURATION:{}\n#EXT-X-MEDIA-SEQUENCE:0\n",
+        EST_SECS.ceil() as u64
+    );
+
+    let segment_url = format!("/api/shared-downloads/{file_name}");
+    for i in 0..num_chunks {
+        let offset = i * CHUNK_BYTES;
+        let length = std::cmp::min(CHUNK_BYTES, file_size - offset);
+        playlist.push_str(&format!(
+            "#EXTINF:{EST_SECS:.3},\n#EXT-X-BYTERANGE:{length}@{offset}\n{segment_url}\n"
+        ));
+    }
+    playlist.push_str("#EXT-X-ENDLIST\n");
+
+    m3u8_response(playlist)
+}
+
 #[derive(Deserialize)]
 struct DownloadRequest {
     #[serde(rename = "vodId")]
@@ -841,6 +883,7 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         // Shared Downloads
         .route("/downloads", get(handle_get_downloads))
         .route("/downloads/active", get(handle_get_active_downloads))
+        .route("/downloads/hls/:file_name", get(handle_download_hls))
         .route("/shared-downloads/*path", get(handle_shared_downloads))
         .route("/download/start", axum::routing::post(handle_start_download))
         .route("/system/dialog/folder", get(handle_system_dialog_folder))

@@ -14,8 +14,8 @@ const Downloads = lazy(() => import('./Downloads'));
 
 const navItems = [
   { path: '/trends', label: 'Trends', Icon: TrendingUp },
-  { path: '/', label: 'Home', Icon: HomeIcon },
   { path: '/live', label: 'Live', Icon: Radio },
+  { path: '/', label: 'Home', Icon: HomeIcon, isHome: true },
   { path: '/search', label: 'Search', Icon: SearchIcon },
   { path: '/downloads', label: 'Downloads', Icon: Download },
 ];
@@ -37,12 +37,12 @@ function BottomNav() {
         return (
           <button
             key={item.path}
-            className={`nav-btn ${isActive ? 'active' : ''}`}
+            className={`nav-btn ${isActive ? 'active' : ''} ${item.isHome ? 'nav-home-btn' : ''}`}
             onClick={() => navigate(item.path)}
             type="button"
           >
             <span className="nav-icon">
-              <item.Icon size={20} />
+              <item.Icon size={item.isHome ? 24 : 20} />
             </span>
             <span className="nav-label">{item.label}</span>
           </button>
