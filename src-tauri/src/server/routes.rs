@@ -16,6 +16,7 @@ use serde_json::Value;
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tower::ServiceExt;
+use tauri_plugin_autostart::ManagerExt;
 
 use super::{
     auth::OAuthStateStore,
@@ -35,6 +36,7 @@ pub struct ApiState {
     pub oauth: Arc<OAuthStateStore>,
     /// Per-session token required for API access (prevents unauthorized LAN access).
     pub server_token: String,
+    pub app_handle: Option<tauri::AppHandle>,
 }
 
 // ── Authentication middleware ──────────────────────────────────────────────────
@@ -507,12 +509,23 @@ struct SettingsPatch {
     download_local_path: Option<Option<String>>,
     #[serde(rename = "downloadNetworkSharedPath")]
     download_network_shared_path: Option<Option<String>>,
+    #[serde(rename = "launchAtLogin")]
+    launch_at_login: Option<bool>,
 }
 
 async fn handle_update_settings(
     State(state): State<ApiState>,
     Json(patch): Json<SettingsPatch>,
 ) -> Response {
+    if let (Some(handle), Some(launch)) = (state.app_handle.as_ref(), patch.launch_at_login) {
+        let manager = handle.autolaunch();
+        if launch {
+            let _ = manager.enable();
+        } else {
+            let _ = manager.disable();
+        }
+    }
+
     Json(
         state
             .history
@@ -525,6 +538,7 @@ async fn handle_update_settings(
                 patch.preferred_video_quality,
                 patch.download_local_path,
                 patch.download_network_shared_path,
+                patch.launch_at_login,
             )
             .await,
     )
