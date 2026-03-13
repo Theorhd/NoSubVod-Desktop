@@ -21,9 +21,9 @@ use super::types::SubEntry;
 // 3. Required scopes: user:read:follows user:write:chat
 // 4. Set TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET in src-tauri/.env (see .env.example)
 pub static TWITCH_CLIENT_ID: Lazy<String> =
-    Lazy::new(|| std::env::var("TWITCH_CLIENT_ID").unwrap_or_default());
+    Lazy::new(|| std::env::var("TWITCH_CLIENT_ID").unwrap_or_else(|_| option_env!("TWITCH_CLIENT_ID").unwrap_or_default().to_string()));
 pub static TWITCH_CLIENT_SECRET: Lazy<String> =
-    Lazy::new(|| std::env::var("TWITCH_CLIENT_SECRET").unwrap_or_default());
+    Lazy::new(|| std::env::var("TWITCH_CLIENT_SECRET").unwrap_or_else(|_| option_env!("TWITCH_CLIENT_SECRET").unwrap_or_default().to_string()));
 
 const REDIRECT_URI: &str = "http://localhost:23455/api/auth/twitch/callback";
 const SCOPES: &str = "user:read:follows user:write:chat";
