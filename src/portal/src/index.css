@@ -30,6 +30,34 @@
   --plyr-color-main: hsl(198, 100%, 50%);
 }
 
+/* === Vidstack Mobile Overrides for a YouTube-like feel === */
+@media (max-width: 768px) {
+  /* Hide the chapter title in the control bar to free up space for buttons */
+  .vds-video-layout .vds-chapter-title {
+    display: none !important;
+  }
+  
+  /* Hide the bullet/divider before the chapter title */
+  .vds-video-layout .vds-time-divider {
+    display: none !important;
+  }
+
+  /* Ensure the timecode never shrinks or wraps */
+  .vds-video-layout .vds-time-group {
+    flex-shrink: 0;
+    max-width: max-content;
+  }
+
+  /* Truncate the main video title (usually displayed at top left) */
+  .vds-video-layout .vds-title {
+    max-width: 60vw;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
