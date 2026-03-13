@@ -65,7 +65,7 @@ export default function Home() {
             setSubs((await subsRes.json()) as SubEntry[]);
           }
         } else {
-          const saved = sessionStorage.getItem('nsv_subs');
+          const saved = localStorage.getItem('nsv_subs');
           setSubs(saved ? (JSON.parse(saved) as SubEntry[]) : []);
         }
       } catch (error) {
@@ -103,7 +103,7 @@ export default function Home() {
 
   const saveSubsLocal = (newSubs: SubEntry[]) => {
     setSubs(newSubs);
-    sessionStorage.setItem('nsv_subs', JSON.stringify(newSubs));
+    localStorage.setItem('nsv_subs', JSON.stringify(newSubs));
   };
 
   const saveSubServer = async (entry: SubEntry) => {

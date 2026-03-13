@@ -852,15 +852,41 @@ async fn handle_shared_downloads(
     let Some(base_path) = settings.download_local_path.or(settings.download_network_shared_path) else {
         return not_found("Download path is not configured");
     };
-    
-    let full_path = std::path::PathBuf::from(base_path).join(&file_path);
-    
-    // Prevent directory traversal
-    if full_path.components().any(|c| c.as_os_str() == "..") {
+
+    // Treat the configured download directory as the base path.
+    let base_dir = std::path::Path::new(&base_path);
+
+    // Reject absolute paths in the user-supplied segment to avoid replacing the base.
+    let requested_path = std::path::Path::new(&file_path);
+    if requested_path.is_absolute() {
         return bad_request("Invalid path");
     }
 
-    match ServeFile::new(&full_path).oneshot(req).await {
+    // Resolve the base directory to an absolute, canonical path.
+    let base_dir_canon = match std::fs::canonicalize(base_dir) {
+        Ok(p) => p,
+        Err(_) => {
+            // Misconfigured or missing base download directory.
+            return not_found("Download path is not configured");
+        }
+    };
+
+    // Join the base directory with the requested relative path, then canonicalize.
+    let full_path = base_dir.join(requested_path);
+    let full_path_canon = match std::fs::canonicalize(&full_path) {
+        Ok(p) => p,
+        Err(_) => {
+            // The requested file does not exist or is not accessible.
+            return not_found("File not found");
+        }
+    };
+
+    // Ensure the resolved path is still within the configured download directory.
+    if !full_path_canon.starts_with(&base_dir_canon) {
+        return bad_request("Invalid path");
+    }
+
+    match ServeFile::new(&full_path_canon).oneshot(req).await {
         Ok(res) => res.into_response(),
         Err(_) => not_found("File not found"),
     }

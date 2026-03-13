@@ -19,6 +19,8 @@ interface ActiveDownload {
   total_duration: number;
 }
 
+const DEBUG_DOWNLOADS = false;
+
 export default function Downloads() {
   const [files, setFiles] = useState<DownloadedFile[]>([]);
   const [activeDownloads, setActiveDownloads] = useState<ActiveDownload[]>([]);
@@ -33,17 +35,21 @@ export default function Downloads() {
         fetch('/api/downloads/active'),
       ]);
 
-      console.log('[Downloads] fetch /api/downloads status:', filesRes.status);
-      console.log('[Downloads] fetch /api/downloads/active status:', activeRes.status);
+      if (DEBUG_DOWNLOADS) {
+        console.log('[Downloads] fetch /api/downloads status:', filesRes.status);
+        console.log('[Downloads] fetch /api/downloads/active status:', activeRes.status);
+      }
 
       if (filesRes.ok) {
         const data = await filesRes.json();
-        console.log(
-          '[Downloads] files received:',
-          data.length,
-          'files',
-          data.map((f: any) => ({ name: f.name, size: f.size, url: f.url }))
-        );
+        if (DEBUG_DOWNLOADS) {
+          console.log(
+            '[Downloads] files received:',
+            data.length,
+            'files',
+            data.map((f: any) => ({ name: f.name, size: f.size, url: f.url }))
+          );
+        }
         setFiles(data);
       } else {
         console.error(
@@ -95,7 +101,9 @@ export default function Downloads() {
     else if (url.startsWith('/shared-downloads/')) resolved = `/api${url}`;
     else if (url.startsWith('/')) resolved = `/api${url}`;
     else resolved = `/api/${url}`;
-    console.log('[Downloads] resolveDownloadUrl:', url, '->', resolved);
+    if (DEBUG_DOWNLOADS) {
+      console.log('[Downloads] resolveDownloadUrl:', url, '->', resolved);
+    }
     return resolved;
   };
 

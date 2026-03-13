@@ -7,6 +7,10 @@ use tokio::sync::RwLock;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use sha2::{Digest, Sha256};
+use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::{Aes256Gcm, Key, Nonce};
+use rand::rngs::OsRng;
+use rand::RngCore;
 
 use super::types::{
     ExperienceSettings, HistoryEntry, PersistedData, SubEntry, TrustedDevice, WatchlistEntry,
@@ -14,8 +18,8 @@ use super::types::{
 
 // ── Token encryption helpers ───────────────────────────────────────────────────
 // Uses a machine-specific key derived from the data dir path + a salt.
-// Not cryptographically unbreakable, but prevents trivial plaintext token theft
-// from the JSON file by other apps or casual filesystem access.
+// Uses authenticated encryption (AES-256-GCM) with a per-token random nonce.
+// This aims to protect tokens at rest against offline inspection.
 
 fn derive_key(data_dir: &std::path::Path) -> Vec<u8> {
     let mut hasher = Sha256::new();
@@ -29,23 +33,43 @@ fn derive_key(data_dir: &std::path::Path) -> Vec<u8> {
 }
 
 fn encrypt_token(token: &str, key: &[u8]) -> String {
-    let encrypted: Vec<u8> = token
-        .as_bytes()
-        .iter()
-        .enumerate()
-        .map(|(i, b)| b ^ key[i % key.len()])
-        .collect();
-    B64.encode(&encrypted)
+    // Key must be 32 bytes for AES-256-GCM; derive_key guarantees this.
+    let cipher_key = Key::<Aes256Gcm>::from_slice(key);
+    let cipher = Aes256Gcm::new(cipher_key);
+
+    // Generate a random 96-bit (12-byte) nonce for this token.
+    let mut nonce_bytes = [0u8; 12];
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+
+    let ciphertext = cipher
+        .encrypt(nonce, token.as_bytes())
+        .expect("encryption failure");
+
+    // Store nonce || ciphertext, base64-encoded.
+    let mut out = Vec::with_capacity(nonce_bytes.len() + ciphertext.len());
+    out.extend_from_slice(&nonce_bytes);
+    out.extend_from_slice(&ciphertext);
+    
+    B64.encode(&out)
 }
 
 fn decrypt_token(encoded: &str, key: &[u8]) -> Option<String> {
     let data = B64.decode(encoded).ok()?;
-    let decrypted: Vec<u8> = data
-        .iter()
-        .enumerate()
-        .map(|(i, b)| b ^ key[i % key.len()])
-        .collect();
-    String::from_utf8(decrypted).ok()
+    
+    // Must at least contain the 12-byte nonce.
+    if data.len() < 12 {
+        return None;
+    }
+    
+    let (nonce_bytes, ciphertext) = data.split_at(12);
+    let nonce = Nonce::from_slice(nonce_bytes);
+    
+    let cipher_key = Key::<Aes256Gcm>::from_slice(key);
+    let cipher = Aes256Gcm::new(cipher_key);
+    
+    let plaintext = cipher.decrypt(nonce, ciphertext).ok()?;
+    String::from_utf8(plaintext).ok()
 }
 
 // ── HistoryStore – wraps all persisted state ───────────────────────────────────

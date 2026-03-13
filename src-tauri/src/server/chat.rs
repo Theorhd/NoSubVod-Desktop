@@ -59,8 +59,8 @@ async fn handle_socket(socket: WebSocket, login: String) {
 
                     let out = serde_json::json!({
                         "id": msg.message_id,
-                        "sender": msg.sender.name,
-                        "displayName": msg.sender.login,
+                        "sender": msg.sender.login,
+                        "displayName": msg.sender.name,
                         "color": color_str,
                         "message": msg.message_text,
                         "badges": badges_list,
