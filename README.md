@@ -2,6 +2,19 @@
 
 NoSubVOD Desktop est une application locale pour regarder des VODs et des lives Twitch depuis n’importe quel appareil du réseau local (mobile, tablette, TV, PC), avec historique, watchlist et portail web intégré.
 
+## 🆕 v0.3.0 — Téléchargements de VOD & Clips, Connexion Twitch & Améliorations UX
+
+La version 0.3.0 vient finaliser une étape critique du projet avec le support des téléchargements (VOD entières ou extraits "clips") en arrière-plan et la possibilité très attendue de se connecter avec son propre compte Twitch pour chatter sur les lives.
+
+### Points clés v0.3.0
+
+- **Système de Téléchargement** : Module de traitement asynchrone pour télécharger n'importe quelle VOD à la qualité souhaitée depuis le player.
+- **Support des Clips (Download Mode)** : Sélectionnez manuellement un point de départ et de fin sur une VOD pour créer et enregistrer un extrait exclusif sur votre machine (sans perte ni encodage lourd).
+- **Authentification Twitch** : Associez le logiciel à votre compte Twitch pour envoyer vos propres messages dans les chats en Live, directement depuis l'interface Vidstack de l'application !
+- **Navigation dans les Chapitres (Markers)** : Intégration d'un panneau déroulant affichant la liste des chapitres de la VOD, cliquable pour un "seek" instantané.
+- **Réparations Chat VOD** : Fix du relai du chat, affichant correctement les messages dans l'historique d'une VOD.
+- **Qualité du code** : Passage complet des audits de linter Rust (Clippy) et d'audit de vulnérabilité (Cargo Audit).
+
 ## 🆕 v0.2.2 — Contrôle Qualité, Raccourcis & Chat Amélioré
 
 La version 0.2.2 transforme l'expérience de visionnage avec un contrôle total sur la qualité vidéo, des raccourcis clavier et une intégration du chat plus robuste.
