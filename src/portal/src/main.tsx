@@ -2,7 +2,9 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
-
+import 'vidstack/styles/base.css';
+import 'vidstack/styles/defaults.css';
+import 'vidstack/styles/community-skin/video.css';
 function createDeviceId(): string {
   const api = globalThis.crypto as Crypto | undefined;
   if (api?.randomUUID) {

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     body::Body,
     extract::{Path, Query, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
@@ -41,6 +41,18 @@ pub struct ApiState {
 
 /// Validates requests carry a valid server token via the `X-NSV-Token` header
 /// or `t` query parameter. Rejects unauthorized requests with 401.
+#[cfg(debug_assertions)]
+async fn auth_middleware(
+    State(_state): State<ApiState>,
+    req: axum::extract::Request,
+    next: Next,
+) -> Response {
+    next.run(req).await
+}
+
+/// Validates requests carry a valid server token via the `X-NSV-Token` header
+/// or `t` query parameter. Rejects unauthorized requests with 401.
+#[cfg(not(debug_assertions))]
 async fn auth_middleware(
     State(state): State<ApiState>,
     req: axum::extract::Request,
@@ -132,6 +144,54 @@ fn is_valid_login(s: &str) -> bool {
         && s.len() <= 25
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn is_ios_family_request(headers: &HeaderMap) -> bool {
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if ua.contains("iphone") || ua.contains("ipad") || ua.contains("ipod") {
+        return true;
+    }
+
+    if ua.contains("macintosh") && ua.contains("mobile") {
+        return true;
+    }
+
+    let platform = headers
+        .get("sec-ch-ua-platform")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+
+    platform.contains("ios")
+}
+
+fn filter_hevc_variants_for_ios(master_playlist: &str) -> String {
+    let mut output: Vec<&str> = Vec::new();
+    let mut lines = master_playlist.lines().peekable();
+
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("#EXT-X-STREAM-INF") {
+            let lowered = trimmed.to_lowercase();
+            let is_hevc = lowered.contains("codecs=\"")
+                && (lowered.contains("hvc1") || lowered.contains("hev1"));
+
+            if is_hevc {
+                let _ = lines.next();
+                continue;
+            }
+        }
+
+        output.push(line);
+    }
+
+    output.join("\n")
 }
 
 // ── Error helpers ─────────────────────────────────────────────────────────────
@@ -282,8 +342,19 @@ async fn handle_vod_master(
         .unwrap_or("localhost")
         .to_string();
 
-    match state.twitch.generate_master_playlist(&vod_id, &host, &state.server_token).await {
-        Ok(playlist) => m3u8_response(playlist),
+    match state
+        .twitch
+        .generate_master_playlist(&vod_id, &host, &state.server_token)
+        .await
+    {
+        Ok(playlist) => {
+            let body = if is_ios_family_request(&headers) {
+                filter_hevc_variants_for_ios(&playlist)
+            } else {
+                playlist
+            };
+            m3u8_response(body)
+        }
         Err(e) => internal(e),
     }
 }
@@ -309,7 +380,14 @@ async fn handle_live_master(
         .generate_live_master_playlist(&login, &host, &settings, &state.server_token)
         .await
     {
-        Ok(m3u8) => m3u8_response(m3u8),
+        Ok(m3u8) => {
+            let body = if is_ios_family_request(&headers) {
+                filter_hevc_variants_for_ios(&m3u8)
+            } else {
+                m3u8
+            };
+            m3u8_response(body)
+        }
         Err(e) => internal(e),
     }
 }

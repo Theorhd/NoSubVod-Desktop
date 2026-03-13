@@ -442,7 +442,9 @@ const TrustedDevicesSection = ({
                 <div style={{ fontWeight: 600, color: 'var(--text)', overflowWrap: 'anywhere' }}>
                   {device.deviceId}
                 </div>
-                <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <label
+                  style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}
+                >
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Trusted</span>
                   <input
                     type="checkbox"

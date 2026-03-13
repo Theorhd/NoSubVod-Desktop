@@ -290,6 +290,75 @@ input:focus {
   box-shadow: 0 0 0 3px var(--ring);
 }
 
+.nsv-download-player {
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #000;
+  max-height: 60vh;
+  --media-brand: #8f57ff;
+  --media-focus-ring-color: rgba(143, 87, 255, 0.45);
+  --media-control-bg: rgba(9, 10, 15, 0.92);
+  --media-control-hover-bg: rgba(143, 87, 255, 0.2);
+  --media-control-color: #f7f8ff;
+}
+
+.nsv-download-player :where([data-media-player]) {
+  border-radius: inherit;
+}
+
+.nsv-main-player {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  --media-brand: #8f57ff;
+  --media-focus-ring-color: rgba(143, 87, 255, 0.5);
+  --media-tooltip-bg-color: rgba(8, 10, 20, 0.88);
+  --media-tooltip-border: 1px solid rgba(143, 87, 255, 0.35);
+  --media-menu-bg: rgba(8, 12, 24, 0.95);
+  --media-menu-border: 1px solid rgba(143, 87, 255, 0.24);
+  --media-slider-track-bg: rgba(255, 255, 255, 0.18);
+  --media-slider-track-fill-bg: linear-gradient(90deg, #8f57ff, #4f9cff);
+  --media-control-bg: rgba(13, 15, 28, 0.92);
+  --media-control-hover-bg: rgba(143, 87, 255, 0.2);
+  --media-control-color: #f7f8ff;
+  border-radius: 0;
+  animation: player-fade-in 260ms ease;
+}
+
+.nsv-main-player::part(control-bar),
+.nsv-download-player::part(control-bar) {
+  backdrop-filter: blur(9px);
+}
+
+.nsv-main-player::part(time-slider),
+.nsv-download-player::part(time-slider) {
+  height: 5px;
+}
+
+.nsv-main-player::part(menu-items),
+.nsv-download-player::part(menu-items) {
+  border-radius: 10px;
+}
+
+@keyframes player-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 900px) {
+  .nsv-main-player {
+    --media-touch-target-size: 40px;
+  }
+}
+
 .action-btn,
 .ghost-btn {
   border-radius: 10px;
@@ -849,7 +918,9 @@ select.settings-select {
   background-position:
     calc(100% - 18px) calc(50% - 2px),
     calc(100% - 12px) calc(50% - 2px);
-  background-size: 6px 6px, 6px 6px;
+  background-size:
+    6px 6px,
+    6px 6px;
   background-repeat: no-repeat;
   padding-right: 34px;
 }

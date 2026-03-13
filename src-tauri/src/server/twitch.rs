@@ -603,8 +603,11 @@ fn validate_variant_target_url(url: &str) -> Result<String, String> {
     let is_vod_path = path.starts_with("/vod/");
     let is_chunked = path.starts_with("/chunked/");
     let is_m3u8 = path.ends_with(".m3u8");
+    let is_media_segment = [".ts", ".m4s", ".mp4", ".aac", ".mp3", ".vtt", ".webvtt", ".key"]
+        .iter()
+        .any(|ext| path.ends_with(ext));
 
-    if !is_live_hls && !is_vod_path && !is_chunked && !is_m3u8 {
+    if !is_live_hls && !is_vod_path && !is_chunked && !is_m3u8 && !is_media_segment {
         return Err("Disallowed target path".to_string());
     }
 
@@ -655,6 +658,53 @@ fn urlencoding_simple(s: &str) -> String {
         }
     }
     out
+}
+
+fn rewrite_tag_uri_with_proxy(line: &str, base_url: &str, variant_cache: &TimedCache<String>, token: &str) -> String {
+    if !line.contains("URI=\"") {
+        return line.to_string();
+    }
+
+    let mut result = String::new();
+    let mut cursor = 0usize;
+
+    while cursor < line.len() {
+        if let Some(start_rel) = line[cursor..].find("URI=\"") {
+            let start = cursor + start_rel;
+            let value_start = start + 5;
+
+            result.push_str(&line[cursor..value_start]);
+
+            if let Some(end_rel) = line[value_start..].find('"') {
+                let value_end = value_start + end_rel;
+                let uri = &line[value_start..value_end];
+
+                let abs_url = if uri.starts_with("http://") || uri.starts_with("https://") {
+                    uri.to_string()
+                } else {
+                    format!("{base_url}{uri}")
+                };
+
+                let rewritten = match register_variant_proxy_target(variant_cache, &abs_url) {
+                    Ok(proxy_id) => format!(
+                        "/api/stream/variant.ts?id={}&t={}",
+                        urlencoding_simple(&proxy_id),
+                        token
+                    ),
+                    Err(_) => abs_url,
+                };
+
+                result.push_str(&rewritten);
+                cursor = value_end;
+                continue;
+            }
+        }
+
+        result.push_str(&line[cursor..]);
+        break;
+    }
+
+    result
 }
 
 // ── Quality check helper ──────────────────────────────────────────────────────
@@ -2374,9 +2424,14 @@ impl TwitchService {
             .map(|line| {
                 let l = line.trim_end_matches('\r');
                 if l.is_empty() || l.starts_with('#') {
-                    // Rewrite URI="..." inside tags if relative
-                    if l.contains("URI=\"") && !l.contains("URI=\"http") {
-                        return l.replace("URI=\"", &format!("URI=\"{base_url}"));
+                    // Rewrite URI="..." inside HLS tags through local proxy to avoid browser CORS hits.
+                    if l.contains("URI=\"") {
+                        return rewrite_tag_uri_with_proxy(
+                            l,
+                            &base_url,
+                            &self.variant_cache,
+                            token,
+                        );
                     }
                     return l.to_string();
                 }

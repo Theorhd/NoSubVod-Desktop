@@ -1,131 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Download as DownloadIcon, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
 import { VOD } from '../../shared/types';
-
-const HLS_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
-
-let hlsScriptPromise: Promise<any> | null = null;
-
-function loadHlsLibrary(): Promise<any> {
-  const Hls = (globalThis as any).Hls;
-  if (Hls) return Promise.resolve(Hls);
-
-  if (hlsScriptPromise) return hlsScriptPromise;
-
-  hlsScriptPromise = new Promise((resolve, reject) => {
-    const existingScript = document.querySelector(`script[src="${HLS_SCRIPT_URL}"]`);
-
-    if (existingScript) {
-      existingScript.addEventListener('load', () => resolve((globalThis as any).Hls), {
-        once: true,
-      });
-      existingScript.addEventListener('error', () => reject(new Error('Failed to load hls.js')), {
-        once: true,
-      });
-      return;
-    }
-
-    const script = document.createElement('script');
-    script.src = HLS_SCRIPT_URL;
-    script.async = true;
-    script.onload = () => resolve((globalThis as any).Hls);
-    script.onerror = () => reject(new Error('Failed to load hls.js'));
-    document.body.appendChild(script);
-  });
-
-  return hlsScriptPromise;
-}
-
-function bindHlsEvents(
-  hlsInstance: any,
-  Hls: any,
-  video: HTMLVideoElement,
-  setPlaybackError: (err: string | null) => void
-) {
-  hlsInstance.on(Hls.Events.MANIFEST_PARSED, (_event: any, data: any) => {
-    console.log('[Downloads][hls] MANIFEST_PARSED', { levels: data?.levels?.length });
-    void video.play().catch((e: any) => {
-      console.warn('[Downloads] autoplay blocked:', e?.message);
-    });
-  });
-  hlsInstance.on(Hls.Events.LEVEL_LOADED, (_event: any, data: any) => {
-    console.log('[Downloads][hls] LEVEL_LOADED', {
-      fragments: data?.details?.fragments?.length,
-      totalduration: data?.details?.totalduration,
-    });
-  });
-  hlsInstance.on(Hls.Events.FRAG_LOADING, (_event: any, data: any) => {
-    console.log('[Downloads][hls] FRAG_LOADING', { url: data?.frag?.url?.substring(0, 120) });
-  });
-  hlsInstance.on(Hls.Events.FRAG_LOADED, (_event: any, data: any) => {
-    console.log('[Downloads][hls] FRAG_LOADED', {
-      bytes: data?.frag?.stats?.total,
-      url: data?.frag?.url?.substring(0, 120),
-    });
-  });
-  hlsInstance.on(Hls.Events.BUFFER_APPENDING, () => {
-    console.log('[Downloads][hls] BUFFER_APPENDING');
-  });
-  hlsInstance.on(Hls.Events.BUFFER_APPENDED, () => {
-    console.log('[Downloads][hls] BUFFER_APPENDED');
-  });
-  hlsInstance.on(Hls.Events.ERROR, (_event: any, data: any) => {
-    console.error('[Downloads][hls] ERROR', {
-      type: data?.type,
-      details: data?.details,
-      fatal: data?.fatal,
-      reason: data?.reason,
-      response: data?.response?.code,
-    });
-    if (!data?.fatal) return;
-    setPlaybackError('Lecture impossible: format non supporte dans le lecteur integre.');
-  });
-}
-
-function bindVideoEvents(video: HTMLVideoElement) {
-  const onLoadStart = () => console.log('[Downloads][video] loadstart');
-  const onLoadedMetadata = () =>
-    console.log('[Downloads][video] loadedmetadata', {
-      duration: video.duration,
-      videoWidth: video.videoWidth,
-      videoHeight: video.videoHeight,
-    });
-  const onLoadedData = () => console.log('[Downloads][video] loadeddata');
-  const onCanPlay = () => console.log('[Downloads][video] canplay');
-  const onCanPlayThrough = () => console.log('[Downloads][video] canplaythrough');
-  const onPlaying = () => console.log('[Downloads][video] playing');
-  const onWaiting = () => console.log('[Downloads][video] waiting (buffering)');
-  const onStalled = () => console.log('[Downloads][video] stalled');
-  const onSuspend = () => console.log('[Downloads][video] suspend');
-  const onError = () => {
-    const err = video.error;
-    console.error('[Downloads][video] error event', { code: err?.code, message: err?.message });
-  };
-
-  video.addEventListener('loadstart', onLoadStart);
-  video.addEventListener('loadedmetadata', onLoadedMetadata);
-  video.addEventListener('loadeddata', onLoadedData);
-  video.addEventListener('canplay', onCanPlay);
-  video.addEventListener('canplaythrough', onCanPlayThrough);
-  video.addEventListener('playing', onPlaying);
-  video.addEventListener('waiting', onWaiting);
-  video.addEventListener('stalled', onStalled);
-  video.addEventListener('suspend', onSuspend);
-  video.addEventListener('error', onError);
-
-  return () => {
-    video.removeEventListener('loadstart', onLoadStart);
-    video.removeEventListener('loadedmetadata', onLoadedMetadata);
-    video.removeEventListener('loadeddata', onLoadedData);
-    video.removeEventListener('canplay', onCanPlay);
-    video.removeEventListener('canplaythrough', onCanPlayThrough);
-    video.removeEventListener('playing', onPlaying);
-    video.removeEventListener('waiting', onWaiting);
-    video.removeEventListener('stalled', onStalled);
-    video.removeEventListener('suspend', onSuspend);
-    video.removeEventListener('error', onError);
-  };
-}
+import NSVPlayer, { NSVMediaSource } from './components/NSVPlayer';
 
 interface DownloadedFile {
   name: string;
@@ -149,7 +25,6 @@ export default function Downloads() {
   const [loading, setLoading] = useState(true);
   const [playingFile, setPlayingFile] = useState<DownloadedFile | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const fetchDownloads = async () => {
     try {
@@ -228,113 +103,35 @@ export default function Downloads() {
 
   useEffect(() => {
     setPlaybackError(null);
-
-    const video = videoRef.current;
-    console.log('[Downloads] playback useEffect triggered', {
-      hasVideo: !!video,
-      playingFile: playingFile
-        ? { name: playingFile.name, url: playingFile.url, size: playingFile.size }
-        : null,
-      isTs: isTsFile(playingFile),
-    });
-
-    if (!video || !playingFile) {
-      console.log('[Downloads] no video element or no playingFile, skipping');
-      return;
-    }
-
-    // Attach diagnostic video element listeners
-    const cleanupVideoListeners = bindVideoEvents(video);
-
-    if (!isTsFile(playingFile)) {
-      const directUrl = resolveDownloadUrl(playingFile.url);
-      console.log('[Downloads] non-TS file, using direct src:', directUrl);
-
-      // Probe the URL first
-      fetch(directUrl, { method: 'HEAD' })
-        .then((r) => {
-          console.log(
-            '[Downloads] HEAD probe',
-            directUrl,
-            ':',
-            r.status,
-            r.headers.get('content-type'),
-            'content-length:',
-            r.headers.get('content-length')
-          );
-        })
-        .catch((e) => console.error('[Downloads] HEAD probe failed', directUrl, e));
-
-      return cleanupVideoListeners;
-    }
-
-    let disposed = false;
-    let hlsInstance: any = null;
-
-    const hlsUrl = `/api/downloads/hls/${encodeURIComponent(playingFile.name)}`;
-    console.log('[Downloads] .ts file detected, using HLS url:', hlsUrl);
-
-    // Probe the HLS playlist
-    fetch(hlsUrl)
-      .then(async (r) => {
-        const text = await r.text();
-        console.log(
-          '[Downloads] HLS playlist response:',
-          r.status,
-          r.headers.get('content-type'),
-          '\n---\n' + text + '\n---'
-        );
-      })
-      .catch((e) => console.error('[Downloads] HLS playlist fetch failed', e));
-
-    const setupHlsPlayback = async () => {
-      try {
-        console.log('[Downloads] loading hls.js library...');
-        const Hls = await loadHlsLibrary();
-        console.log('[Downloads] hls.js loaded, isSupported:', Hls?.isSupported?.());
-        if (disposed) {
-          console.log('[Downloads] disposed before setup, aborting');
-          return;
-        }
-
-        if (Hls?.isSupported?.()) {
-          hlsInstance = new Hls({ debug: false });
-          bindHlsEvents(hlsInstance, Hls, video, setPlaybackError);
-
-          console.log('[Downloads][hls] loadSource + attachMedia');
-          hlsInstance.loadSource(hlsUrl);
-          hlsInstance.attachMedia(video);
-          return;
-        }
-
-        if (video.canPlayType('application/vnd.apple.mpegurl')) {
-          console.log('[Downloads] native HLS support, setting src directly');
-          video.src = hlsUrl;
-          void video.play().catch((e: any) => {
-            console.warn('[Downloads] native HLS autoplay blocked:', e?.message);
-          });
-          return;
-        }
-
-        console.error('[Downloads] no HLS support available');
-        setPlaybackError('Votre lecteur integre ne prend pas en charge ce format video.');
-      } catch (err) {
-        console.error('[Downloads] setupHlsPlayback exception:', err);
-        setPlaybackError('Impossible de charger le moteur de lecture pour ce fichier.');
-      }
-    };
-
-    void setupHlsPlayback();
-
-    return () => {
-      disposed = true;
-      cleanupVideoListeners();
-      if (hlsInstance) {
-        console.log('[Downloads] destroying hls instance');
-        hlsInstance.destroy();
-      }
-    };
   }, [playingFile]);
+
+  const getPlaybackSource = (file: DownloadedFile | null): NSVMediaSource | null => {
+    if (!file) return null;
+
+    if (isTsFile(file)) {
+      return {
+        src: `/api/downloads/hls/${encodeURIComponent(file.name)}`,
+        type: 'application/x-mpegurl',
+      };
+    }
+
+    const url = resolveDownloadUrl(file.url);
+    const lower = file.name.toLowerCase();
+
+    if (lower.endsWith('.m3u8')) {
+      return { src: url, type: 'application/x-mpegurl' };
+    }
+
+    if (lower.endsWith('.mp4')) {
+      return { src: url, type: 'video/mp4' };
+    }
+
+    if (lower.endsWith('.webm')) {
+      return { src: url, type: 'video/webm' };
+    }
+
+    return { src: url };
+  };
 
   const getStatusDisplay = (status: any) => {
     if (status === 'Queued')
@@ -395,30 +192,27 @@ export default function Downloads() {
                 Fermer
               </button>
             </div>
-            <video
-              ref={videoRef}
-              key={playingFile.name}
-              controls
-              autoPlay
-              src={isTsFile(playingFile) ? undefined : resolveDownloadUrl(playingFile.url)}
-              onError={(e) => {
-                const vid = e.currentTarget;
-                console.error('[Downloads][video] onError in JSX', {
-                  code: vid.error?.code,
-                  message: vid.error?.message,
-                  src: vid.src?.substring(0, 120),
-                  networkState: vid.networkState,
-                  readyState: vid.readyState,
-                });
-                setPlaybackError(
-                  'Lecture impossible: verifiez le format ou telechargez le fichier.'
-                );
-              }}
-              style={{ width: '100%', borderRadius: '8px', maxHeight: '60vh', background: 'black' }}
-            >
-              <track kind="captions" />
-              Votre navigateur ne supporte pas la balise vidéo.
-            </video>
+            {(() => {
+              const source = getPlaybackSource(playingFile);
+              if (!source) return null;
+
+              return (
+                <NSVPlayer
+                  key={playingFile.name}
+                  source={source}
+                  title={playingFile.metadata?.title || playingFile.name}
+                  autoPlay
+                  streamType="on-demand"
+                  className="nsv-download-player"
+                  onError={(message) => {
+                    console.error('[Downloads][vidstack] error:', message);
+                    setPlaybackError(
+                      'Lecture impossible: verifiez le format, le fichier, ou les droits d acces.'
+                    );
+                  }}
+                />
+              );
+            })()}
             {playbackError && (
               <div
                 style={{
