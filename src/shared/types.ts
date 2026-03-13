@@ -52,8 +52,7 @@ export interface ChatMessage {
     login: string;
     profileImageURL: string;
   };
-  content: {
-    text: string;
+  message: {
     fragments: Array<{ text: string; emote: { id: string } | null }>;
   };
   contentOffsetSeconds: number;
@@ -82,12 +81,34 @@ export interface ExperienceSettings {
   adblockProxyMode?: 'auto' | 'manual';
   minVideoQuality?: string;
   preferredVideoQuality?: string;
+  downloadLocalPath?: string;
+  downloadNetworkSharedPath?: string;
+  twitchImportFollows?: boolean;
+}
+
+export interface TwitchStatus {
+  linked: boolean;
+  clientConfigured: boolean;
+  userId?: string;
+  userLogin?: string;
+  userDisplayName?: string;
+  userAvatar?: string;
+  importFollows?: boolean;
 }
 
 export interface ProxyInfo {
   url: string;
   country: string;
   ping: number;
+}
+
+export interface TrustedDevice {
+  deviceId: string;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  lastIp?: string;
+  userAgent?: string;
+  trusted: boolean;
 }
 
 export interface LiveStream {

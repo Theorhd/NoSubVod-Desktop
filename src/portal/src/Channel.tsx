@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { HistoryEntry, LiveStream, LiveStreamsPage, VOD } from '../../shared/types';
+import { Download as DownloadIcon } from 'lucide-react';
+import DownloadMenu from './components/DownloadMenu';
 
 function formatTime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -56,6 +58,8 @@ export default function Channel() {
   const [catVodCursor, setCatVodCursor] = useState<string | null>(null);
   const [catVodHasMore, setCatVodHasMore] = useState(false);
   const [catVodLoading, setCatVodLoading] = useState(false);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
 
   const title = useMemo(() => {
     if (category) return category;
@@ -344,7 +348,7 @@ export default function Channel() {
                         </div>
                       )}
                     </div>
-                    <div className="vod-body">
+                    <div className="vod-body" style={{ position: 'relative' }}>
                       <h3 title={vod.title}>
                         <button
                           type="button"
@@ -367,7 +371,51 @@ export default function Channel() {
                         <span>{vod.game?.name || 'No Category'}</span>
                         <span>{formatViews(vod.viewCount)}</span>
                       </div>
-                      <div className="vod-date">{new Date(vod.createdAt).toLocaleDateString()}</div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <div className="vod-date">
+                          {new Date(vod.createdAt).toLocaleDateString()}
+                        </div>
+                        <div style={{ position: 'relative', zIndex: 10 }}>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (openMenuId === vod.id) {
+                                setOpenMenuId(null);
+                                setMenuAnchorRect(null);
+                              } else {
+                                setOpenMenuId(vod.id);
+                                setMenuAnchorRect(
+                                  (e.currentTarget as HTMLButtonElement).getBoundingClientRect()
+                                );
+                              }
+                            }}
+                            className="action-btn secondary-btn"
+                            style={{ padding: '4px', borderRadius: '50%' }}
+                            title="Télécharger"
+                          >
+                            <DownloadIcon size={16} />
+                          </button>
+                          {openMenuId === vod.id && (
+                            <DownloadMenu
+                              vodId={vod.id}
+                              title={vod.title}
+                              duration={vod.lengthSeconds}
+                              anchorRect={menuAnchorRect}
+                              onClose={() => {
+                                setOpenMenuId(null);
+                                setMenuAnchorRect(null);
+                              }}
+                            />
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 );

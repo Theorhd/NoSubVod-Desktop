@@ -176,6 +176,22 @@ pub struct SubEntry {
     pub profile_image_url: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrustedDevice {
+    #[serde(rename = "deviceId")]
+    pub device_id: String,
+    #[serde(rename = "firstSeenAt")]
+    pub first_seen_at: u64,
+    #[serde(rename = "lastSeenAt")]
+    pub last_seen_at: u64,
+    #[serde(rename = "lastIp", default)]
+    pub last_ip: Option<String>,
+    #[serde(rename = "userAgent", default)]
+    pub user_agent: Option<String>,
+    #[serde(default)]
+    pub trusted: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExperienceSettings {
     #[serde(rename = "oneSync")]
@@ -190,6 +206,21 @@ pub struct ExperienceSettings {
     pub min_video_quality: Option<String>,
     #[serde(rename = "preferredVideoQuality", default)]
     pub preferred_video_quality: Option<String>,
+    #[serde(rename = "downloadLocalPath", default)]
+    pub download_local_path: Option<String>,
+    #[serde(rename = "downloadNetworkSharedPath", default)]
+    pub download_network_shared_path: Option<String>,
+    // Twitch linked account (public info — token stored separately in PersistedData)
+    #[serde(rename = "twitchUserId", default, skip_serializing_if = "Option::is_none")]
+    pub twitch_user_id: Option<String>,
+    #[serde(rename = "twitchUserLogin", default, skip_serializing_if = "Option::is_none")]
+    pub twitch_user_login: Option<String>,
+    #[serde(rename = "twitchUserDisplayName", default, skip_serializing_if = "Option::is_none")]
+    pub twitch_user_display_name: Option<String>,
+    #[serde(rename = "twitchUserAvatar", default, skip_serializing_if = "Option::is_none")]
+    pub twitch_user_avatar: Option<String>,
+    #[serde(rename = "twitchImportFollows", default)]
+    pub twitch_import_follows: bool,
 }
 
 /// Root of the persisted JSON file.
@@ -203,4 +234,9 @@ pub struct PersistedData {
     pub subs: Vec<SubEntry>,
     #[serde(default)]
     pub settings: ExperienceSettings,
+    #[serde(rename = "trustedDevices", default)]
+    pub trusted_devices: Vec<TrustedDevice>,
+    /// OAuth access token — stored in JSON but never sent to the frontend via /api/settings.
+    #[serde(rename = "twitchToken", default, skip_serializing_if = "Option::is_none")]
+    pub twitch_token: Option<String>,
 }
