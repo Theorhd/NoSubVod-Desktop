@@ -14,7 +14,7 @@
   --ring: rgba(143, 87, 255, 0.4);
 }
 
-.media-player[data-view-type="video"] {
+.media-player[data-view-type='video'] {
   aspect-ratio: 16 / 9;
 }
 
@@ -36,7 +36,7 @@
   .vds-video-layout .vds-chapter-title {
     display: none !important;
   }
-  
+
   /* Hide the bullet/divider before the chapter title */
   .vds-video-layout .vds-time-divider {
     display: none !important;

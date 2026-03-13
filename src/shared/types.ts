@@ -52,8 +52,7 @@ export interface ChatMessage {
     login: string;
     profileImageURL: string;
   };
-  content: {
-    text: string;
+  message: {
     fragments: Array<{ text: string; emote: { id: string } | null }>;
   };
   contentOffsetSeconds: number;

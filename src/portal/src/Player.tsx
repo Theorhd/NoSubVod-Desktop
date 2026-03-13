@@ -953,7 +953,7 @@ export default function Player() {
                         {message.commenter?.displayName || 'Unknown'}:{' '}
                       </span>
                       <span style={{ color: '#efeff1' }}>
-                        {message.content?.fragments?.map((fragment) => fragment.text).join('') ||
+                        {message.message?.fragments?.map((fragment) => fragment.text).join('') ||
                           ''}
                       </span>
                     </div>
