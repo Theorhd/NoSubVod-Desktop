@@ -1283,8 +1283,10 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
     // Serve portal static files if available
     if let Some(portal_path) = portal_dist {
         if portal_path.exists() {
-            router = router
-                .nest_service("/", ServeDir::new(&portal_path).append_index_html_on_directories(true));
+            let serve_dir = ServeDir::new(&portal_path)
+                .append_index_html_on_directories(true)
+                .fallback(ServeFile::new(portal_path.join("index.html")));
+            router = router.nest_service("/", serve_dir);
         }
     } else {
         #[cfg(debug_assertions)]
