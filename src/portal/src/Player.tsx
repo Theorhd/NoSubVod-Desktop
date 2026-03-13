@@ -295,6 +295,23 @@ export default function Player() {
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
 
+  const currentTimeRef = useRef(0);
+  const durationRef = useRef(0);
+  const isPlayingRef = useRef(false);
+
+  // Sync refs when states change
+  useEffect(() => {
+    currentTimeRef.current = currentTime;
+  }, [currentTime]);
+
+  useEffect(() => {
+    durationRef.current = duration;
+  }, [duration]);
+
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
   const [clipStart, setClipStart] = useState<number | null>(null);
   const [clipEnd, setClipEnd] = useState<number | null>(null);
   const [settings, setSettings] = useState<ExperienceSettings>(DEFAULT_SETTINGS);
@@ -467,14 +484,16 @@ export default function Player() {
     if (!vodId) return;
 
     const saveProgress = () => {
-      if (currentTime <= 0) return;
+      const current = currentTimeRef.current;
+      const dur = durationRef.current;
+      if (current <= 0) return;
       fetch('/api/history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           vodId,
-          timecode: currentTime,
-          duration: duration || 0,
+          timecode: current,
+          duration: dur || 0,
         }),
       }).catch((error) => {
         console.error('Failed to save history', error);
@@ -482,14 +501,14 @@ export default function Player() {
     };
 
     const intervalId = setInterval(() => {
-      if (isPlaying) saveProgress();
+      if (isPlayingRef.current) saveProgress();
     }, 10000);
 
     return () => {
       clearInterval(intervalId);
       saveProgress();
     };
-  }, [vodId, currentTime, duration, isPlaying]);
+  }, [vodId]);
 
   if (!source) {
     return (
