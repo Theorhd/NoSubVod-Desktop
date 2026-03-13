@@ -1,13 +1,6 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import {
-  MediaCaptions,
-  MediaCommunitySkin,
-  MediaGesture,
-  MediaOutlet,
-  MediaPlayer,
-  useMediaRemote,
-  useMediaStore,
-} from '@vidstack/react';
+import { MediaPlayer, MediaProvider, useMediaRemote, useMediaStore } from '@vidstack/react';
+import { defaultLayoutIcons, DefaultVideoLayout } from '@vidstack/react/player/layouts/default';
 import Hls from 'hls.js';
 
 export type NSVMediaSource = {
@@ -203,7 +196,7 @@ export default function NSVPlayer({
       ref={playerRef}
       className={className}
       title={title}
-      src={src}
+      src={src as any}
       viewType="video"
       poster={poster}
       streamType={streamType}
@@ -225,26 +218,24 @@ export default function NSVPlayer({
         volumeDown: 'ArrowDown',
       }}
       preferNativeHLS={preferNativeHLS}
-      aspectRatio={16 / 9}
+      aspectRatio="16/9"
       crossOrigin="anonymous"
     >
-      <MediaOutlet />
-      <MediaCaptions />
-      <MediaGesture event="pointerup" action="toggle:paused" />
-      <MediaGesture event="dblpointerup" action="toggle:fullscreen" />
-      {textTracks.length > 0
-        ? textTracks.map((track) => (
-            <track
-              key={`${track.kind}-${track.language}-${track.label}`}
-              src={withAuthQuery(track.src)}
-              kind={track.kind}
-              label={track.label}
-              srcLang={track.language}
-              default={track.default}
-            />
-          ))
-        : null}
-      <MediaCommunitySkin />
+      <MediaProvider>
+        {textTracks.length > 0
+          ? textTracks.map((track) => (
+              <track
+                key={`${track.kind}-${track.language}-${track.label}`}
+                src={withAuthQuery(track.src)}
+                kind={track.kind as any}
+                label={track.label}
+                srcLang={track.language}
+                default={track.default}
+              />
+            ))
+          : null}
+      </MediaProvider>
+      <DefaultVideoLayout icons={defaultLayoutIcons} />
     </MediaPlayer>
   );
 }
