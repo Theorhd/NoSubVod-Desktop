@@ -666,7 +666,7 @@ export default function Settings() {
       await fetch('/api/auth/twitch/import-follows-setting', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value }),
+        body: JSON.stringify({ enabled: value }),
       });
       await fetchTwitchStatus();
     } catch (e) {
@@ -729,8 +729,7 @@ export default function Settings() {
           settings={settings}
           setSettings={setSettings}
           setSuccess={setSuccess}
-          selectLocalPath={() => selectFolder('downloadLocalPath')}
-          selectNetworkPath={() => selectFolder('downloadNetworkSharedPath')}
+          selectFolder={selectFolder}
         />
 
         <TwitchAccountSection
