@@ -3,19 +3,23 @@ use std::sync::Arc;
 use axum::{
     body::Body,
     extract::{Path, Query, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{delete, get},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 #[cfg(debug_assertions)]
-use axum::{http::HeaderMap, response::Redirect};
+use axum::response::Redirect;
 use serde::Deserialize;
 use serde_json::Value;
-use tower_http::cors::{Any, CorsLayer};
-use tower_http::services::ServeDir;
+use tower_http::cors::CorsLayer;
+use tower_http::services::{ServeDir, ServeFile};
+use tower::ServiceExt;
 
 use super::{
+    auth::OAuthStateStore,
+    download::DownloadManager,
     history::HistoryStore,
     twitch::TwitchService,
     types::{SubEntry, WatchlistEntry},
@@ -27,6 +31,167 @@ use super::{
 pub struct ApiState {
     pub twitch: Arc<TwitchService>,
     pub history: Arc<HistoryStore>,
+    pub download: Arc<DownloadManager>,
+    pub oauth: Arc<OAuthStateStore>,
+    /// Per-session token required for API access (prevents unauthorized LAN access).
+    pub server_token: String,
+}
+
+// ── Authentication middleware ──────────────────────────────────────────────────
+
+/// Validates requests carry a valid server token via the `X-NSV-Token` header
+/// or `t` query parameter. Rejects unauthorized requests with 401.
+#[cfg(debug_assertions)]
+async fn auth_middleware(
+    State(_state): State<ApiState>,
+    req: axum::extract::Request,
+    next: Next,
+) -> Response {
+    next.run(req).await
+}
+
+/// Validates requests carry a valid server token via the `X-NSV-Token` header
+/// or `t` query parameter. Rejects unauthorized requests with 401.
+#[cfg(not(debug_assertions))]
+async fn auth_middleware(
+    State(state): State<ApiState>,
+    req: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let device_id = req
+        .headers()
+        .get("x-nsv-device-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && s.len() <= 128)
+        .filter(|s| {
+            s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+        .map(|s| s.to_string());
+
+    let user_agent = req
+        .headers()
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(240).collect::<String>());
+
+    let client_ip = req
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .map(|raw| raw.split(',').next().unwrap_or("").trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let token_from_header = req
+        .headers()
+        .get("x-nsv-token")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    let token_from_query = req
+        .uri()
+        .query()
+        .and_then(|q| {
+            q.split('&')
+                .find_map(|pair| {
+                    let mut parts = pair.splitn(2, '=');
+                    if parts.next() == Some("t") {
+                        parts.next().map(|v| v.to_string())
+                    } else {
+                        None
+                    }
+                })
+        });
+
+    let provided = token_from_header.or(token_from_query);
+
+    let token_ok = provided.as_deref() == Some(&state.server_token);
+    let device_trusted = if token_ok {
+        false
+    } else if let Some(id) = device_id.as_deref() {
+        state.history.is_device_trusted(id).await
+    } else {
+        false
+    };
+
+    if !token_ok && !device_trusted {
+        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Unauthorized" }))).into_response();
+    }
+
+    if let Some(id) = device_id.as_deref() {
+        state
+            .history
+            .mark_device_seen(id, client_ip, user_agent)
+            .await;
+    }
+
+    next.run(req).await
+}
+
+// ── Input validation helpers ──────────────────────────────────────────────────
+
+/// Returns true if the string looks like a valid VOD / numeric ID.
+fn is_valid_id(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 20 && s.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Returns true if the string looks like a valid Twitch login/username.
+fn is_valid_login(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 25
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn is_ios_family_request(headers: &HeaderMap) -> bool {
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if ua.contains("iphone") || ua.contains("ipad") || ua.contains("ipod") {
+        return true;
+    }
+
+    if ua.contains("macintosh") && ua.contains("mobile") {
+        return true;
+    }
+
+    let platform = headers
+        .get("sec-ch-ua-platform")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+
+    platform.contains("ios")
+}
+
+fn filter_hevc_variants_for_ios(master_playlist: &str) -> String {
+    let mut output: Vec<&str> = Vec::new();
+    let mut lines = master_playlist.lines().peekable();
+
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("#EXT-X-STREAM-INF") {
+            let lowered = trimmed.to_lowercase();
+            let is_hevc = lowered.contains("codecs=\"")
+                && (lowered.contains("hvc1") || lowered.contains("hev1"));
+
+            if is_hevc {
+                let _ = lines.next();
+                continue;
+            }
+        }
+
+        output.push(line);
+    }
+
+    output.join("\n")
 }
 
 // ── Error helpers ─────────────────────────────────────────────────────────────
@@ -125,6 +290,9 @@ async fn handle_vod_chat(
     Query(q): Query<ChatQuery>,
     State(state): State<ApiState>,
 ) -> Response {
+    if !is_valid_id(&vod_id) {
+        return bad_request("Invalid VOD ID");
+    }
     let offset = q.offset.unwrap_or(0.0);
     match state.twitch.fetch_video_chat(&vod_id, offset).await {
         Ok(data) => Json(data).into_response(),
@@ -136,6 +304,9 @@ async fn handle_vod_markers(
     Path(vod_id): Path<String>,
     State(state): State<ApiState>,
 ) -> Response {
+    if !is_valid_id(&vod_id) {
+        return bad_request("Invalid VOD ID");
+    }
     match state.twitch.fetch_video_markers(&vod_id).await {
         Ok(data) => Json(data).into_response(),
         Err(e) => internal(e),
@@ -146,6 +317,9 @@ async fn handle_vod_info(
     Path(vod_id): Path<String>,
     State(state): State<ApiState>,
 ) -> Response {
+    if !is_valid_id(&vod_id) {
+        return bad_request("Invalid VOD ID");
+    }
     let vods = state.twitch.fetch_vods_by_ids(vec![vod_id]).await;
     if let Some(vod) = vods.into_iter().next() {
         Json(vod).into_response()
@@ -159,14 +333,28 @@ async fn handle_vod_master(
     State(state): State<ApiState>,
     headers: axum::http::HeaderMap,
 ) -> Response {
+    if !is_valid_id(&vod_id) {
+        return bad_request("Invalid VOD ID");
+    }
     let host = headers
         .get(header::HOST)
         .and_then(|h| h.to_str().ok())
         .unwrap_or("localhost")
         .to_string();
 
-    match state.twitch.generate_master_playlist(&vod_id, &host).await {
-        Ok(playlist) => m3u8_response(playlist),
+    match state
+        .twitch
+        .generate_master_playlist(&vod_id, &host, &state.server_token)
+        .await
+    {
+        Ok(playlist) => {
+            let body = if is_ios_family_request(&headers) {
+                filter_hevc_variants_for_ios(&playlist)
+            } else {
+                playlist
+            };
+            m3u8_response(body)
+        }
         Err(e) => internal(e),
     }
 }
@@ -177,8 +365,8 @@ async fn handle_live_master(
     headers: axum::http::HeaderMap,
 ) -> Response {
     let login = login.trim().to_lowercase();
-    if login.is_empty() {
-        return bad_request("Missing channel login");
+    if !is_valid_login(&login) {
+        return bad_request("Invalid channel login");
     }
     let host = headers
         .get(header::HOST)
@@ -189,10 +377,17 @@ async fn handle_live_master(
     let settings = state.history.get_settings().await;
     match state
         .twitch
-        .generate_live_master_playlist(&login, &host, &settings)
+        .generate_live_master_playlist(&login, &host, &settings, &state.server_token)
         .await
     {
-        Ok(m3u8) => m3u8_response(m3u8),
+        Ok(m3u8) => {
+            let body = if is_ios_family_request(&headers) {
+                filter_hevc_variants_for_ios(&m3u8)
+            } else {
+                m3u8
+            };
+            m3u8_response(body)
+        }
         Err(e) => internal(e),
     }
 }
@@ -206,7 +401,7 @@ async fn handle_proxy_variant(
     };
 
     let settings = state.history.get_settings().await;
-    match state.twitch.proxy_variant_playlist(&id, &settings).await {
+    match state.twitch.proxy_variant_playlist(&id, &settings, &state.server_token).await {
         Ok(body) => m3u8_response(body),
         Err(e) => internal(e),
     }
@@ -236,71 +431,6 @@ async fn handle_proxy_segment(
         }
         Err(e) => internal(e),
     }
-}
-
-async fn handle_chat_iframe(Path(login): Path<String>) -> Response {
-    let html = format!(
-        "<!DOCTYPE html>
-<html lang=\"en\">
-<head>
-    <meta charset=\"UTF-8\">
-    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
-    <title>Twitch Chat Proxy</title>
-    <style>
-        body, html {{
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            background-color: #18181b;
-            overflow: hidden;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            color: #efeff1;
-            font-family: Inter, Roobert, \"Helvetica Neue\", Helvetica, Arial, sans-serif;
-            text-align: center;
-        }}
-        .container {{
-            padding: 20px;
-        }}
-        a {{
-            display: inline-block;
-            margin-top: 15px;
-            padding: 10px 15px;
-            background-color: #9146ff;
-            color: white;
-            text-decoration: none;
-            border-radius: 6px;
-            font-weight: bold;
-        }}
-        a:hover {{
-            background-color: #772ce8;
-        }}
-    </style>
-</head>
-<body>
-    <div class=\"container\">
-        <svg width=\"48\" height=\"48\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" style=\"margin-bottom: 10px;\">
-            <path d=\"M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM13 17H11V15H13V17ZM13 13H11V7H13V13Z\" fill=\"#adadb8\"/>
-        </svg>
-        <div style=\"font-weight: bold; font-size: 1.1rem; margin-bottom: 5px;\">Chat protégé par Twitch</div>
-        <div style=\"color: #adadb8; font-size: 0.9rem;\">
-            Sur navigateur mobile/local, le chat de <b>{login}</b> doit s'ouvrir séparément.
-        </div>
-        <a href=\"https://www.twitch.tv/popout/{login}/chat?popout=\" target=\"_blank\" rel=\"noreferrer\">
-            Ouvrir le chat
-        </a>
-    </div>
-</body>
-</html>"
-    );
-
-    Response::builder()
-        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .body(Body::from(html))
-        .unwrap()
-        .into_response()
 }
 
 async fn handle_get_watchlist(State(state): State<ApiState>) -> impl IntoResponse {
@@ -335,6 +465,30 @@ async fn handle_get_adblock_status(State(state): State<ApiState>) -> impl IntoRe
     Json(state.twitch.get_current_proxy())
 }
 
+async fn handle_get_trusted_devices(State(state): State<ApiState>) -> impl IntoResponse {
+    Json(state.history.get_trusted_devices().await)
+}
+
+#[derive(Deserialize)]
+struct TrustedDevicePatch {
+    trusted: bool,
+}
+
+async fn handle_set_trusted_device(
+    Path(device_id): Path<String>,
+    State(state): State<ApiState>,
+    Json(patch): Json<TrustedDevicePatch>,
+) -> Response {
+    match state
+        .history
+        .set_device_trusted(device_id.trim(), patch.trusted)
+        .await
+    {
+        Some(device) => Json(device).into_response(),
+        None => not_found("Device not found"),
+    }
+}
+
 #[derive(Deserialize)]
 struct SettingsPatch {
     #[serde(rename = "oneSync")]
@@ -345,6 +499,14 @@ struct SettingsPatch {
     adblock_proxy: Option<Option<String>>,
     #[serde(rename = "adblockProxyMode")]
     adblock_proxy_mode: Option<Option<String>>,
+    #[serde(rename = "minVideoQuality")]
+    min_video_quality: Option<Option<String>>,
+    #[serde(rename = "preferredVideoQuality")]
+    preferred_video_quality: Option<Option<String>>,
+    #[serde(rename = "downloadLocalPath")]
+    download_local_path: Option<Option<String>>,
+    #[serde(rename = "downloadNetworkSharedPath")]
+    download_network_shared_path: Option<Option<String>>,
 }
 
 async fn handle_update_settings(
@@ -359,6 +521,10 @@ async fn handle_update_settings(
                 patch.adblock_enabled,
                 patch.adblock_proxy,
                 patch.adblock_proxy_mode,
+                patch.min_video_quality,
+                patch.preferred_video_quality,
+                patch.download_local_path,
+                patch.download_network_shared_path,
             )
             .await,
     )
@@ -626,6 +792,9 @@ async fn handle_get_user(
     Path(username): Path<String>,
     State(state): State<ApiState>,
 ) -> Response {
+    if !is_valid_login(&username) {
+        return bad_request("Invalid username");
+    }
     match state.twitch.fetch_user_info(&username).await {
         Ok(user) => Json(user).into_response(),
         Err(e) => not_found(e),
@@ -636,6 +805,9 @@ async fn handle_get_user_vods(
     Path(username): Path<String>,
     State(state): State<ApiState>,
 ) -> Response {
+    if !is_valid_login(&username) {
+        return bad_request("Invalid username");
+    }
     match state.twitch.fetch_user_vods(&username).await {
         Ok(vods) => Json(vods).into_response(),
         Err(e) => internal(e),
@@ -646,6 +818,9 @@ async fn handle_get_user_live(
     Path(username): Path<String>,
     State(state): State<ApiState>,
 ) -> Response {
+    if !is_valid_login(&username) {
+        return bad_request("Invalid username");
+    }
     match state.twitch.fetch_user_live_stream(&username).await {
         Ok(stream) => Json(stream).into_response(),
         Err(e) => internal(e),
@@ -653,7 +828,7 @@ async fn handle_get_user_live(
 }
 
 #[cfg(debug_assertions)]
-async fn handle_dev_portal_redirect(headers: HeaderMap, uri: axum::http::Uri) -> Redirect {
+async fn handle_dev_portal_redirect(headers: axum::http::HeaderMap, uri: axum::http::Uri) -> Redirect {
     let host = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
@@ -668,13 +843,351 @@ async fn handle_dev_portal_redirect(headers: HeaderMap, uri: axum::http::Uri) ->
     Redirect::temporary(&format!("http://{host_without_port}:5173{path_and_query}"))
 }
 
+async fn handle_shared_downloads(
+    Path(file_path): Path<String>,
+    State(state): State<ApiState>,
+    req: axum::extract::Request,
+) -> Response {
+    let settings = state.history.get_settings().await;
+    let Some(base_path) = settings.download_local_path.or(settings.download_network_shared_path) else {
+        return not_found("Download path is not configured");
+    };
+    
+    let full_path = std::path::PathBuf::from(base_path).join(&file_path);
+    
+    // Prevent directory traversal
+    if full_path.components().any(|c| c.as_os_str() == "..") {
+        return bad_request("Invalid path");
+    }
+
+    match ServeFile::new(&full_path).oneshot(req).await {
+        Ok(res) => res.into_response(),
+        Err(_) => not_found("File not found"),
+    }
+}
+
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct DownloadedFile {
+    name: String,
+    size: u64,
+    url: String,
+    metadata: Option<Value>,
+}
+
+async fn handle_get_downloads(State(state): State<ApiState>) -> Response {
+    let settings = state.history.get_settings().await;
+    let Some(base_path) = settings.download_local_path.or(settings.download_network_shared_path) else {
+        return Json(Vec::<DownloadedFile>::new()).into_response();
+    };
+
+    let mut files = Vec::new();
+    if let Ok(mut entries) = tokio::fs::read_dir(&base_path).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if let Ok(fs_meta) = entry.metadata().await {
+                if fs_meta.is_file() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.ends_with(".mp4") || name.ends_with(".ts") || name.ends_with(".mkv") {
+                        let path = entry.path();
+                        let json_path = path.with_extension("json");
+                        let mut metadata = None;
+                        
+                        if let Ok(json_content) = tokio::fs::read_to_string(&json_path).await {
+                            if let Ok(parsed) = serde_json::from_str(&json_content) {
+                                metadata = Some(parsed);
+                            }
+                        }
+
+                        files.push(DownloadedFile {
+                            name: name.clone(),
+                            size: fs_meta.len(),
+                            url: format!("/shared-downloads/{}", name),
+                            metadata,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    
+    Json(files).into_response()
+}
+
+async fn handle_system_dialog_folder() -> Response {
+    if let Some(folder) = rfd::AsyncFileDialog::new().pick_folder().await {
+        return Json(serde_json::json!({ "path": folder.path().to_string_lossy().to_string() })).into_response();
+    }
+    Json(serde_json::json!({ "path": null })).into_response()
+}
+
+async fn handle_get_active_downloads(State(state): State<ApiState>) -> impl IntoResponse {
+    Json(state.download.get_all_downloads().await)
+}
+
+// ── Live chat send ─────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ChatSendBody {
+    message: String,
+}
+
+async fn handle_live_chat_send(
+    Path(login): Path<String>,
+    State(state): State<ApiState>,
+    Json(body): Json<ChatSendBody>,
+) -> Response {
+    let message = body.message.trim().to_string();
+    if message.is_empty() {
+        return bad_request("Empty message");
+    }
+    if message.len() > 500 {
+        return bad_request("Message too long (max 500 chars)");
+    }
+
+    let settings = state.history.get_settings().await;
+    let token = state.history.get_twitch_token().await;
+
+    let (Some(access_token), Some(sender_id)) = (token, settings.twitch_user_id) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "Not linked to a Twitch account" })),
+        )
+            .into_response();
+    };
+
+    let client = reqwest::Client::new();
+
+    // Resolve login → broadcaster_id
+    let broadcaster_id = match client
+        .get(format!(
+            "https://api.twitch.tv/helix/users?login={}",
+            login
+        ))
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("Client-Id", crate::server::auth::TWITCH_CLIENT_ID.as_str())
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => {
+            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            body.get("data")
+                .and_then(|d| d.as_array())
+                .and_then(|a| a.first())
+                .and_then(|u| u.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        }
+        _ => return internal("Failed to resolve broadcaster ID"),
+    };
+
+    if broadcaster_id.is_empty() {
+        return not_found("Channel not found");
+    }
+
+    // Send via Helix chat messages API (requires user:write:chat scope)
+    match client
+        .post("https://api.twitch.tv/helix/chat/messages")
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("Client-Id", crate::server::auth::TWITCH_CLIENT_ID.as_str())
+        .json(&serde_json::json!({
+            "broadcaster_id": broadcaster_id,
+            "sender_id": sender_id,
+            "message": message,
+        }))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => {
+            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            let result = body
+                .get("data")
+                .and_then(|d| d.as_array())
+                .and_then(|a| a.first())
+                .cloned()
+                .unwrap_or_default();
+
+            let is_sent = result
+                .get("is_sent")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+
+            if is_sent {
+                Json(serde_json::json!({ "ok": true })).into_response()
+            } else {
+                let drop_code = result
+                    .get("drop_reason")
+                    .and_then(|d| d.get("code"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let drop_message = result
+                    .get("drop_reason")
+                    .and_then(|d| d.get("message"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Twitch a refusé le message.");
+
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!("Message non envoyé par Twitch ({drop_code}): {drop_message}")
+                    })),
+                )
+                    .into_response()
+            }
+        }
+        Ok(r) => {
+            let status = r.status();
+            let body = r.text().await.unwrap_or_default();
+            (status, Json(serde_json::json!({ "error": body }))).into_response()
+        }
+        Err(e) => internal(e),
+    }
+}
+
+async fn handle_download_hls(
+    Path(file_name): Path<String>,
+    State(state): State<ApiState>,
+) -> Response {
+    if file_name.contains('/') || file_name.contains('\\') || file_name.contains("..") {
+        return bad_request("Invalid file name");
+    }
+
+    let settings = state.history.get_settings().await;
+    let Some(base_path) = settings.download_local_path.or(settings.download_network_shared_path) else {
+        return not_found("Download path is not configured");
+    };
+
+    let full_path = std::path::PathBuf::from(&base_path).join(&file_name);
+    let file_size = match tokio::fs::metadata(&full_path).await {
+        Ok(m) if m.is_file() => m.len(),
+        _ => return not_found("File not found"),
+    };
+
+    // Build a byte-range HLS playlist so hls.js can load the file progressively.
+    const CHUNK_BYTES: u64 = 10 * 1024 * 1024; // 10 MB per segment
+    const EST_SECS: f64 = 10.0;
+    let num_chunks = file_size.div_ceil(CHUNK_BYTES);
+
+    let mut playlist = format!(
+        "#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-TARGETDURATION:{}\n#EXT-X-MEDIA-SEQUENCE:0\n",
+        EST_SECS.ceil() as u64
+    );
+
+    let segment_url = format!("/api/shared-downloads/{file_name}");
+    for i in 0..num_chunks {
+        let offset = i * CHUNK_BYTES;
+        let length = std::cmp::min(CHUNK_BYTES, file_size - offset);
+        playlist.push_str(&format!(
+            "#EXTINF:{EST_SECS:.3},\n#EXT-X-BYTERANGE:{length}@{offset}\n{segment_url}\n"
+        ));
+    }
+    playlist.push_str("#EXT-X-ENDLIST\n");
+
+    m3u8_response(playlist)
+}
+
+#[derive(Deserialize)]
+struct DownloadRequest {
+    #[serde(rename = "vodId")]
+    vod_id: String,
+    title: Option<String>,
+    quality: String,
+    #[serde(rename = "startTime")]
+    start_time: Option<f64>,
+    #[serde(rename = "endTime")]
+    end_time: Option<f64>,
+    duration: Option<f64>,
+}
+
+async fn handle_start_download(
+    State(state): State<ApiState>,
+    Json(req): Json<DownloadRequest>,
+) -> Response {
+    let settings = state.history.get_settings().await;
+    let out_dir = settings.download_local_path.unwrap_or_else(|| {
+        dirs::download_dir()
+            .map(|p: std::path::PathBuf| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| ".".to_string())
+    });
+
+    let port = super::SERVER_PORT;
+    let master_m3u8_url = format!("http://127.0.0.1:{}/api/vod/{}/master.m3u8", port, req.vod_id);
+    let output_file_base = format!("{}/{}_{}", out_dir, req.vod_id, req.quality);
+    let output_file = format!("{}.ts", output_file_base);
+    let output_json = format!("{}.json", output_file_base);
+
+    let title = req.title.unwrap_or_else(|| format!("VOD {}", req.vod_id));
+    let duration = req.duration.unwrap_or(0.0);
+
+    // Fetch and save metadata
+    let vods = state.twitch.fetch_vods_by_ids(vec![req.vod_id.clone()]).await;
+    if let Some(vod) = vods.into_iter().next() {
+        if let Ok(json_str) = serde_json::to_string_pretty(&vod) {
+            let _ = tokio::fs::write(&output_json, json_str).await;
+        }
+    }
+
+    match state.download.start_download(
+        req.vod_id,
+        title,
+        master_m3u8_url,
+        output_file,
+        req.start_time,
+        req.end_time,
+        duration,
+    ).await {
+        Ok(_) => Json(serde_json::json!({ "message": "Download started" })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+// ── Security headers middleware ─────────────────────────────────────────────
+
+async fn security_headers_middleware(
+    req: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let mut response = next.run(req).await;
+    let headers = response.headers_mut();
+    headers.insert("x-content-type-options", "nosniff".parse().unwrap());
+    headers.insert("x-frame-options", "DENY".parse().unwrap());
+    headers.insert("x-xss-protection", "1; mode=block".parse().unwrap());
+    headers.insert("referrer-policy", "no-referrer".parse().unwrap());
+    headers.insert(
+        "permissions-policy",
+        "camera=(), microphone=(), geolocation=(), interest-cohort=()".parse().unwrap(),
+    );
+    headers.insert(
+        "cache-control",
+        "no-store, private".parse().unwrap(),
+    );
+    response
+}
+
 // ── Router factory ────────────────────────────────────────────────────────────
 
 pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) -> Router {
+    // CORS: allow only same-origin and local network origins (not Any)
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_origin(tower_http::cors::AllowOrigin::mirror_request())
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PUT,
+            axum::http::Method::DELETE,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers([
+            header::CONTENT_TYPE,
+            header::AUTHORIZATION,
+            "x-nsv-token".parse().unwrap(),
+        ]);
+
+    // Auth callback must remain unauthenticated (Twitch redirects here)
+    let auth_callback = Router::new()
+        .route("/auth/twitch/callback", get(crate::server::auth::handle_auth_callback))
+        .with_state(state.clone());
 
     let api = Router::new()
         // Video data
@@ -683,14 +1196,23 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         .route("/vod/:vod_id/info", get(handle_vod_info))
         .route("/vod/:vod_id/master.m3u8", get(handle_vod_master))
         .route("/live/:login/master.m3u8", get(handle_live_master))
-        .route("/live/:login/chat.html", get(handle_chat_iframe))
+        .route("/live/:login/chat/ws", get(crate::server::chat::handle_chat_ws))
         .route("/stream/variant.m3u8", get(handle_proxy_variant))
         .route("/stream/variant.ts", get(handle_proxy_segment))
+        // Shared Downloads
+        .route("/downloads", get(handle_get_downloads))
+        .route("/downloads/active", get(handle_get_active_downloads))
+        .route("/downloads/hls/:file_name", get(handle_download_hls))
+        .route("/shared-downloads/*path", get(handle_shared_downloads))
+        .route("/download/start", axum::routing::post(handle_start_download))
+        .route("/system/dialog/folder", get(handle_system_dialog_folder))
         // Watchlist
         .route("/watchlist", get(handle_get_watchlist).post(handle_add_watchlist))
         .route("/watchlist/:vod_id", delete(handle_remove_watchlist))
         // Settings
         .route("/settings", get(handle_get_settings).post(handle_update_settings))
+        .route("/trusted-devices", get(handle_get_trusted_devices))
+        .route("/trusted-devices/:device_id", put(handle_set_trusted_device))
         .route("/adblock/proxies", get(handle_get_adblock_proxies))
         .route("/adblock/status", get(handle_get_adblock_status))
         // Subs
@@ -707,6 +1229,13 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         .route("/live/search", get(handle_live_search))
         .route("/live/category", get(handle_live_category))
         .route("/live/status", get(handle_live_status))
+        .route("/live/:login/chat/send", post(handle_live_chat_send))
+        // Twitch auth
+        .route("/auth/twitch/start", get(crate::server::auth::handle_auth_start))
+        .route("/auth/twitch/status", get(crate::server::auth::handle_auth_status))
+        .route("/auth/twitch", delete(crate::server::auth::handle_auth_unlink))
+        .route("/auth/twitch/import-follows", post(crate::server::auth::handle_auth_import_follows))
+        .route("/auth/twitch/import-follows-setting", put(crate::server::auth::handle_auth_set_import_follows))
         // History
         .route("/history", get(handle_get_history).post(handle_post_history))
         .route("/history/list", get(handle_get_history_list))
@@ -715,9 +1244,15 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         .route("/user/:username", get(handle_get_user))
         .route("/user/:username/vods", get(handle_get_user_vods))
         .route("/user/:username/live", get(handle_get_user_live))
-        .with_state(state);
+        // Auth middleware protects all these routes
+        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
+        .with_state(state.clone());
 
-    let mut router = Router::new().nest("/api", api).layer(cors);
+    let mut router = Router::new()
+        .nest("/api", auth_callback)
+        .nest("/api", api)
+        .layer(middleware::from_fn(security_headers_middleware))
+        .layer(cors);
 
     // Serve portal static files if available
     if let Some(portal_path) = portal_dist {

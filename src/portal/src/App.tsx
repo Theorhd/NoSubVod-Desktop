@@ -1,6 +1,6 @@
 import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
-import { TrendingUp, Home as HomeIcon, Search as SearchIcon, Radio } from 'lucide-react';
+import { TrendingUp, Home as HomeIcon, Search as SearchIcon, Radio, Download } from 'lucide-react';
 
 const Home = lazy(() => import('./Home'));
 const Channel = lazy(() => import('./Channel'));
@@ -10,12 +10,14 @@ const Search = lazy(() => import('./Search'));
 const Live = lazy(() => import('./Live'));
 const Settings = lazy(() => import('./Settings'));
 const History = lazy(() => import('./History'));
+const Downloads = lazy(() => import('./Downloads'));
 
 const navItems = [
   { path: '/trends', label: 'Trends', Icon: TrendingUp },
-  { path: '/', label: 'Home', Icon: HomeIcon },
   { path: '/live', label: 'Live', Icon: Radio },
+  { path: '/', label: 'Home', Icon: HomeIcon, isHome: true },
   { path: '/search', label: 'Search', Icon: SearchIcon },
+  { path: '/downloads', label: 'Downloads', Icon: Download },
 ];
 
 function BottomNav() {
@@ -35,12 +37,12 @@ function BottomNav() {
         return (
           <button
             key={item.path}
-            className={`nav-btn ${isActive ? 'active' : ''}`}
+            className={`nav-btn ${isActive ? 'active' : ''} ${item.isHome ? 'nav-home-btn' : ''}`}
             onClick={() => navigate(item.path)}
             type="button"
           >
             <span className="nav-icon">
-              <item.Icon size={20} />
+              <item.Icon size={item.isHome ? 24 : 20} />
             </span>
             <span className="nav-label">{item.label}</span>
           </button>
@@ -71,6 +73,7 @@ export default function App() {
               <Route path="/settings" element={<Settings />} />
               <Route path="/channel" element={<Channel />} />
               <Route path="/player" element={<Player />} />
+              <Route path="/downloads" element={<Downloads />} />
             </Routes>
           </div>
         </Suspense>

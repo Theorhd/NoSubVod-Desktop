@@ -1,7 +1,7 @@
 {
   "$schema": "gen/schemas/desktop-schema.json",
   "productName": "NoSubVOD",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "identifier": "com.nosubvod.desktop",
   "build": {
     "frontendDist": "../dist/renderer",
@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://static-cdn.jtvnw.net https://clips-media-assets2.twitch.tv; media-src 'self' blob:; connect-src 'self' https://cdn.jsdelivr.net; font-src 'self'; worker-src 'self' blob:; frame-src 'none'; object-src 'none'; base-uri 'self'"
     }
   },
   "plugins": {},
