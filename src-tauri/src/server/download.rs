@@ -34,6 +34,12 @@ pub struct DownloadManager {
     pub active_downloads: Arc<RwLock<HashMap<String, DownloadProgress>>>,
 }
 
+impl Default for DownloadManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DownloadManager {
     pub fn new() -> Self {
         Self {
@@ -46,6 +52,7 @@ impl DownloadManager {
     /// `m3u8_url`    – URL of the HLS master playlist (served by the local proxy).
     /// `output_path` – destination file path (should end in `.ts`).
     /// `start_time` / `end_time` – optional clip window in seconds.
+    #[allow(clippy::too_many_arguments)]
     pub async fn start_download(
         &self,
         vod_id: String,
@@ -364,9 +371,8 @@ fn parse_segments(playlist: &str, origin: &str, base_url: &str) -> Vec<Segment> 
             }
         }
 
-        if l.starts_with("#EXTINF:") {
+        if let Some(rest) = l.strip_prefix("#EXTINF:") {
             // e.g. "#EXTINF:6.006000,"
-            let rest = &l[8..];
             let dur_str = rest.split(',').next().unwrap_or("0");
             pending_duration = dur_str.parse::<f64>().ok();
         } else if !l.is_empty() && !l.starts_with('#') {

@@ -176,6 +176,7 @@ impl HistoryStore {
         self.data.read().await.settings.clone()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_settings(
         &self,
         one_sync: Option<bool>,

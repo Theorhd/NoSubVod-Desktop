@@ -36,6 +36,12 @@ pub struct OAuthStateStore {
     pub pending: Arc<RwLock<HashMap<String, String>>>,
 }
 
+impl Default for OAuthStateStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OAuthStateStore {
     pub fn new() -> Self {
         Self {

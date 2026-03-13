@@ -1067,7 +1067,7 @@ async fn handle_download_hls(
     // Build a byte-range HLS playlist so hls.js can load the file progressively.
     const CHUNK_BYTES: u64 = 10 * 1024 * 1024; // 10 MB per segment
     const EST_SECS: f64 = 10.0;
-    let num_chunks = (file_size + CHUNK_BYTES - 1) / CHUNK_BYTES;
+    let num_chunks = file_size.div_ceil(CHUNK_BYTES);
 
     let mut playlist = format!(
         "#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-TARGETDURATION:{}\n#EXT-X-MEDIA-SEQUENCE:0\n",
