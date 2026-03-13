@@ -10,7 +10,7 @@ use axum::{
     Json, Router,
 };
 #[cfg(debug_assertions)]
-use axum::{http::HeaderMap, response::Redirect};
+use axum::response::Redirect;
 use serde::Deserialize;
 use serde_json::Value;
 use tower_http::cors::CorsLayer;
@@ -46,6 +46,33 @@ async fn auth_middleware(
     req: axum::extract::Request,
     next: Next,
 ) -> Response {
+    let device_id = req
+        .headers()
+        .get("x-nsv-device-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && s.len() <= 128)
+        .filter(|s| {
+            s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+        .map(|s| s.to_string());
+
+    let user_agent = req
+        .headers()
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(240).collect::<String>());
+
+    let client_ip = req
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .map(|raw| raw.split(',').next().unwrap_or("").trim().to_string())
+        .filter(|s| !s.is_empty());
+
     let token_from_header = req
         .headers()
         .get("x-nsv-token")
@@ -69,8 +96,24 @@ async fn auth_middleware(
 
     let provided = token_from_header.or(token_from_query);
 
-    if provided.as_deref() != Some(&state.server_token) {
+    let token_ok = provided.as_deref() == Some(&state.server_token);
+    let device_trusted = if token_ok {
+        false
+    } else if let Some(id) = device_id.as_deref() {
+        state.history.is_device_trusted(id).await
+    } else {
+        false
+    };
+
+    if !token_ok && !device_trusted {
         return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Unauthorized" }))).into_response();
+    }
+
+    if let Some(id) = device_id.as_deref() {
+        state
+            .history
+            .mark_device_seen(id, client_ip, user_agent)
+            .await;
     }
 
     next.run(req).await
@@ -239,7 +282,7 @@ async fn handle_vod_master(
         .unwrap_or("localhost")
         .to_string();
 
-    match state.twitch.generate_master_playlist(&vod_id, &host).await {
+    match state.twitch.generate_master_playlist(&vod_id, &host, &state.server_token).await {
         Ok(playlist) => m3u8_response(playlist),
         Err(e) => internal(e),
     }
@@ -263,7 +306,7 @@ async fn handle_live_master(
     let settings = state.history.get_settings().await;
     match state
         .twitch
-        .generate_live_master_playlist(&login, &host, &settings)
+        .generate_live_master_playlist(&login, &host, &settings, &state.server_token)
         .await
     {
         Ok(m3u8) => m3u8_response(m3u8),
@@ -280,7 +323,7 @@ async fn handle_proxy_variant(
     };
 
     let settings = state.history.get_settings().await;
-    match state.twitch.proxy_variant_playlist(&id, &settings).await {
+    match state.twitch.proxy_variant_playlist(&id, &settings, &state.server_token).await {
         Ok(body) => m3u8_response(body),
         Err(e) => internal(e),
     }
@@ -342,6 +385,30 @@ async fn handle_get_adblock_proxies(State(state): State<ApiState>) -> impl IntoR
 async fn handle_get_adblock_status(State(state): State<ApiState>) -> impl IntoResponse {
     state.twitch.refresh_adblock_proxy_state();
     Json(state.twitch.get_current_proxy())
+}
+
+async fn handle_get_trusted_devices(State(state): State<ApiState>) -> impl IntoResponse {
+    Json(state.history.get_trusted_devices().await)
+}
+
+#[derive(Deserialize)]
+struct TrustedDevicePatch {
+    trusted: bool,
+}
+
+async fn handle_set_trusted_device(
+    Path(device_id): Path<String>,
+    State(state): State<ApiState>,
+    Json(patch): Json<TrustedDevicePatch>,
+) -> Response {
+    match state
+        .history
+        .set_device_trusted(device_id.trim(), patch.trusted)
+        .await
+    {
+        Some(device) => Json(device).into_response(),
+        None => not_found("Device not found"),
+    }
 }
 
 #[derive(Deserialize)]
@@ -683,7 +750,7 @@ async fn handle_get_user_live(
 }
 
 #[cfg(debug_assertions)]
-async fn handle_dev_portal_redirect(headers: HeaderMap, uri: axum::http::Uri) -> Redirect {
+async fn handle_dev_portal_redirect(headers: axum::http::HeaderMap, uri: axum::http::Uri) -> Redirect {
     let host = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
@@ -1066,6 +1133,8 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         .route("/watchlist/:vod_id", delete(handle_remove_watchlist))
         // Settings
         .route("/settings", get(handle_get_settings).post(handle_update_settings))
+        .route("/trusted-devices", get(handle_get_trusted_devices))
+        .route("/trusted-devices/:device_id", put(handle_set_trusted_device))
         .route("/adblock/proxies", get(handle_get_adblock_proxies))
         .route("/adblock/status", get(handle_get_adblock_status))
         // Subs

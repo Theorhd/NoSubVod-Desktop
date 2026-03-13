@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ExperienceSettings, ProxyInfo, TwitchStatus } from '../../shared/types';
+import { ExperienceSettings, ProxyInfo, TrustedDevice, TwitchStatus } from '../../shared/types';
 
 const defaultSettings: ExperienceSettings = {
   oneSync: false,
@@ -402,6 +402,87 @@ const TwitchAccountSection = ({
   </div>
 );
 
+const TrustedDevicesSection = ({
+  devices,
+  pendingDeviceId,
+  onToggleTrusted,
+}: {
+  devices: TrustedDevice[];
+  pendingDeviceId: string | null;
+  onToggleTrusted: (deviceId: string, trusted: boolean) => Promise<void>;
+}) => {
+  const formatSeen = (value: number) => {
+    if (!value) return 'N/A';
+    return new Date(value).toLocaleString();
+  };
+
+  return (
+    <div className="card settings-card">
+      <h2 style={{ marginTop: 0 }}>Trusted Devices</h2>
+      <p className="settings-description">
+        Les appareils listés ici ont déjà accédé à l&apos;app. Active &quot;Trusted&quot; pour
+        autoriser l&apos;accès sans <code>?t=...</code>.
+      </p>
+
+      {devices.length === 0 ? (
+        <div style={{ color: 'var(--text-muted)' }}>Aucun appareil détecté pour le moment.</div>
+      ) : (
+        <div style={{ display: 'grid', gap: '10px' }}>
+          {devices.map((device) => (
+            <div
+              key={device.deviceId}
+              style={{
+                border: '1px solid var(--border)',
+                borderRadius: '10px',
+                padding: '12px',
+                backgroundColor: 'var(--bg)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ fontWeight: 600, color: 'var(--text)', overflowWrap: 'anywhere' }}>
+                  {device.deviceId}
+                </div>
+                <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Trusted</span>
+                  <input
+                    type="checkbox"
+                    checked={device.trusted}
+                    disabled={pendingDeviceId === device.deviceId}
+                    onChange={(e) => onToggleTrusted(device.deviceId, e.target.checked)}
+                  />
+                </label>
+              </div>
+              <div style={{ marginTop: '8px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                Dernier accès: {formatSeen(device.lastSeenAt)}
+              </div>
+              <div style={{ marginTop: '2px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                Première visite: {formatSeen(device.firstSeenAt)}
+              </div>
+              {device.lastIp && (
+                <div style={{ marginTop: '2px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                  IP: {device.lastIp}
+                </div>
+              )}
+              {device.userAgent && (
+                <div
+                  style={{
+                    marginTop: '2px',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-muted)',
+                    overflowWrap: 'anywhere',
+                  }}
+                >
+                  UA: {device.userAgent}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export default function Settings() {
   const navigate = useNavigate();
   const [settings, setSettings] = useState<ExperienceSettings>(defaultSettings);
@@ -414,6 +495,8 @@ export default function Settings() {
   const [twitchStatus, setTwitchStatus] = useState<TwitchStatus | null>(null);
   const [twitchPolling, setTwitchPolling] = useState(false);
   const [twitchImporting, setTwitchImporting] = useState(false);
+  const [trustedDevices, setTrustedDevices] = useState<TrustedDevice[]>([]);
+  const [trustedDevicePendingId, setTrustedDevicePendingId] = useState<string | null>(null);
 
   const fetchAdblockStatus = useCallback(async () => {
     try {
@@ -466,15 +549,27 @@ export default function Settings() {
     }
   }, []);
 
+  const fetchTrustedDevices = useCallback(async () => {
+    try {
+      const res = await fetch('/api/trusted-devices');
+      if (!res.ok) return;
+      const data = (await res.json()) as TrustedDevice[];
+      setTrustedDevices(data);
+    } catch (e) {
+      console.error('Failed to fetch trusted devices', e);
+    }
+  }, []);
+
   useEffect(() => {
     fetchSettings();
     fetchTwitchStatus();
+    fetchTrustedDevices();
     const interval = setInterval(() => {
       fetchAdblockStatus();
       fetchProxies();
     }, 5000);
     return () => clearInterval(interval);
-  }, [fetchSettings, fetchAdblockStatus, fetchProxies, fetchTwitchStatus]);
+  }, [fetchSettings, fetchAdblockStatus, fetchProxies, fetchTwitchStatus, fetchTrustedDevices]);
 
   const saveSettings = async () => {
     setSaving(true);
@@ -577,6 +672,24 @@ export default function Settings() {
     }
   };
 
+  const toggleTrustedDevice = async (deviceId: string, trusted: boolean) => {
+    setTrustedDevicePendingId(deviceId);
+    try {
+      const res = await fetch(`/api/trusted-devices/${encodeURIComponent(deviceId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trusted }),
+      });
+      if (!res.ok) throw new Error('Failed to update trusted device');
+      await fetchTrustedDevices();
+      setSuccess('Trusted devices mis à jour.');
+    } catch (e: any) {
+      setError(e?.message || 'Failed to update trusted device');
+    } finally {
+      setTrustedDevicePendingId(null);
+    }
+  };
+
   return (
     <>
       <div className="top-bar">
@@ -626,6 +739,12 @@ export default function Settings() {
           unlinkTwitch={unlinkTwitch}
           importFollows={importFollows}
           setImportFollowsSetting={setImportFollowsSetting}
+        />
+
+        <TrustedDevicesSection
+          devices={trustedDevices}
+          pendingDeviceId={trustedDevicePendingId}
+          onToggleTrusted={toggleTrustedDevice}
         />
 
         <div

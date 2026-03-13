@@ -998,7 +998,24 @@ export default function Player() {
         return;
       }
 
-      const hls = new Hls();
+      const hlsToken = sessionStorage.getItem('nsv_token');
+      const hls = new Hls(
+        hlsToken
+          ? {
+              xhrSetup: (xhr: XMLHttpRequest) => {
+                xhr.setRequestHeader('x-nsv-token', hlsToken);
+              },
+              fetchSetup: (context: any, initParams: any) => {
+                const headers = new Headers((initParams as RequestInit)?.headers);
+                headers.set('x-nsv-token', hlsToken);
+                return new Request(context.url as string, {
+                  ...(initParams as RequestInit),
+                  headers,
+                });
+              },
+            }
+          : {}
+      );
       hlsRef.current = hls;
       hls.loadSource(streamUrl);
       hls.attachMedia(video);

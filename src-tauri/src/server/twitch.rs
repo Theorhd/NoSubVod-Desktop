@@ -753,6 +753,7 @@ fn rewrite_master_with_proxy(
     _host: &str,
     source_master_url: &str,
     variant_cache: &TimedCache<String>,
+    token: &str,
 ) -> String {
     let mut lines: Vec<String> = master
         .split('\n')
@@ -779,8 +780,9 @@ fn rewrite_master_with_proxy(
                         let abs_url = make_absolute_url(uri, source_master_url);
                         let proxy_url = match register_variant_proxy_target(variant_cache, &abs_url) {
                             Ok(pid) => format!(
-                                "/api/stream/variant.m3u8?id={}",
-                                urlencoding_simple(&pid)
+                                "/api/stream/variant.m3u8?id={}&t={}",
+                                urlencoding_simple(&pid),
+                                token
                             ),
                             Err(_) => abs_url.clone(),
                         };
@@ -800,8 +802,9 @@ fn rewrite_master_with_proxy(
             let abs_url = make_absolute_url(&line, source_master_url);
             if let Ok(proxy_id) = register_variant_proxy_target(variant_cache, &abs_url) {
                 *line_entry = format!(
-                    "/api/stream/variant.m3u8?id={}",
-                    urlencoding_simple(&proxy_id)
+                    "/api/stream/variant.m3u8?id={}&t={}",
+                    urlencoding_simple(&proxy_id),
+                    token
                 );
             }
         }
@@ -2047,6 +2050,7 @@ impl TwitchService {
         &self,
         vod_id: &str,
         _host: &str,
+        token: &str,
     ) -> Result<String, String> {
         let safe_vod_id = gql_escape(vod_id.trim());
         let vod_id_re = regex::Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap();
@@ -2126,8 +2130,9 @@ impl TwitchService {
                     Err(_) => continue,
                 };
                 let proxy_url = format!(
-                    "/api/stream/variant.m3u8?id={}",
-                    urlencoding_simple(&proxy_id)
+                    "/api/stream/variant.m3u8?id={}&t={}",
+                    urlencoding_simple(&proxy_id),
+                    token
                 );
 
                 playlist.push_str(&format!(
@@ -2145,6 +2150,7 @@ impl TwitchService {
         channel_login: &str,
         _host: &str,
         settings: &ExperienceSettings,
+        server_token: &str,
     ) -> Result<String, String> {
         let token = self.fetch_live_playback_token(channel_login, settings).await?;
         let random_p = rand_u32() % 1_000_000;
@@ -2203,6 +2209,7 @@ impl TwitchService {
             _host,
             &source_url,
             &self.variant_cache,
+            server_token,
         ))
     }
 
@@ -2323,6 +2330,7 @@ impl TwitchService {
         &self,
         proxy_id: &str,
         settings: &ExperienceSettings,
+        token: &str,
     ) -> Result<String, String> {
         let target_url = resolve_variant_proxy_target(&self.variant_cache, proxy_id)?;
 
@@ -2382,7 +2390,7 @@ impl TwitchService {
 
                 // Register segment for proxying to ensure continuity of requests through the system
                 if let Ok(proxy_id) = register_variant_proxy_target(&self.variant_cache, &abs_url) {
-                    return format!("/api/stream/variant.ts?id={}", urlencoding_simple(&proxy_id));
+                    return format!("/api/stream/variant.ts?id={}&t={}", urlencoding_simple(&proxy_id), token);
                 }
 
                 abs_url

@@ -3,6 +3,21 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 
+function createDeviceId(): string {
+  const api = globalThis.crypto as Crypto | undefined;
+  if (api?.randomUUID) {
+    return `dev_${api.randomUUID().replaceAll('-', '')}`;
+  }
+  return `dev_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+}
+
+(function initDeviceId() {
+  const existing = localStorage.getItem('nsv_device_id');
+  if (!existing) {
+    localStorage.setItem('nsv_device_id', createDeviceId());
+  }
+})();
+
 // ── Extract and store server auth token from URL ─────────────────────────────
 // The QR code URL includes ?t=<token>. We extract it on first load, store it
 // in sessionStorage (survives navigations but not tab close), and strip it from
@@ -36,13 +51,17 @@ import './index.css';
     // Only inject token on our own API calls
     if (url.startsWith('/api/') || url.startsWith('api/')) {
       const token = sessionStorage.getItem('nsv_token');
+      const deviceId = localStorage.getItem('nsv_device_id');
+      const headers = new Headers(init?.headers);
       if (token) {
-        const headers = new Headers(init?.headers);
         if (!headers.has('x-nsv-token')) {
           headers.set('x-nsv-token', token);
         }
-        init = { ...init, headers };
       }
+      if (deviceId && !headers.has('x-nsv-device-id')) {
+        headers.set('x-nsv-device-id', deviceId);
+      }
+      init = { ...init, headers };
     }
     return originalFetch.call(globalThis, input, init);
   };

@@ -103,6 +103,15 @@ export interface ProxyInfo {
   ping: number;
 }
 
+export interface TrustedDevice {
+  deviceId: string;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  lastIp?: string;
+  userAgent?: string;
+  trusted: boolean;
+}
+
 export interface LiveStream {
   id: string;
   title: string;

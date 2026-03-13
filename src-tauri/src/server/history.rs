@@ -8,7 +8,9 @@ use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use sha2::{Digest, Sha256};
 
-use super::types::{ExperienceSettings, HistoryEntry, PersistedData, SubEntry, WatchlistEntry};
+use super::types::{
+    ExperienceSettings, HistoryEntry, PersistedData, SubEntry, TrustedDevice, WatchlistEntry,
+};
 
 // ── Token encryption helpers ───────────────────────────────────────────────────
 // Uses a machine-specific key derived from the data dir path + a salt.
@@ -302,5 +304,96 @@ impl HistoryStore {
             data.settings.twitch_import_follows = value;
         }
         self.save().await;
+    }
+
+    // ── Trusted devices ─────────────────────────────────────────────────────
+
+    pub async fn mark_device_seen(&self, device_id: &str, ip: Option<String>, ua: Option<String>) {
+        if device_id.trim().is_empty() {
+            return;
+        }
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        let mut should_save = false;
+        {
+            let mut data = self.data.write().await;
+            if let Some(existing) = data
+                .trusted_devices
+                .iter_mut()
+                .find(|d| d.device_id == device_id)
+            {
+                let seen_gap_ms = now.saturating_sub(existing.last_seen_at);
+                let ip_changed = existing.last_ip != ip;
+                let ua_changed = existing.user_agent != ua;
+                if seen_gap_ms >= 60_000 || ip_changed || ua_changed {
+                    existing.last_seen_at = now;
+                    existing.last_ip = ip;
+                    existing.user_agent = ua;
+                    should_save = true;
+                }
+            } else {
+                data.trusted_devices.push(TrustedDevice {
+                    device_id: device_id.to_string(),
+                    first_seen_at: now,
+                    last_seen_at: now,
+                    last_ip: ip,
+                    user_agent: ua,
+                    trusted: false,
+                });
+                should_save = true;
+            }
+        }
+
+        if should_save {
+            self.save().await;
+        }
+    }
+
+    pub async fn get_trusted_devices(&self) -> Vec<TrustedDevice> {
+        let mut devices = self.data.read().await.trusted_devices.clone();
+        devices.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
+        devices
+    }
+
+    pub async fn is_device_trusted(&self, device_id: &str) -> bool {
+        if device_id.trim().is_empty() {
+            return false;
+        }
+
+        self.data
+            .read()
+            .await
+            .trusted_devices
+            .iter()
+            .any(|d| d.device_id == device_id && d.trusted)
+    }
+
+    pub async fn set_device_trusted(&self, device_id: &str, trusted: bool) -> Option<TrustedDevice> {
+        if device_id.trim().is_empty() {
+            return None;
+        }
+
+        let mut updated = None;
+        {
+            let mut data = self.data.write().await;
+            if let Some(device) = data
+                .trusted_devices
+                .iter_mut()
+                .find(|d| d.device_id == device_id)
+            {
+                device.trusted = trusted;
+                updated = Some(device.clone());
+            }
+        }
+
+        if updated.is_some() {
+            self.save().await;
+        }
+
+        updated
     }
 }

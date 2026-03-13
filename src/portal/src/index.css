@@ -811,6 +811,54 @@ h2 {
   line-height: 1.5;
 }
 
+.settings-group {
+  margin-top: 14px;
+}
+
+.settings-label {
+  color: var(--text);
+}
+
+.settings-select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  padding: 11px 12px;
+  font-size: 16px;
+  outline: none;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.settings-select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+select.settings-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) calc(50% - 2px),
+    calc(100% - 12px) calc(50% - 2px);
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+  padding-right: 34px;
+}
+
+select.settings-select option {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
 .toggle-row {
   margin-top: 14px;
   border: 1px solid var(--border);
