@@ -77,14 +77,6 @@ export default function NSVPlayer({
   const lastExternalSeekRef = useRef<number | null>(null);
   const didApplyPreferredQualityRef = useRef(false);
 
-  const preferNativeHLS = useMemo(() => {
-    if (typeof navigator === 'undefined') return false;
-    const ua = (navigator.userAgent || '').toLowerCase();
-    return (
-      /iphone|ipad|ipod/.test(ua) || (ua.includes('macintosh') && navigator.maxTouchPoints > 1)
-    );
-  }, []);
-
   const src = useMemo(
     () => ({
       src: withAuthQuery(source.src),
@@ -201,7 +193,6 @@ export default function NSVPlayer({
       poster={poster}
       streamType={streamType}
       load="visible"
-      controls
       autoPlay={autoPlay}
       muted={muted}
       playsInline
@@ -217,7 +208,6 @@ export default function NSVPlayer({
         volumeUp: 'ArrowUp',
         volumeDown: 'ArrowDown',
       }}
-      preferNativeHLS={preferNativeHLS}
       aspectRatio="16/9"
       crossOrigin="anonymous"
     >

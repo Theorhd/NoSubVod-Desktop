@@ -14,6 +14,22 @@
   --ring: rgba(143, 87, 255, 0.4);
 }
 
+.media-player[data-view-type="video"] {
+  aspect-ratio: 16 / 9;
+}
+
+.vds-video-layout {
+  --video-brand: hsl(0, 0%, 96%);
+}
+
+.vds-audio-layout {
+  --audio-brand: hsl(0, 0%, 96%);
+}
+
+.plyr {
+  --plyr-color-main: hsl(198, 100%, 50%);
+}
+
 * {
   box-sizing: border-box;
 }
