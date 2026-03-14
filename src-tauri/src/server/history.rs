@@ -211,6 +211,7 @@ impl HistoryStore {
         preferred_video_quality: Option<Option<String>>,
         download_local_path: Option<Option<String>>,
         download_network_shared_path: Option<Option<String>>,
+        launch_at_login: Option<bool>,
     ) -> ExperienceSettings {
         {
             let mut data = self.data.write().await;
@@ -237,6 +238,9 @@ impl HistoryStore {
             }
             if let Some(v) = download_network_shared_path {
                 data.settings.download_network_shared_path = v;
+            }
+            if let Some(v) = launch_at_login {
+                data.settings.launch_at_login = v;
             }
         }
         self.save().await;

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { MediaPlayer, MediaProvider, useMediaRemote, useMediaStore } from '@vidstack/react';
 import { defaultLayoutIcons, DefaultVideoLayout } from '@vidstack/react/player/layouts/default';
 import Hls from 'hls.js';
+import { safeStorageGet } from '../utils/storage.ts';
 
 export type NSVMediaSource = {
   src: string;
@@ -37,12 +38,21 @@ type NSVPlayerProps = {
 
 function withAuthQuery(url: string): string {
   if (!url) return url;
-  const token = sessionStorage.getItem('nsv_token');
-  if (!token) return url;
   if (!url.startsWith('/api/')) return url;
 
+  const token = safeStorageGet(sessionStorage, 'nsv_token');
+  const deviceId = safeStorageGet(localStorage, 'nsv_device_id');
+  const params: string[] = [];
+  if (token) {
+    params.push(`t=${encodeURIComponent(token)}`);
+  }
+  if (deviceId) {
+    params.push(`d=${encodeURIComponent(deviceId)}`);
+  }
+  if (params.length === 0) return url;
+
   const sep = url.includes('?') ? '&' : '?';
-  return `${url}${sep}t=${encodeURIComponent(token)}`;
+  return `${url}${sep}${params.join('&')}`;
 }
 
 function onProviderChange(provider: any) {

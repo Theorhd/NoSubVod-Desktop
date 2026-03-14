@@ -16,6 +16,7 @@ use serde_json::Value;
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tower::ServiceExt;
+use tauri_plugin_autostart::ManagerExt;
 
 use super::{
     auth::OAuthStateStore,
@@ -35,6 +36,7 @@ pub struct ApiState {
     pub oauth: Arc<OAuthStateStore>,
     /// Per-session token required for API access (prevents unauthorized LAN access).
     pub server_token: String,
+    pub app_handle: Option<tauri::AppHandle>,
 }
 
 // ── Authentication middleware ──────────────────────────────────────────────────
@@ -58,7 +60,7 @@ async fn auth_middleware(
     req: axum::extract::Request,
     next: Next,
 ) -> Response {
-    let device_id = req
+    let header_device_id = req
         .headers()
         .get("x-nsv-device-id")
         .and_then(|v| v.to_str().ok())
@@ -105,6 +107,32 @@ async fn auth_middleware(
                     }
                 })
         });
+
+    let query_device_id = req
+        .uri()
+        .query()
+        .and_then(|q| {
+            q.split('&')
+                .find_map(|pair| {
+                    let mut parts = pair.splitn(2, '=');
+                    if parts.next() == Some("d") {
+                        parts
+                            .next()
+                            .and_then(|v| urlencoding::decode(v).ok())
+                            .map(|v| v.into_owned())
+                    } else {
+                        None
+                    }
+                })
+        })
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s.len() <= 128)
+        .filter(|s| {
+            s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        });
+
+    let device_id = header_device_id.or(query_device_id);
 
     let provided = token_from_header.or(token_from_query);
 
@@ -507,12 +535,23 @@ struct SettingsPatch {
     download_local_path: Option<Option<String>>,
     #[serde(rename = "downloadNetworkSharedPath")]
     download_network_shared_path: Option<Option<String>>,
+    #[serde(rename = "launchAtLogin")]
+    launch_at_login: Option<bool>,
 }
 
 async fn handle_update_settings(
     State(state): State<ApiState>,
     Json(patch): Json<SettingsPatch>,
 ) -> Response {
+    if let (Some(handle), Some(launch)) = (state.app_handle.as_ref(), patch.launch_at_login) {
+        let manager = handle.autolaunch();
+        if launch {
+            let _ = manager.enable();
+        } else {
+            let _ = manager.disable();
+        }
+    }
+
     Json(
         state
             .history
@@ -525,6 +564,7 @@ async fn handle_update_settings(
                 patch.preferred_video_quality,
                 patch.download_local_path,
                 patch.download_network_shared_path,
+                patch.launch_at_login,
             )
             .await,
     )
@@ -887,7 +927,16 @@ async fn handle_shared_downloads(
     }
 
     match ServeFile::new(&full_path_canon).oneshot(req).await {
-        Ok(res) => res.into_response(),
+        Ok(res) => {
+            let mut response = res.into_response();
+            if file_path.ends_with(".ts") {
+                response.headers_mut().insert(
+                    header::CONTENT_TYPE,
+                    "video/mp2t".parse().unwrap(),
+                );
+            }
+            response
+        }
         Err(_) => not_found("File not found"),
     }
 }
@@ -1091,8 +1140,9 @@ async fn handle_download_hls(
     };
 
     // Build a byte-range HLS playlist so hls.js can load the file progressively.
-    const CHUNK_BYTES: u64 = 10 * 1024 * 1024; // 10 MB per segment
-    const EST_SECS: f64 = 10.0;
+    // TS packets are 188 bytes. Aligning chunks to multiples of 188 prevents sync errors.
+    const CHUNK_BYTES: u64 = 188 * 50000; // ~9.4 MB per segment, perfectly aligned
+    const EST_SECS: f64 = 12.0;
     let num_chunks = file_size.div_ceil(CHUNK_BYTES);
 
     let mut playlist = format!(
@@ -1100,7 +1150,8 @@ async fn handle_download_hls(
         EST_SECS.ceil() as u64
     );
 
-    let segment_url = format!("/api/shared-downloads/{file_name}");
+    let encoded_name = urlencoding::encode(&file_name);
+    let segment_url = format!("/api/shared-downloads/{encoded_name}?t={}", state.server_token);
     for i in 0..num_chunks {
         let offset = i * CHUNK_BYTES;
         let length = std::cmp::min(CHUNK_BYTES, file_size - offset);
@@ -1208,6 +1259,11 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
             header::CONTENT_TYPE,
             header::AUTHORIZATION,
             "x-nsv-token".parse().unwrap(),
+        ])
+        .expose_headers([
+            header::CONTENT_RANGE,
+            header::CONTENT_LENGTH,
+            header::ACCEPT_RANGES,
         ]);
 
     // Auth callback must remain unauthenticated (Twitch redirects here)
@@ -1283,8 +1339,10 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
     // Serve portal static files if available
     if let Some(portal_path) = portal_dist {
         if portal_path.exists() {
-            router = router
-                .nest_service("/", ServeDir::new(&portal_path).append_index_html_on_directories(true));
+            let serve_dir = ServeDir::new(&portal_path)
+                .append_index_html_on_directories(true)
+                .fallback(ServeFile::new(portal_path.join("index.html")));
+            router = router.nest_service("/", serve_dir);
         }
     } else {
         #[cfg(debug_assertions)]

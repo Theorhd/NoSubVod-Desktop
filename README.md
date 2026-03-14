@@ -2,18 +2,20 @@
 
 NoSubVOD Desktop est une application locale pour regarder des VODs et des lives Twitch depuis n’importe quel appareil du réseau local (mobile, tablette, TV, PC), avec historique, watchlist et portail web intégré.
 
-## 🆕 v0.3.0 — Téléchargements de VOD & Clips, Connexion Twitch & Améliorations UX
+## 🆕 v0.3.1 — Refonte UI Portal, durcissement auth locale & correctifs build/reseau
 
-La version 0.3.0 vient finaliser une étape critique du projet avec le support des téléchargements (VOD entières ou extraits "clips") en arrière-plan et la possibilité très attendue de se connecter avec son propre compte Twitch pour chatter sur les lives.
+La version 0.3.1 consolide le portail React, améliore la robustesse de l'authentification locale (token + device id), et corrige plusieurs points de friction en environnement LAN/CI.
 
-### Points clés v0.3.0
+### Points clés v0.3.1
 
-- **Système de Téléchargement** : Module de traitement asynchrone pour télécharger n'importe quelle VOD à la qualité souhaitée depuis le player.
-- **Support des Clips (Download Mode)** : Sélectionnez manuellement un point de départ et de fin sur une VOD pour créer et enregistrer un extrait exclusif sur votre machine (sans perte ni encodage lourd).
-- **Authentification Twitch** : Associez le logiciel à votre compte Twitch pour envoyer vos propres messages dans les chats en Live, directement depuis l'interface Vidstack de l'application !
-- **Navigation dans les Chapitres (Markers)** : Intégration d'un panneau déroulant affichant la liste des chapitres de la VOD, cliquable pour un "seek" instantané.
-- **Réparations Chat VOD** : Fix du relai du chat, affichant correctement les messages dans l'historique d'une VOD.
-- **Qualité du code** : Passage complet des audits de linter Rust (Clippy) et d'audit de vulnérabilité (Cargo Audit).
+- **UI unifiée et composantisée** : ajout d'une base de composants partagés (TopBar, VODCard, StreamCard, blocs Home) pour homogénéiser l'UX sur Home, Channel, Live, Search, History, Trends et Settings.
+- **Player enrichi** : ajout des panneaux dédiés (infos vidéo, marqueurs, mode clip, chat live) et simplification de la logique du player pour réduire la complexité des vues.
+- **Refactor des données** : extraction de hooks dédiés (`useChannelData`, `useDownloadsData`, `useInfiniteScroll`) afin de séparer plus proprement logique API et rendu UI.
+- **Sécurisation du stockage local** : introduction d'accès sûrs au storage pour le token et le device id, avec injection plus fiable des en-têtes/query d'auth pour les routes API.
+- **Téléchargements plus fiables** : amélioration de la résolution des URL de fichiers partagés avec transmission du token d'accès.
+- **Serveur local renforcé** : fallback statique sur `index.html` pour le portail web et correction des chemins d'icônes.
+- **Autostart desktop** : ajout des permissions et paramètres pour lancer automatiquement l'application à l'ouverture de session.
+- **Sécurité NPM** : mise à jour de `flatted` vers une version corrigée afin de supprimer une vulnérabilité DoS signalée par `npm audit`.
 
 ## 🆕 v0.2.2 — Contrôle Qualité, Raccourcis & Chat Amélioré
 

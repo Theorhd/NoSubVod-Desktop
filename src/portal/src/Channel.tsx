@@ -1,40 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { HistoryEntry, LiveStream, LiveStreamsPage, VOD } from '../../shared/types';
-import { Download as DownloadIcon } from 'lucide-react';
-import DownloadMenu from './components/DownloadMenu';
-
-function formatTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  const hoursPrefix = h > 0 ? `${h}:` : '';
-  return `${hoursPrefix}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-}
-
-function formatViews(views: number): string {
-  if (views >= 1000000) return `${(views / 1000000).toFixed(1)}M views`;
-  if (views >= 1000) return `${(views / 1000).toFixed(1)}K views`;
-  return `${views} views`;
-}
-
-function formatViewers(viewers: number): string {
-  if (viewers >= 1000000) return `${(viewers / 1000000).toFixed(1)}M viewers`;
-  if (viewers >= 1000) return `${(viewers / 1000).toFixed(1)}K viewers`;
-  return `${viewers} viewers`;
-}
-
-type CategoryVodPage = {
-  items: VOD[];
-  hasMore: boolean;
-  nextCursor: string | null;
-};
-
-const MIN_VOD_DURATION_SECONDS = 210;
-
-function filterShortVods(vods: VOD[]): VOD[] {
-  return vods.filter((vod) => (vod.lengthSeconds || 0) >= MIN_VOD_DURATION_SECONDS);
-}
+import { StreamCard } from './components/StreamCard';
+import { VODCard } from './components/VODCard';
+import { TopBar } from './components/TopBar';
+import { useChannelData } from './hooks/useChannelData';
 
 export default function Channel() {
   const [searchParams] = useSearchParams();
@@ -42,228 +11,28 @@ export default function Channel() {
   const category = searchParams.get('category');
   const categoryId = searchParams.get('categoryId');
   const navigate = useNavigate();
-
-  // ── Shared state ──────────────────────────────────────────────────────────
-  const [vods, setVods] = useState<VOD[]>([]);
-  const [liveStream, setLiveStream] = useState<LiveStream | null>(null);
-  const [history, setHistory] = useState<Record<string, HistoryEntry>>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-
-  // ── Category-specific state ───────────────────────────────────────────────
-  const [catLiveStreams, setCatLiveStreams] = useState<LiveStream[]>([]);
-  const [catLiveCursor, setCatLiveCursor] = useState<string | null>(null);
-  const [catLiveHasMore, setCatLiveHasMore] = useState(false);
-  const [catLiveLoading, setCatLiveLoading] = useState(false);
-  const [catVodCursor, setCatVodCursor] = useState<string | null>(null);
-  const [catVodHasMore, setCatVodHasMore] = useState(false);
-  const [catVodLoading, setCatVodLoading] = useState(false);
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
-
-  const title = useMemo(() => {
-    if (category) return category;
-    if (user) return `${user}`;
-    return 'VODs';
-  }, [category, user]);
-
-  // ── Initial load ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!user && !category) {
-      setError('No channel or category specified');
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-
-    if (user) {
-      Promise.all([
-        fetch(`/api/user/${encodeURIComponent(user)}/vods`).then((res) => {
-          if (!res.ok) throw new Error('Failed to fetch VODs');
-          return res.json();
-        }),
-        fetch(`/api/user/${encodeURIComponent(user)}/live`)
-          .then((res) => (res.ok ? res.json() : null))
-          .catch(() => null),
-        fetch('/api/history')
-          .then((res) => (res.ok ? res.json() : {}))
-          .catch(() => ({})),
-      ])
-        .then(([vodsData, liveData, historyData]) => {
-          setVods(filterShortVods(vodsData as VOD[]));
-          setLiveStream((liveData as LiveStream | null) || null);
-          setHistory(historyData as Record<string, HistoryEntry>);
-          setLoading(false);
-        })
-        .catch((err: Error) => {
-          setError(err.message);
-          setLoading(false);
-        });
-    } else if (category) {
-      const categoryVodParams = new URLSearchParams({ name: category, limit: '24' });
-      if (categoryId) categoryVodParams.set('id', categoryId);
-      Promise.all([
-        fetch(`/api/search/category-vods?${categoryVodParams.toString()}`).then((res) => {
-          if (!res.ok) throw new Error('Failed to fetch VODs');
-          return res.json() as Promise<CategoryVodPage>;
-        }),
-        fetch(`/api/live/category?name=${encodeURIComponent(category)}&limit=12`)
-          .then((res) => (res.ok ? (res.json() as Promise<LiveStreamsPage>) : null))
-          .catch(() => null),
-        fetch('/api/history')
-          .then((res) => (res.ok ? res.json() : {}))
-          .catch(() => ({})),
-      ])
-        .then(([vodPage, livePage, historyData]) => {
-          setVods(filterShortVods(vodPage.items || []));
-          setCatVodCursor(vodPage.nextCursor || null);
-          setCatVodHasMore(Boolean(vodPage.hasMore));
-          if (livePage) {
-            setCatLiveStreams(livePage.items || []);
-            setCatLiveCursor(livePage.nextCursor || null);
-            setCatLiveHasMore(Boolean(livePage.hasMore));
-          }
-          setHistory(historyData as Record<string, HistoryEntry>);
-          setLoading(false);
-        })
-        .catch((err: Error) => {
-          setError(err.message);
-          setLoading(false);
-        });
-    }
-  }, [user, category, categoryId]);
-
-  // ── Load more handlers ────────────────────────────────────────────────────
-  const loadMoreCatVods = async () => {
-    if (!category || catVodLoading || !catVodHasMore) return;
-    setCatVodLoading(true);
-    try {
-      const params = new URLSearchParams({ name: category, limit: '24' });
-      if (categoryId) params.set('id', categoryId);
-      if (catVodCursor) params.set('cursor', catVodCursor);
-      const res = await fetch(`/api/search/category-vods?${params.toString()}`);
-      if (!res.ok) throw new Error('Failed to load more VODs');
-      const page = (await res.json()) as CategoryVodPage;
-      if (page.items && page.items.length > 0) {
-        setVods((prev) => {
-          const existingIds = new Set(prev.map((v) => v.id));
-          return [...prev, ...filterShortVods(page.items).filter((v) => !existingIds.has(v.id))];
-        });
-      }
-      setCatVodCursor(page.nextCursor || null);
-      setCatVodHasMore(Boolean(page.hasMore));
-    } catch {
-      // ignore
-    } finally {
-      setCatVodLoading(false);
-    }
-  };
-
-  const loadMoreCatLive = async () => {
-    if (!category || catLiveLoading || !catLiveHasMore) return;
-    setCatLiveLoading(true);
-    try {
-      const params = new URLSearchParams({ name: category, limit: '12' });
-      if (catLiveCursor) params.set('cursor', catLiveCursor);
-      const res = await fetch(`/api/live/category?${params.toString()}`);
-      if (!res.ok) throw new Error('Failed to load more lives');
-      const page = (await res.json()) as LiveStreamsPage;
-      if (page.items && page.items.length > 0) {
-        setCatLiveStreams((prev) => {
-          const existingIds = new Set(prev.map((s) => s.id));
-          return [...prev, ...page.items.filter((s) => !existingIds.has(s.id))];
-        });
-      }
-      setCatLiveCursor(page.nextCursor || null);
-      setCatLiveHasMore(Boolean(page.hasMore));
-    } catch {
-      // ignore
-    } finally {
-      setCatLiveLoading(false);
-    }
-  };
-
-  // ── Watchlist ─────────────────────────────────────────────────────────────
-  const addToWatchlist = async (e: React.MouseEvent, vod: VOD) => {
-    e.preventDefault();
-    e.stopPropagation();
-    try {
-      await fetch('/api/watchlist', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          vodId: vod.id,
-          title: vod.title,
-          previewThumbnailURL: vod.previewThumbnailURL,
-          lengthSeconds: vod.lengthSeconds,
-        }),
-      });
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // ── Render helpers ────────────────────────────────────────────────────────
-  const renderLiveCard = (stream: LiveStream, loginKey?: string) => (
-    <div key={stream.id} className="vod-card live-card">
-      <div className="vod-thumb-wrap">
-        <img
-          src={
-            stream.previewImageURL ||
-            'https://static-cdn.jtvnw.net/ttv-static/404_preview-320x180.jpg'
-          }
-          alt={stream.title}
-          className="vod-thumb"
-        />
-        <div className="vod-chip live-chip">LIVE</div>
-      </div>
-      <div className="vod-body">
-        <div className="vod-owner-row">
-          {stream.broadcaster.profileImageURL && (
-            <img src={stream.broadcaster.profileImageURL} alt={stream.broadcaster.displayName} />
-          )}
-          <span>{stream.broadcaster.displayName}</span>
-        </div>
-        <h3 title={stream.title}>
-          <button
-            type="button"
-            className="stretched-link"
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'inherit',
-              font: 'inherit',
-              padding: 0,
-              textAlign: 'left',
-              cursor: 'pointer',
-            }}
-            onClick={() =>
-              navigate(`/player?live=${encodeURIComponent(loginKey || stream.broadcaster.login)}`)
-            }
-          >
-            {stream.title}
-          </button>
-        </h3>
-        <div className="vod-meta-row">
-          <span>{stream.game?.name || 'No category'}</span>
-          <span className="live-viewers">{formatViewers(stream.viewerCount)}</span>
-        </div>
-      </div>
-    </div>
-  );
+  const {
+    title,
+    isUserMode,
+    isCategoryMode,
+    vods,
+    liveStream,
+    history,
+    loading,
+    error,
+    catLiveStreams,
+    catLiveHasMore,
+    catLiveLoading,
+    catVodHasMore,
+    catVodLoading,
+    loadMoreCatVods,
+    loadMoreCatLive,
+    addToWatchlist,
+  } = useChannelData({ user, category, categoryId });
 
   return (
     <>
-      <div className="top-bar">
-        <div className="bar-main">
-          <button onClick={() => navigate(-1)} className="back-btn" aria-label="Back" type="button">
-            &larr;
-          </button>
-          <h1>{title}</h1>
-        </div>
-      </div>
+      <TopBar mode="back" title={title} />
 
       <div className="container">
         {loading && <div className="status-line">Loading...</div>}
@@ -274,15 +43,21 @@ export default function Channel() {
         )}
 
         {/* User live (user-channel mode) */}
-        {!loading && !error && liveStream && user && (
+        {!loading && !error && liveStream && isUserMode && (
           <div className="block-section" style={{ marginTop: 0 }}>
             <h2>Live</h2>
-            <div className="vod-grid">{renderLiveCard(liveStream, user)}</div>
+            <div className="vod-grid">
+              <StreamCard
+                key={liveStream.id}
+                stream={liveStream}
+                onWatch={(login) => navigate(`/player?live=${encodeURIComponent(login)}`)}
+              />
+            </div>
           </div>
         )}
 
         {/* Category live streams */}
-        {!loading && !error && category && catLiveStreams.length > 0 && (
+        {!loading && !error && isCategoryMode && catLiveStreams.length > 0 && (
           <div className="block-section" style={{ marginTop: 0 }}>
             <div className="section-header-row">
               <h2>Lives en ce moment</h2>
@@ -290,7 +65,15 @@ export default function Channel() {
                 {catLiveStreams.length} stream{catLiveStreams.length > 1 ? 's' : ''}
               </span>
             </div>
-            <div className="vod-grid">{catLiveStreams.map((stream) => renderLiveCard(stream))}</div>
+            <div className="vod-grid">
+              {catLiveStreams.map((stream) => (
+                <StreamCard
+                  key={stream.id}
+                  stream={stream}
+                  onWatch={(login) => navigate(`/player?live=${encodeURIComponent(login)}`)}
+                />
+              ))}
+            </div>
             {catLiveHasMore && (
               <div className="load-more-row">
                 <button
@@ -321,103 +104,17 @@ export default function Channel() {
             <div className="vod-grid">
               {vods.map((vod) => {
                 const hist = history[vod.id];
-                const progress =
-                  hist && hist.duration > 0
-                    ? Math.min(100, (hist.timecode / hist.duration) * 100)
-                    : 0;
                 return (
-                  <div key={vod.id} className="vod-card">
-                    <div className="vod-thumb-wrap">
-                      <img src={vod.previewThumbnailURL} alt={vod.title} className="vod-thumb" />
-                      <div className="vod-chip vod-duration">{formatTime(vod.lengthSeconds)}</div>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void addToWatchlist(e as any, vod);
-                        }}
-                        className="vod-watchlist-btn"
-                        title="Add to watch later"
-                        style={{ position: 'relative', zIndex: 2 }}
-                      >
-                        +
-                      </button>
-                      {progress > 0 && (
-                        <div className="progress-track absolute-track">
-                          <div className="progress-fill" style={{ width: `${progress}%` }} />
-                        </div>
-                      )}
-                    </div>
-                    <div className="vod-body" style={{ position: 'relative' }}>
-                      <h3 title={vod.title}>
-                        <button
-                          type="button"
-                          className="stretched-link"
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: 'inherit',
-                            font: 'inherit',
-                            padding: 0,
-                            textAlign: 'left',
-                            cursor: 'pointer',
-                          }}
-                          onClick={() => navigate(`/player?vod=${vod.id}`)}
-                        >
-                          {vod.title}
-                        </button>
-                      </h3>
-                      <div className="vod-meta-row">
-                        <span>{vod.game?.name || 'No Category'}</span>
-                        <span>{formatViews(vod.viewCount)}</span>
-                      </div>
-                      <div
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                        }}
-                      >
-                        <div className="vod-date">
-                          {new Date(vod.createdAt).toLocaleDateString()}
-                        </div>
-                        <div style={{ position: 'relative', zIndex: 10 }}>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (openMenuId === vod.id) {
-                                setOpenMenuId(null);
-                                setMenuAnchorRect(null);
-                              } else {
-                                setOpenMenuId(vod.id);
-                                setMenuAnchorRect(
-                                  (e.currentTarget as HTMLButtonElement).getBoundingClientRect()
-                                );
-                              }
-                            }}
-                            className="action-btn secondary-btn"
-                            style={{ padding: '4px', borderRadius: '50%' }}
-                            title="Télécharger"
-                          >
-                            <DownloadIcon size={16} />
-                          </button>
-                          {openMenuId === vod.id && (
-                            <DownloadMenu
-                              vodId={vod.id}
-                              title={vod.title}
-                              duration={vod.lengthSeconds}
-                              anchorRect={menuAnchorRect}
-                              onClose={() => {
-                                setOpenMenuId(null);
-                                setMenuAnchorRect(null);
-                              }}
-                            />
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                  <VODCard
+                    key={vod.id}
+                    vod={vod}
+                    onWatch={(id) => navigate(`/player?vod=${id}`)}
+                    historyEntry={hist}
+                    onAddToWatchlist={(e, vodItem) => {
+                      e.stopPropagation();
+                      void addToWatchlist(vodItem);
+                    }}
+                  />
                 );
               })}
             </div>

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { ExperienceSettings, ProxyInfo, TrustedDevice, TwitchStatus } from '../../shared/types';
+import { TopBar } from './components/TopBar';
 
 const defaultSettings: ExperienceSettings = {
   oneSync: false,
@@ -9,37 +9,57 @@ const defaultSettings: ExperienceSettings = {
   adblockProxyMode: 'auto',
   minVideoQuality: 'none',
   preferredVideoQuality: 'auto',
+  launchAtLogin: false,
 };
 
 const ServerExperienceSection = ({ settings, loading, setSettings, setSuccess }: any) => (
   <div className="card settings-card">
     <h2 style={{ marginTop: 0 }}>Server Experience</h2>
-    <p className="settings-description">
-      Active OneSync pour partager les abonnements, l&apos;historique et les éléments synchronisés
-      entre tous les appareils connectés à ton serveur NoSubVOD.
-    </p>
+    <p className="settings-description">Gérez le comportement global de votre serveur NoSubVOD.</p>
     {loading ? (
       <div style={{ color: 'var(--text-muted)' }}>Loading settings...</div>
     ) : (
-      <div className="toggle-row">
-        <span>
-          <strong>
-            <label htmlFor="oneSyncToggle" style={{ marginBottom: 0 }}>
-              OneSync
-            </label>
-          </strong>
-          <small>Synchronise les données entre devices</small>
-        </span>
-        <input
-          id="oneSyncToggle"
-          type="checkbox"
-          checked={settings.oneSync}
-          onChange={(e) => {
-            setSettings((prev: any) => ({ ...prev, oneSync: e.target.checked }));
-            setSuccess('');
-          }}
-        />
-      </div>
+      <>
+        <div className="toggle-row">
+          <span>
+            <strong>
+              <label htmlFor="oneSyncToggle" style={{ marginBottom: 0 }}>
+                OneSync
+              </label>
+            </strong>
+            <small>Synchronise les données entre devices (subs, historique)</small>
+          </span>
+          <input
+            id="oneSyncToggle"
+            type="checkbox"
+            checked={settings.oneSync}
+            onChange={(e) => {
+              setSettings((prev: any) => ({ ...prev, oneSync: e.target.checked }));
+              setSuccess('');
+            }}
+          />
+        </div>
+
+        <div className="toggle-row" style={{ marginTop: '16px' }}>
+          <span>
+            <strong>
+              <label htmlFor="launchAtLoginToggle" style={{ marginBottom: 0 }}>
+                Lancer avec l&apos;OS
+              </label>
+            </strong>
+            <small>Démarre NoSubVOD automatiquement à l&apos;ouverture de session</small>
+          </span>
+          <input
+            id="launchAtLoginToggle"
+            type="checkbox"
+            checked={settings.launchAtLogin}
+            onChange={(e) => {
+              setSettings((prev: any) => ({ ...prev, launchAtLogin: e.target.checked }));
+              setSuccess('');
+            }}
+          />
+        </div>
+      </>
     )}
   </div>
 );
@@ -486,7 +506,6 @@ const TrustedDevicesSection = ({
 };
 
 export default function Settings() {
-  const navigate = useNavigate();
   const [settings, setSettings] = useState<ExperienceSettings>(defaultSettings);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -694,18 +713,7 @@ export default function Settings() {
 
   return (
     <>
-      <div className="top-bar">
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          <button
-            onClick={() => navigate('/')}
-            className="back-btn"
-            aria-label="Retour à l'accueil"
-          >
-            &larr;
-          </button>
-          <h1 style={{ margin: 0 }}>Settings</h1>
-        </div>
-      </div>
+      <TopBar mode="back" title="Settings" />
 
       <div className="container" style={{ maxWidth: '760px' }}>
         <ServerExperienceSection

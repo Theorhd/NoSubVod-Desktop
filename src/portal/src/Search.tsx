@@ -1,12 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { UserInfo } from '../../shared/types';
-
-function formatViewers(value: number): string {
-  if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M viewers`;
-  if (value >= 1000) return `${(value / 1000).toFixed(1)}K viewers`;
-  return `${value} viewers`;
-}
+import { formatViewers } from './utils/formatters.ts';
+import { TopBar } from './components/TopBar';
 
 type SearchGame = {
   id: string;
@@ -74,20 +70,7 @@ export default function Search() {
 
   return (
     <>
-      <div className="top-bar">
-        <div className="bar-main">
-          <h1>
-            <button
-              className="logo-btn"
-              onClick={() => navigate('/')}
-              aria-label="Home"
-              type="button"
-            >
-              Search Twitch
-            </button>
-          </h1>
-        </div>
-      </div>
+      <TopBar mode="back" title="Search Twitch" />
 
       <div className="container">
         <div className="card">
