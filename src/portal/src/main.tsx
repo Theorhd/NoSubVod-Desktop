@@ -4,6 +4,23 @@ import App from './App';
 import './index.css';
 import '@vidstack/react/player/styles/default/theme.css';
 import '@vidstack/react/player/styles/default/layouts/video.css';
+
+function safeStorageGet(storage: Storage, key: string): string {
+  try {
+    return storage.getItem(key) || '';
+  } catch {
+    return '';
+  }
+}
+
+function safeStorageSet(storage: Storage, key: string, value: string): void {
+  try {
+    storage.setItem(key, value);
+  } catch {
+    // Ignore storage write failures (private mode / restricted contexts).
+  }
+}
+
 function createDeviceId(): string {
   const api = globalThis.crypto as Crypto | undefined;
   if (api?.randomUUID) {
@@ -13,9 +30,9 @@ function createDeviceId(): string {
 }
 
 (function initDeviceId() {
-  const existing = localStorage.getItem('nsv_device_id');
+  const existing = safeStorageGet(localStorage, 'nsv_device_id');
   if (!existing) {
-    localStorage.setItem('nsv_device_id', createDeviceId());
+    safeStorageSet(localStorage, 'nsv_device_id', createDeviceId());
   }
 })();
 
@@ -27,7 +44,7 @@ function createDeviceId(): string {
   const params = new URLSearchParams(globalThis.location.search);
   const token = params.get('t');
   if (token) {
-    sessionStorage.setItem('nsv_token', token);
+    safeStorageSet(sessionStorage, 'nsv_token', token);
     // Clean the URL without reloading
     params.delete('t');
     const clean = params.toString();
@@ -51,8 +68,8 @@ function createDeviceId(): string {
     }
     // Only inject token on our own API calls
     if (url.startsWith('/api/') || url.startsWith('api/')) {
-      const token = sessionStorage.getItem('nsv_token');
-      const deviceId = localStorage.getItem('nsv_device_id');
+      const token = safeStorageGet(sessionStorage, 'nsv_token');
+      const deviceId = safeStorageGet(localStorage, 'nsv_device_id');
       const headers = new Headers(init?.headers);
       if (token) {
         if (!headers.has('x-nsv-token')) {

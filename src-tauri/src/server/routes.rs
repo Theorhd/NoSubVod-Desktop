@@ -60,7 +60,7 @@ async fn auth_middleware(
     req: axum::extract::Request,
     next: Next,
 ) -> Response {
-    let device_id = req
+    let header_device_id = req
         .headers()
         .get("x-nsv-device-id")
         .and_then(|v| v.to_str().ok())
@@ -107,6 +107,32 @@ async fn auth_middleware(
                     }
                 })
         });
+
+    let query_device_id = req
+        .uri()
+        .query()
+        .and_then(|q| {
+            q.split('&')
+                .find_map(|pair| {
+                    let mut parts = pair.splitn(2, '=');
+                    if parts.next() == Some("d") {
+                        parts
+                            .next()
+                            .and_then(|v| urlencoding::decode(v).ok())
+                            .map(|v| v.into_owned())
+                    } else {
+                        None
+                    }
+                })
+        })
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s.len() <= 128)
+        .filter(|s| {
+            s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        });
+
+    let device_id = header_device_id.or(query_device_id);
 
     let provided = token_from_header.or(token_from_query);
 

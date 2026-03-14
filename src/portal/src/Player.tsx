@@ -31,6 +31,29 @@ function resolvePlayerTitle(vodId: string | null, liveId: string | null): string
   return 'Player';
 }
 
+function safeStorageGet(storage: Storage, key: string): string {
+  try {
+    return storage.getItem(key) || '';
+  } catch {
+    return '';
+  }
+}
+
+function buildAuthQueryFromStorage(): string {
+  const token = safeStorageGet(sessionStorage, 'nsv_token');
+  const deviceId = safeStorageGet(localStorage, 'nsv_device_id');
+  const parts: string[] = [];
+
+  if (token) {
+    parts.push(`t=${encodeURIComponent(token)}`);
+  }
+  if (deviceId) {
+    parts.push(`d=${encodeURIComponent(deviceId)}`);
+  }
+
+  return parts.join('&');
+}
+
 const Uptime = ({ startedAt }: { startedAt: string }) => {
   const [uptime, setUptime] = useState('');
 
@@ -146,8 +169,9 @@ const LiveChat = ({
       if (disposed) return;
       const protocol = globalThis.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = globalThis.location.host;
-      const token = sessionStorage.getItem('nsv_token') || '';
-      const wsUrl = `${protocol}//${host}/api/live/${encodeURIComponent(liveId)}/chat/ws?t=${encodeURIComponent(token)}`;
+      const authQuery = buildAuthQueryFromStorage();
+      const query = authQuery ? `?${authQuery}` : '';
+      const wsUrl = `${protocol}//${host}/api/live/${encodeURIComponent(liveId)}/chat/ws${query}`;
       ws = new WebSocket(wsUrl);
 
       ws.onmessage = handleWsMessage;
