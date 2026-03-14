@@ -1,20 +1,14 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LiveStatusMap, SubEntry, ExperienceSettings } from '../../../../shared/types';
+import { LiveStatusMap, SubEntry } from '../../../../shared/types';
 
 interface MySubsListProps {
   readonly subs: SubEntry[];
   readonly liveStatus: LiveStatusMap;
-  readonly settings: ExperienceSettings;
   readonly handleDeleteSub: (e: React.MouseEvent, login: string) => Promise<void>;
 }
 
-export default function MySubsList({
-  subs,
-  liveStatus,
-  settings,
-  handleDeleteSub,
-}: MySubsListProps) {
+export default function MySubsList({ subs, liveStatus, handleDeleteSub }: MySubsListProps) {
   const navigate = useNavigate();
 
   return (

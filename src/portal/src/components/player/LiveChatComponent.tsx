@@ -5,6 +5,14 @@ interface LiveChatComponentProps {
   chatScrollRef: React.RefObject<HTMLDivElement | null>;
 }
 
+type LiveChatMessage = {
+  id?: string;
+  type?: string;
+  displayName?: string;
+  color?: string;
+  message?: string;
+};
+
 function buildAuthQueryFromStorage(): string {
   const token = localStorage.getItem('nsv_token');
   const deviceId = localStorage.getItem('nsv_device_id');
@@ -21,7 +29,7 @@ function buildAuthQueryFromStorage(): string {
 }
 
 const LiveChatComponent: React.FC<LiveChatComponentProps> = ({ liveId, chatScrollRef }) => {
-  const [messages, setMessages] = useState<any[]>([]);
+  const [messages, setMessages] = useState<LiveChatMessage[]>([]);
   const [twitchLinked, setTwitchLinked] = useState(false);
   const [twitchDisplayName, setTwitchDisplayName] = useState('');
   const [chatInput, setChatInput] = useState('');
@@ -30,37 +38,39 @@ const LiveChatComponent: React.FC<LiveChatComponentProps> = ({ liveId, chatScrol
 
   useEffect(() => {
     fetch('/api/auth/twitch/status')
-      .then((r) => (r.ok ? r.json() : null))
+      .then((response) => (response.ok ? response.json() : null))
       .then((data) => {
         if (data?.linked) {
           setTwitchLinked(true);
           setTwitchDisplayName(data.userDisplayName || data.userLogin || '');
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        // Ignore status polling failure here.
+      });
   }, []);
 
   const sendMessage = async () => {
-    const msg = chatInput.trim();
-    if (!msg || sending) return;
+    const message = chatInput.trim();
+    if (!message || sending) return;
 
     setSending(true);
     setSendError('');
     try {
-      const res = await fetch(`/api/live/${encodeURIComponent(liveId)}/chat/send`, {
+      const response = await fetch(`/api/live/${encodeURIComponent(liveId)}/chat/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msg }),
+        body: JSON.stringify({ message }),
       });
 
-      if (res.ok) {
+      if (response.ok) {
         setChatInput('');
       } else {
-        const payload = await res.json().catch(() => null);
+        const payload = await response.json().catch(() => null);
         setSendError(payload?.error || 'Message send failed.');
       }
-    } catch (e) {
-      console.error('Failed to send chat message', e);
+    } catch (error) {
+      console.error('Failed to send chat message', error);
       setSendError('Network error while sending message.');
     } finally {
       setSending(false);
@@ -70,31 +80,41 @@ const LiveChatComponent: React.FC<LiveChatComponentProps> = ({ liveId, chatScrol
   const handleWsMessage = useCallback(
     (event: MessageEvent) => {
       try {
-        const data = JSON.parse(event.data);
+        const data = JSON.parse(event.data) as LiveChatMessage;
         if (data.type === 'clear_chat') {
           setMessages([]);
-        } else if (data.type === 'clear_msg') {
-          setMessages((prev) => prev.filter((m) => m.id !== data.id));
-        } else if (data.id) {
-          setMessages((prev) => {
-            const next = [...prev, data];
-            if (next.length > 150) return next.slice(-150);
-            return next;
-          });
-
-          if (chatScrollRef.current) {
-            const { scrollTop, scrollHeight, clientHeight } = chatScrollRef.current;
-            if (scrollHeight - scrollTop - clientHeight < 150) {
-              setTimeout(() => {
-                if (chatScrollRef.current) {
-                  chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-                }
-              }, 50);
-            }
-          }
+          return;
         }
-      } catch (e) {
-        console.error('Failed to parse chat message', e);
+
+        if (data.type === 'clear_msg' && data.id) {
+          setMessages((prev) => prev.filter((msg) => msg.id !== data.id));
+          return;
+        }
+
+        if (!data.id) {
+          return;
+        }
+
+        setMessages((prev) => {
+          const next = [...prev, data];
+          return next.length > 150 ? next.slice(-150) : next;
+        });
+
+        const container = chatScrollRef.current;
+        if (!container) {
+          return;
+        }
+
+        const { scrollTop, scrollHeight, clientHeight } = container;
+        if (scrollHeight - scrollTop - clientHeight < 150) {
+          globalThis.setTimeout(() => {
+            if (chatScrollRef.current) {
+              chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+            }
+          }, 50);
+        }
+      } catch (error) {
+        console.error('Failed to parse chat message', error);
       }
     },
     [chatScrollRef]
@@ -106,25 +126,32 @@ const LiveChatComponent: React.FC<LiveChatComponentProps> = ({ liveId, chatScrol
     let disposed = false;
 
     const connect = () => {
-      if (disposed) return;
+      if (disposed) {
+        return;
+      }
+
       const protocol = globalThis.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = globalThis.location.host;
       const authQuery = buildAuthQueryFromStorage();
       const query = authQuery ? `?${authQuery}` : '';
       const wsUrl = `${protocol}//${host}/api/live/${encodeURIComponent(liveId)}/chat/ws${query}`;
-      ws = new WebSocket(wsUrl);
 
+      ws = new WebSocket(wsUrl);
       ws.onmessage = handleWsMessage;
       ws.onclose = () => {
-        if (!disposed) reconnectTimeout = setTimeout(connect, 3000);
+        if (!disposed) {
+          reconnectTimeout = globalThis.setTimeout(connect, 3000);
+        }
       };
     };
 
     connect();
     return () => {
       disposed = true;
-      clearTimeout(reconnectTimeout);
-      if (ws) ws.close();
+      globalThis.clearTimeout(reconnectTimeout);
+      if (ws) {
+        ws.close();
+      }
     };
   }, [liveId, handleWsMessage]);
 
@@ -146,9 +173,9 @@ const LiveChatComponent: React.FC<LiveChatComponentProps> = ({ liveId, chatScrol
       </div>
 
       <div ref={chatScrollRef} style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
-        {messages.map((message, idx) => (
+        {messages.map((message, index) => (
           <div
-            key={message.id || idx}
+            key={message.id || index}
             style={{
               marginBottom: '8px',
               fontSize: '0.85rem',
@@ -157,9 +184,9 @@ const LiveChatComponent: React.FC<LiveChatComponentProps> = ({ liveId, chatScrol
             }}
           >
             <span style={{ fontWeight: 'bold', color: message.color || '#bf94ff' }}>
-              {message.displayName}:{' '}
+              {message.displayName || 'Unknown'}:{' '}
             </span>
-            <span style={{ color: '#efeff1' }}>{message.message}</span>
+            <span style={{ color: '#efeff1' }}>{message.message || ''}</span>
           </div>
         ))}
       </div>
@@ -177,12 +204,16 @@ const LiveChatComponent: React.FC<LiveChatComponentProps> = ({ liveId, chatScrol
           <input
             type="text"
             value={chatInput}
-            onChange={(e) => {
-              setChatInput(e.target.value);
-              if (sendError) setSendError('');
+            onChange={(event) => {
+              setChatInput(event.target.value);
+              if (sendError) {
+                setSendError('');
+              }
             }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void sendMessage();
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                void sendMessage();
+              }
             }}
             placeholder={`Message as ${twitchDisplayName}`}
             maxLength={500}
@@ -197,8 +228,11 @@ const LiveChatComponent: React.FC<LiveChatComponentProps> = ({ liveId, chatScrol
               outline: 'none',
             }}
           />
+
           <button
-            onClick={() => void sendMessage()}
+            onClick={() => {
+              void sendMessage();
+            }}
             disabled={!chatInput.trim() || sending}
             type="button"
             style={{

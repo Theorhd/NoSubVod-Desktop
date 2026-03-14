@@ -3,7 +3,6 @@ import { VOD } from '../../../../shared/types';
 import { formatSafeClock as formatClock } from '../../utils/formatters';
 
 interface ClipModeProps {
-  currentTime: number;
   duration: number;
   clipStart: number | null;
   clipEnd: number | null;
@@ -15,7 +14,6 @@ interface ClipModeProps {
 }
 
 const ClipMode: React.FC<ClipModeProps> = ({
-  currentTime,
   duration,
   clipStart,
   clipEnd,
@@ -63,9 +61,7 @@ const ClipMode: React.FC<ClipModeProps> = ({
         flexWrap: 'wrap',
       }}
     >
-      <span style={{ color: '#4ade80', fontWeight: 'bold', fontSize: '0.9rem' }}>
-        Clip Mode
-      </span>
+      <span style={{ color: '#4ade80', fontWeight: 'bold', fontSize: '0.9rem' }}>Clip Mode</span>
       <button
         type="button"
         onClick={onSetStart}
@@ -74,9 +70,7 @@ const ClipMode: React.FC<ClipModeProps> = ({
       >
         Set Start
       </button>
-      <span style={{ fontSize: '0.85rem', color: '#adadb8' }}>
-        {formatClock(clipStart || 0)}
-      </span>
+      <span style={{ fontSize: '0.85rem', color: '#adadb8' }}>{formatClock(clipStart || 0)}</span>
       <button
         type="button"
         onClick={onSetEnd}

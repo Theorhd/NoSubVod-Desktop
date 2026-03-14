@@ -10,12 +10,12 @@ type StreamCardProps = {
   showBroadcaster?: boolean;
 };
 
-export const StreamCard: React.FC<StreamCardProps> = ({ 
-  stream, 
-  onWatch, 
-  onCategoryClick, 
+export const StreamCard: React.FC<StreamCardProps> = ({
+  stream,
+  onWatch,
+  onCategoryClick,
   onChannelClick,
-  showBroadcaster = true
+  showBroadcaster = true,
 }) => {
   return (
     <div className="vod-card live-card">
@@ -38,16 +38,24 @@ export const StreamCard: React.FC<StreamCardProps> = ({
               <img src={stream.broadcaster.profileImageURL} alt={stream.broadcaster.displayName} />
             )}
             {onChannelClick ? (
-               <button
-               type="button"
-               style={{ background: 'none', border: 'none', color: 'inherit', font: 'inherit', padding: 0, cursor: 'pointer', fontWeight: 'bold' }}
-               onClick={(e) => {
-                 e.stopPropagation();
-                 onChannelClick(stream.broadcaster.login);
-               }}
-             >
-               {stream.broadcaster.displayName}
-             </button>
+              <button
+                type="button"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'inherit',
+                  font: 'inherit',
+                  padding: 0,
+                  cursor: 'pointer',
+                  fontWeight: 'bold',
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onChannelClick(stream.broadcaster.login);
+                }}
+              >
+                {stream.broadcaster.displayName}
+              </button>
             ) : (
               <span>{stream.broadcaster.displayName}</span>
             )}
@@ -75,7 +83,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({
             {stream.title}
           </button>
         </h3>
-        
+
         <div className="vod-meta-row" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           {stream.game?.name && onCategoryClick ? (
             <button
@@ -102,7 +110,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({
           <span className="live-viewers">{formatViewers(stream.viewerCount)}</span>
         </div>
         {stream.startedAt && (
-           <div className="vod-date">Uptime: {formatUptime(stream.startedAt)}</div>
+          <div className="vod-date">Uptime: {formatUptime(stream.startedAt)}</div>
         )}
       </div>
     </div>

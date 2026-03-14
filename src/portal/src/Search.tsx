@@ -70,7 +70,7 @@ export default function Search() {
 
   return (
     <>
-      <TopBar mode="logo" title="Search Twitch" />
+      <TopBar mode="back" title="Search Twitch" />
 
       <div className="container">
         <div className="card">

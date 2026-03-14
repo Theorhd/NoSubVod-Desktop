@@ -239,7 +239,7 @@ export default function Live() {
       } else if (mode === 'category' && activeCategory) {
         void fetchCategoryPage(activeCategory, nextCursor);
       }
-    }
+    },
   });
 
   // ── Mode switching helpers ────────────────────────────────────────────────

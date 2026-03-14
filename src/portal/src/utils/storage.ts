@@ -1,4 +1,8 @@
-export const safeStorageGet = (storage: Storage, key: string, defaultValue: string = ''): string => {
+export const safeStorageGet = (
+  storage: Storage,
+  key: string,
+  defaultValue: string = ''
+): string => {
   try {
     const item = storage.getItem(key);
     return item ?? defaultValue;

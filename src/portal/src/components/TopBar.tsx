@@ -25,14 +25,24 @@ export function TopBar({
           </button>
         )}
         {mode === 'home' && (
-          <button onClick={() => navigate('/')} className="back-btn" aria-label="Back to Home" type="button">
+          <button
+            onClick={() => navigate('/')}
+            className="back-btn"
+            aria-label="Back to Home"
+            type="button"
+          >
             &larr;
           </button>
         )}
 
         {mode === 'logo' ? (
           <h1>
-            <button className="logo-btn" onClick={onLogoClick || (() => navigate('/'))} aria-label="Home" type="button">
+            <button
+              className="logo-btn"
+              onClick={onLogoClick || (() => navigate('/'))}
+              aria-label="Home"
+              type="button"
+            >
               {title}
             </button>
           </h1>

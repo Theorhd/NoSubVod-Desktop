@@ -11,7 +11,7 @@ export const useInfiniteScroll = ({
   isLoading,
   hasMore,
   onLoadMore,
-  rootMargin = '400px'
+  rootMargin = '400px',
 }: UseInfiniteScrollProps) => {
   const observerRef = useRef<IntersectionObserver | null>(null);
 

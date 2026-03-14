@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { VOD } from '../../shared/types';
 import { useInfiniteScroll } from './hooks/useInfiniteScroll';
@@ -21,7 +21,6 @@ export default function Trends() {
   // ── Pagination state ──
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [allVods, setAllVods] = useState<VOD[]>([]);
-  const isFetchingRef = useRef(false);
 
   useEffect(() => {
     fetch('/api/trends')
@@ -42,9 +41,7 @@ export default function Trends() {
   }, []);
 
   const loadMore = useCallback(() => {
-    if (isFetchingRef.current || visibleCount >= allVods.length) return;
-
-    isFetchingRef.current = true;
+    if (isLoadingMore || visibleCount >= allVods.length) return;
     setIsLoadingMore(true);
 
     // Slight artificial delay to allow UI to render loading state gracefully
@@ -53,19 +50,18 @@ export default function Trends() {
       setVods(allVods.slice(0, nextCount));
       setVisibleCount(nextCount);
       setIsLoadingMore(false);
-      isFetchingRef.current = false;
     }, 150);
-  }, [allVods, visibleCount]);
+  }, [allVods, isLoadingMore, visibleCount]);
 
   const { lastElementRef } = useInfiniteScroll({
-    isLoading: isFetchingRef.current || isInitialLoading,
+    isLoading: isLoadingMore || isInitialLoading,
     hasMore: visibleCount < allVods.length,
-    onLoadMore: loadMore
+    onLoadMore: loadMore,
   });
 
   return (
     <>
-      <TopBar mode="logo" title="Trending VODs" />
+      <TopBar mode="back" title="Trending VODs" />
 
       <div className="container">
         {isInitialLoading && <div className="status-line">Loading trending VODs...</div>}

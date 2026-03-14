@@ -13,9 +13,7 @@ function HistoryItemComponent({ entry, navigate }: HistoryItemProps) {
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
 
   const progress =
-    entry.duration > 0
-      ? Math.min(100, Math.max(0, (entry.timecode / entry.duration) * 100))
-      : 0;
+    entry.duration > 0 ? Math.min(100, Math.max(0, (entry.timecode / entry.duration) * 100)) : 0;
 
   const handleDownloadClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -103,7 +101,7 @@ export default function History() {
 
   return (
     <>
-      <TopBar mode="home" title="Watch History" />
+      <TopBar mode="back" title="Watch History" />
 
       <div className="container">
         {loading && <div className="status-line">Loading history...</div>}
@@ -126,4 +124,3 @@ export default function History() {
     </>
   );
 }
-

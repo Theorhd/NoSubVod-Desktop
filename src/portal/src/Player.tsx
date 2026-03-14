@@ -7,7 +7,6 @@ import MarkerPanel from './components/player/MarkerPanel';
 import ClipMode from './components/player/ClipMode';
 import PlayerInfo from './components/player/PlayerInfo';
 import { formatSafeClock as formatClock } from './utils/formatters.ts';
-import { safeStorageGet } from './utils/storage.ts';
 
 const DEFAULT_SETTINGS: ExperienceSettings = {
   oneSync: false,
@@ -19,21 +18,6 @@ function resolvePlayerTitle(vodId: string | null, liveId: string | null): string
   if (vodId) return `VOD: ${vodId}`;
   if (liveId) return `Live: ${liveId}`;
   return 'Player';
-}
-
-function buildAuthQueryFromStorage(): string {
-  const token = safeStorageGet(sessionStorage, 'nsv_token');
-  const deviceId = safeStorageGet(localStorage, 'nsv_device_id');
-  const parts: string[] = [];
-
-  if (token) {
-    parts.push(`t=${encodeURIComponent(token)}`);
-  }
-  if (deviceId) {
-    parts.push(`d=${encodeURIComponent(deviceId)}`);
-  }
-
-  return parts.join('&');
 }
 
 export default function Player() {
@@ -140,11 +124,15 @@ export default function Player() {
     [vodId]
   );
 
-  useEffect(() => {
-    if (!vodId) return;
-    const offset = Math.floor(currentTime / 60) * 60;
-    void fetchVodChatChunk(offset);
-  }, [currentTime, fetchVodChatChunk, vodId]);
+  const handlePlayerTimeUpdate = useCallback(
+    (time: number) => {
+      setCurrentTime(time);
+      if (!vodId) return;
+      const offset = Math.floor(time / 60) * 60;
+      void fetchVodChatChunk(offset);
+    },
+    [fetchVodChatChunk, vodId]
+  );
 
   useEffect(() => {
     if (chatScrollRef.current) {
@@ -159,18 +147,21 @@ export default function Player() {
   }, []);
 
   useEffect(() => {
-    setPlayerError(null);
-    setChatMessages([]);
-    setMarkers([]);
-    setVodInfo(null);
-    setLiveInfo(null);
-    setCurrentTime(0);
-    setDuration(0);
-    setInitialTime(0);
-    setClipStart(null);
-    setClipEnd(null);
-    setShowDownloadMenu(false);
+    const timeoutId = globalThis.setTimeout(() => {
+      setPlayerError(null);
+      setChatMessages([]);
+      setMarkers([]);
+      setVodInfo(null);
+      setLiveInfo(null);
+      setCurrentTime(0);
+      setDuration(0);
+      setInitialTime(0);
+      setClipStart(null);
+      setClipEnd(null);
+      setShowDownloadMenu(false);
+    }, 0);
     lastChatOffsetRef.current = -1;
+    return () => globalThis.clearTimeout(timeoutId);
   }, [vodId, liveId]);
 
   useEffect(() => {
@@ -411,7 +402,7 @@ export default function Player() {
               minQuality={settings.minVideoQuality}
               autoPlay
               className="nsv-main-player"
-              onTimeUpdate={(time) => setCurrentTime(time)}
+              onTimeUpdate={handlePlayerTimeUpdate}
               onDurationChange={(nextDuration) => setDuration(nextDuration)}
               onPlayStateChange={(playing) => setIsPlaying(playing)}
               onError={(message) => setPlayerError(message)}
@@ -431,7 +422,6 @@ export default function Player() {
 
           {downloadMode && vodId && (
             <ClipMode
-              currentTime={currentTime}
               duration={duration}
               clipStart={clipStart}
               clipEnd={clipEnd}

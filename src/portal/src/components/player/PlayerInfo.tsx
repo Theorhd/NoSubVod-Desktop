@@ -45,9 +45,7 @@ const PlayerInfo: React.FC<PlayerInfoProps> = ({
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '20px' }}>
         <img
           src={
-            liveInfo
-              ? liveInfo.broadcaster?.profileImageURL
-              : vodInfo?.owner?.profileImageURL || ''
+            liveInfo ? liveInfo.broadcaster?.profileImageURL : vodInfo?.owner?.profileImageURL || ''
           }
           alt="Profile"
           style={{
@@ -100,7 +98,7 @@ const PlayerInfo: React.FC<PlayerInfoProps> = ({
                       bottom: '100%',
                       right: 0,
                       marginBottom: '8px',
-                      zIndex: 10
+                      zIndex: 10,
                     }}
                   >
                     <DownloadMenu

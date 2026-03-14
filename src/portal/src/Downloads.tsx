@@ -1,111 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Download as DownloadIcon, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
-import { VOD } from '../../shared/types';
 import NSVPlayer, { NSVMediaSource } from './components/NSVPlayer';
 import { formatSize, formatDurationHuman } from './utils/formatters.ts';
 import { TopBar } from './components/TopBar';
-
-interface DownloadedFile {
-  name: string;
-  size: number;
-  url: string;
-  metadata?: VOD | null;
-}
-
-interface ActiveDownload {
-  vod_id: string;
-  title: string;
-  status: any; // { Queued: null } | { Downloading: null } | { Finished: null } | { Error: string }
-  progress: number;
-  current_time: string;
-  total_duration: number;
-}
-
-const DEBUG_DOWNLOADS = false;
+import { DownloadedFile, useDownloadsData } from './hooks/useDownloadsData';
 
 export default function Downloads() {
-  const [files, setFiles] = useState<DownloadedFile[]>([]);
-  const [activeDownloads, setActiveDownloads] = useState<ActiveDownload[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { files, activeDownloads, loading, resolveDownloadUrl } = useDownloadsData();
   const [playingFile, setPlayingFile] = useState<DownloadedFile | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
 
-  const fetchDownloads = async () => {
-    try {
-      const [filesRes, activeRes] = await Promise.all([
-        fetch('/api/downloads'),
-        fetch('/api/downloads/active'),
-      ]);
-
-      if (DEBUG_DOWNLOADS) {
-        console.log('[Downloads] fetch /api/downloads status:', filesRes.status);
-        console.log('[Downloads] fetch /api/downloads/active status:', activeRes.status);
-      }
-
-      if (filesRes.ok) {
-        const data = await filesRes.json();
-        if (DEBUG_DOWNLOADS) {
-          console.log(
-            '[Downloads] files received:',
-            data.length,
-            'files',
-            data.map((f: any) => ({ name: f.name, size: f.size, url: f.url }))
-          );
-        }
-        setFiles(data);
-      } else {
-        console.error(
-          '[Downloads] /api/downloads failed:',
-          filesRes.status,
-          await filesRes.text().catch(() => '')
-        );
-      }
-
-      if (activeRes.ok) {
-        const data = await activeRes.json();
-        setActiveDownloads(data);
-      }
-    } catch (e) {
-      console.error('[Downloads] Failed to fetch downloads', e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchDownloads();
-    const interval = setInterval(fetchDownloads, 2000); // Poll every 2s
-    return () => clearInterval(interval);
-  }, []);
-
-  const resolveDownloadUrl = (url: string) => {
-    if (!url) {
-      console.warn('[Downloads] resolveDownloadUrl: empty url');
-      return '';
-    }
-    let resolved: string;
-    if (url.startsWith('/api/')) resolved = url;
-    else if (url.startsWith('/shared-downloads/')) resolved = `/api${url}`;
-    else if (url.startsWith('/')) resolved = `/api${url}`;
-    else resolved = `/api/${url}`;
-
-    const token = sessionStorage.getItem('nsv_token');
-    if (token) {
-      const sep = resolved.includes('?') ? '&' : '?';
-      resolved = `${resolved}${sep}t=${encodeURIComponent(token)}`;
-    }
-
-    if (DEBUG_DOWNLOADS) {
-      console.log('[Downloads] resolveDownloadUrl:', url, '->', resolved);
-    }
-    return resolved;
-  };
-
   const isTsFile = (file: DownloadedFile | null) => !!file?.name.toLowerCase().endsWith('.ts');
-
-  useEffect(() => {
-    setPlaybackError(null);
-  }, [playingFile]);
 
   const getPlaybackSource = (file: DownloadedFile | null): NSVMediaSource | null => {
     if (!file) return null;
@@ -180,7 +85,10 @@ export default function Downloads() {
             >
               <h2 style={{ fontSize: '1.2rem', margin: 0 }}>{playingFile.name}</h2>
               <button
-                onClick={() => setPlayingFile(null)}
+                onClick={() => {
+                  setPlaybackError(null);
+                  setPlayingFile(null);
+                }}
                 style={{
                   background: 'none',
                   border: 'none',
@@ -343,12 +251,7 @@ export default function Downloads() {
                   <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                     <button
                       onClick={() => {
-                        console.log('[Downloads] Lire clicked:', {
-                          name: file.name,
-                          url: file.url,
-                          size: file.size,
-                          isTs: isTsFile(file),
-                        });
+                        setPlaybackError(null);
                         setPlayingFile(file);
                         window.scrollTo({ top: 0, behavior: 'smooth' });
                       }}

@@ -247,12 +247,7 @@ export default function Home() {
           handleChannelSearch={handleChannelSearch}
         />
 
-        <MySubsList
-          subs={subs}
-          liveStatus={liveStatus}
-          settings={settings}
-          handleDeleteSub={handleDeleteSub}
-        />
+        <MySubsList subs={subs} liveStatus={liveStatus} handleDeleteSub={handleDeleteSub} />
 
         <HistoryPreview historyPreview={historyPreview} />
 
@@ -302,4 +297,3 @@ export default function Home() {
     </>
   );
 }
-

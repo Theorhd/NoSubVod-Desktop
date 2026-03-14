@@ -19,7 +19,7 @@ export const VODCard: React.FC<VODCardProps> = ({
   onAddToWatchlist,
   historyEntry,
   showOwner,
-  hideDownload
+  hideDownload,
 }) => {
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [anchorRect, setAnchorRect] = React.useState<DOMRect | null>(null);
@@ -62,7 +62,7 @@ export const VODCard: React.FC<VODCardProps> = ({
           </div>
         )}
       </div>
-      
+
       <div className="vod-body" style={{ position: 'relative' }}>
         {showOwner && vod.owner && (
           <div className="vod-owner-row">
@@ -72,7 +72,7 @@ export const VODCard: React.FC<VODCardProps> = ({
             <span>{vod.owner.displayName || 'Unknown Streamer'}</span>
           </div>
         )}
-        
+
         <h3 title={vod.title}>
           <button
             type="button"
@@ -91,13 +91,24 @@ export const VODCard: React.FC<VODCardProps> = ({
             {vod.title}
           </button>
         </h3>
-        
-        <div className="vod-meta-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', gap: '8px', cursor: 'default', position: 'relative', zIndex: 2 }}>
+
+        <div
+          className="vod-meta-row"
+          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              gap: '8px',
+              cursor: 'default',
+              position: 'relative',
+              zIndex: 2,
+            }}
+          >
             <span className="vod-game">{vod.game?.name || 'No Category'}</span>
             <span>{formatViews(vod.viewCount)}</span>
           </div>
-          
+
           {!hideDownload && (
             <div style={{ position: 'relative', zIndex: 3 }}>
               <button
@@ -121,12 +132,9 @@ export const VODCard: React.FC<VODCardProps> = ({
             </div>
           )}
         </div>
-        
-        <div className="vod-date">
-          {new Date(vod.createdAt).toLocaleDateString()}
-        </div>
+
+        <div className="vod-date">{new Date(vod.createdAt).toLocaleDateString()}</div>
       </div>
     </div>
   );
 };
-

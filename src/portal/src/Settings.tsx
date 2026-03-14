@@ -713,7 +713,7 @@ export default function Settings() {
 
   return (
     <>
-      <TopBar mode="home" title="Settings" />
+      <TopBar mode="back" title="Settings" />
 
       <div className="container" style={{ maxWidth: '760px' }}>
         <ServerExperienceSection
