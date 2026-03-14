@@ -8,15 +8,15 @@ import {
   UserInfo,
   WatchlistEntry,
 } from '../../shared/types';
+import ChannelSearchCard from './components/home/ChannelSearchCard';
+import MySubsList from './components/home/MySubsList';
+import HistoryPreview from './components/home/HistoryPreview';
+import WatchlistPreview from './components/home/WatchlistPreview';
+import { TopBar } from './components/TopBar';
 
 const defaultSettings: ExperienceSettings = {
   oneSync: false,
 };
-
-function formatProgress(timecode: number, duration: number): number {
-  if (duration <= 0) return 0;
-  return Math.min(100, Math.max(0, (timecode / duration) * 100));
-}
 
 export default function Home() {
   const navigate = useNavigate();
@@ -212,190 +212,51 @@ export default function Home() {
 
   return (
     <>
-      <div className="top-bar">
-        <div className="bar-main">
-          <h1>
+      <TopBar
+        mode="logo"
+        title="NoSubVod"
+        actions={
+          <>
             <button
-              className="logo-btn"
-              onClick={() => navigate('/')}
-              aria-label="Home"
+              className="add-btn"
+              onClick={() => setShowModal(true)}
+              aria-label="Add sub"
               type="button"
             >
-              NoSubVod
+              +
             </button>
-          </h1>
-        </div>
-        <div className="top-actions">
-          <button
-            className="add-btn"
-            onClick={() => setShowModal(true)}
-            aria-label="Add sub"
-            type="button"
-          >
-            +
-          </button>
-          <button
-            className="settings-btn"
-            onClick={() => navigate('/settings')}
-            aria-label="Open settings"
-            title="Settings"
-            type="button"
-          >
-            ⚙
-          </button>
-        </div>
-      </div>
+            <button
+              className="settings-btn"
+              onClick={() => navigate('/settings')}
+              aria-label="Open settings"
+              title="Settings"
+              type="button"
+            >
+              ⚙
+            </button>
+          </>
+        }
+      />
 
       <div className="container">
-        <div className="card hero-card">
-          <h2>Quick channel search</h2>
-          <p className="card-subtitle">Find a streamer instantly and jump to recent VODs.</p>
-          <form onSubmit={handleChannelSearch}>
-            <div className="input-row">
-              <input
-                type="text"
-                id="channelSearch"
-                placeholder="e.g. Domingo"
-                value={channelSearch}
-                onChange={(e) => setChannelSearch(e.target.value)}
-                autoComplete="off"
-              />
-              <button type="submit" className="action-btn" disabled={isSearchingChannels}>
-                {isSearchingChannels ? '...' : 'Search'}
-              </button>
-            </div>
-          </form>
+        <ChannelSearchCard
+          channelSearch={channelSearch}
+          setChannelSearch={setChannelSearch}
+          isSearchingChannels={isSearchingChannels}
+          searchResults={searchResults}
+          handleChannelSearch={handleChannelSearch}
+        />
 
-          {searchResults.length > 0 && (
-            <div className="sub-list">
-              {searchResults.map((user) => (
-                <div key={user.id} className="sub-item">
-                  <button
-                    type="button"
-                    className="sub-link"
-                    onClick={() => navigate(`/channel?user=${encodeURIComponent(user.login)}`)}
-                  >
-                    <img src={user.profileImageURL} alt={user.displayName} />
-                    <div className="name">{user.displayName}</div>
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <MySubsList
+          subs={subs}
+          liveStatus={liveStatus}
+          settings={settings}
+          handleDeleteSub={handleDeleteSub}
+        />
 
-        <h2>My Subs</h2>
-        <div className="sub-list" style={{ marginBottom: '24px' }}>
-          {subs.length === 0 ? (
-            <div className="empty-state">No subs yet. Click + to add one.</div>
-          ) : (
-            subs.map((sub) => (
-              <div key={sub.login} className="sub-item">
-                <button
-                  type="button"
-                  className="sub-link"
-                  aria-label={`Open ${sub.displayName} channel`}
-                  onClick={() => navigate(`/channel?user=${encodeURIComponent(sub.login)}`)}
-                >
-                  <div className="sub-avatar-wrap">
-                    <img src={sub.profileImageURL} alt={sub.displayName} />
-                    {Boolean(liveStatus[sub.login.toLowerCase()]) && (
-                      <span className="sub-live-badge">LIVE</span>
-                    )}
-                  </div>
-                  <div className="name">{sub.displayName}</div>
-                </button>
-                <button
-                  type="button"
-                  className="delete-btn"
-                  onClick={(e) => {
-                    void handleDeleteSub(e, sub.login);
-                  }}
-                >
-                  &times;
-                </button>
-              </div>
-            ))
-          )}
-        </div>
+        <HistoryPreview historyPreview={historyPreview} />
 
-        <div className="section-head" style={{ marginTop: '0' }}>
-          <h2>History</h2>
-          <button type="button" className="ghost-btn" onClick={() => navigate('/history')}>
-            View all history
-          </button>
-        </div>
-
-        {historyPreview.length === 0 ? (
-          <div className="empty-state">No recent VODs yet.</div>
-        ) : (
-          <div className="history-list history-list-compact">
-            {historyPreview.map((entry) => {
-              const progress = formatProgress(entry.timecode, entry.duration);
-
-              return (
-                <div key={entry.vodId} className="history-item">
-                  <button
-                    type="button"
-                    className="history-item-main"
-                    onClick={() => navigate(`/player?vod=${entry.vodId}`)}
-                  >
-                    <img
-                      src={
-                        entry.vod?.previewThumbnailURL ||
-                        'https://static-cdn.jtvnw.net/ttv-static/404_preview-320x180.jpg'
-                      }
-                      alt={entry.vod?.title || `VOD ${entry.vodId}`}
-                    />
-                    <div className="history-item-content">
-                      <h3 title={entry.vod?.title || entry.vodId}>
-                        {entry.vod?.title || `VOD ${entry.vodId}`}
-                      </h3>
-                      <div className="vod-meta-row">
-                        <span>{entry.vod?.owner?.displayName || 'Unknown channel'}</span>
-                        <span>{entry.vod?.game?.name || 'No category'}</span>
-                      </div>
-                      <div className="progress-track">
-                        <div className="progress-fill" style={{ width: `${progress}%` }} />
-                      </div>
-                    </div>
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {watchlist.length > 0 && (
-          <>
-            <h2>Watch Later</h2>
-            <div className="vod-grid compact-grid">
-              {watchlist.map((vod) => (
-                <div key={vod.vodId} className="watchlist-card">
-                  <button
-                    type="button"
-                    className="watchlist-main"
-                    onClick={() => navigate(`/player?vod=${vod.vodId}`)}
-                  >
-                    <img src={vod.previewThumbnailURL} alt={vod.title} />
-                    <div className="watchlist-body">
-                      <div className="watchlist-title" title={vod.title}>
-                        {vod.title}
-                      </div>
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    className="watchlist-remove"
-                    onClick={() => removeFromWatchlist(vod.vodId)}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
+        <WatchlistPreview watchlist={watchlist} removeFromWatchlist={removeFromWatchlist} />
       </div>
 
       {showModal && (
@@ -441,3 +302,4 @@ export default function Home() {
     </>
   );
 }
+

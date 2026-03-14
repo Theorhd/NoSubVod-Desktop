@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { ExperienceSettings, ProxyInfo, TrustedDevice, TwitchStatus } from '../../shared/types';
+import { TopBar } from './components/TopBar';
 
 const defaultSettings: ExperienceSettings = {
   oneSync: false,
@@ -506,7 +506,6 @@ const TrustedDevicesSection = ({
 };
 
 export default function Settings() {
-  const navigate = useNavigate();
   const [settings, setSettings] = useState<ExperienceSettings>(defaultSettings);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -714,18 +713,7 @@ export default function Settings() {
 
   return (
     <>
-      <div className="top-bar">
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          <button
-            onClick={() => navigate('/')}
-            className="back-btn"
-            aria-label="Retour à l'accueil"
-          >
-            &larr;
-          </button>
-          <h1 style={{ margin: 0 }}>Settings</h1>
-        </div>
-      </div>
+      <TopBar mode="home" title="Settings" />
 
       <div className="container" style={{ maxWidth: '760px' }}>
         <ServerExperienceSection

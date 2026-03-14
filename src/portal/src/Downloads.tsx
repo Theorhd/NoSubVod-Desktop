@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Download as DownloadIcon, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
 import { VOD } from '../../shared/types';
 import NSVPlayer, { NSVMediaSource } from './components/NSVPlayer';
+import { formatSize, formatDurationHuman } from './utils/formatters.ts';
+import { TopBar } from './components/TopBar';
 
 interface DownloadedFile {
   name: string;
@@ -75,21 +77,6 @@ export default function Downloads() {
     const interval = setInterval(fetchDownloads, 2000); // Poll every 2s
     return () => clearInterval(interval);
   }, []);
-
-  const formatSize = (bytes: number) => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Number.parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
-  const formatDuration = (seconds?: number) => {
-    if (!seconds) return '';
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    return h > 0 ? `${h}h ${m}m` : `${m}m`;
-  };
 
   const resolveDownloadUrl = (url: string) => {
     if (!url) {
@@ -171,9 +158,7 @@ export default function Downloads() {
 
   return (
     <>
-      <div className="top-bar">
-        <h1>Downloads</h1>
-      </div>
+      <TopBar mode="logo" title="Downloads" />
 
       <div className="container">
         {playingFile && (
@@ -352,7 +337,7 @@ export default function Downloads() {
                   <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
                     {formatSize(file.size)}
                     {file.metadata?.lengthSeconds
-                      ? ` • ${formatDuration(file.metadata.lengthSeconds)}`
+                      ? ` • ${formatDurationHuman(file.metadata.lengthSeconds)}`
                       : ''}
                   </div>
                   <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>

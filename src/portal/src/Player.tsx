@@ -1,9 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Download as DownloadIcon } from 'lucide-react';
 import { ChatMessage, ExperienceSettings, LiveStream, VideoMarker, VOD } from '../../shared/types';
-import DownloadMenu from './components/DownloadMenu';
 import NSVPlayer from './components/NSVPlayer';
+import LiveChatComponent from './components/player/LiveChatComponent';
+import MarkerPanel from './components/player/MarkerPanel';
+import ClipMode from './components/player/ClipMode';
+import PlayerInfo from './components/player/PlayerInfo';
+import { formatSafeClock as formatClock } from './utils/formatters.ts';
+import { safeStorageGet } from './utils/storage.ts';
 
 const DEFAULT_SETTINGS: ExperienceSettings = {
   oneSync: false,
@@ -11,32 +15,10 @@ const DEFAULT_SETTINGS: ExperienceSettings = {
   preferredVideoQuality: 'auto',
 };
 
-function formatClock(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return '00:00';
-  const totalSeconds = Math.floor(seconds);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const secs = totalSeconds % 60;
-
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  }
-
-  return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-}
-
 function resolvePlayerTitle(vodId: string | null, liveId: string | null): string {
   if (vodId) return `VOD: ${vodId}`;
   if (liveId) return `Live: ${liveId}`;
   return 'Player';
-}
-
-function safeStorageGet(storage: Storage, key: string): string {
-  try {
-    return storage.getItem(key) || '';
-  } catch {
-    return '';
-  }
 }
 
 function buildAuthQueryFromStorage(): string {
@@ -53,245 +35,6 @@ function buildAuthQueryFromStorage(): string {
 
   return parts.join('&');
 }
-
-const Uptime = ({ startedAt }: { startedAt: string }) => {
-  const [uptime, setUptime] = useState('');
-
-  useEffect(() => {
-    const update = () => {
-      const diff = Date.now() - new Date(startedAt).getTime();
-      if (diff < 0) return setUptime('');
-      const h = Math.floor(diff / 3600000);
-      const m = Math.floor((diff % 3600000) / 60000);
-      setUptime(h > 0 ? `${h}h ${m}m` : `${m}m`);
-    };
-
-    update();
-    const int = setInterval(update, 60000);
-    return () => clearInterval(int);
-  }, [startedAt]);
-
-  return <span>{uptime}</span>;
-};
-
-const LiveChat = ({
-  liveId,
-  chatScrollRef,
-}: {
-  liveId: string;
-  chatScrollRef: React.RefObject<HTMLDivElement | null>;
-}) => {
-  const [messages, setMessages] = useState<any[]>([]);
-  const [twitchLinked, setTwitchLinked] = useState(false);
-  const [twitchDisplayName, setTwitchDisplayName] = useState('');
-  const [chatInput, setChatInput] = useState('');
-  const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState('');
-
-  useEffect(() => {
-    fetch('/api/auth/twitch/status')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.linked) {
-          setTwitchLinked(true);
-          setTwitchDisplayName(data.userDisplayName || data.userLogin || '');
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  const sendMessage = async () => {
-    const msg = chatInput.trim();
-    if (!msg || sending) return;
-
-    setSending(true);
-    setSendError('');
-    try {
-      const res = await fetch(`/api/live/${encodeURIComponent(liveId)}/chat/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msg }),
-      });
-
-      if (res.ok) {
-        setChatInput('');
-      } else {
-        const payload = await res.json().catch(() => null);
-        setSendError(payload?.error || 'Message send failed.');
-      }
-    } catch (e) {
-      console.error('Failed to send chat message', e);
-      setSendError('Network error while sending message.');
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const handleWsMessage = useCallback(
-    (event: MessageEvent) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'clear_chat') {
-          setMessages([]);
-        } else if (data.type === 'clear_msg') {
-          setMessages((prev) => prev.filter((m) => m.id !== data.id));
-        } else if (data.id) {
-          setMessages((prev) => {
-            const next = [...prev, data];
-            if (next.length > 150) return next.slice(-150);
-            return next;
-          });
-
-          if (chatScrollRef.current) {
-            const { scrollTop, scrollHeight, clientHeight } = chatScrollRef.current;
-            if (scrollHeight - scrollTop - clientHeight < 150) {
-              setTimeout(() => {
-                if (chatScrollRef.current) {
-                  chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-                }
-              }, 50);
-            }
-          }
-        }
-      } catch (e) {
-        console.error('Failed to parse chat message', e);
-      }
-    },
-    [chatScrollRef]
-  );
-
-  useEffect(() => {
-    let ws: WebSocket;
-    let reconnectTimeout: ReturnType<typeof setTimeout>;
-    let disposed = false;
-
-    const connect = () => {
-      if (disposed) return;
-      const protocol = globalThis.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = globalThis.location.host;
-      const authQuery = buildAuthQueryFromStorage();
-      const query = authQuery ? `?${authQuery}` : '';
-      const wsUrl = `${protocol}//${host}/api/live/${encodeURIComponent(liveId)}/chat/ws${query}`;
-      ws = new WebSocket(wsUrl);
-
-      ws.onmessage = handleWsMessage;
-      ws.onclose = () => {
-        if (!disposed) reconnectTimeout = setTimeout(connect, 3000);
-      };
-    };
-
-    connect();
-    return () => {
-      disposed = true;
-      clearTimeout(reconnectTimeout);
-      if (ws) ws.close();
-    };
-  }, [liveId, handleWsMessage]);
-
-  return (
-    <>
-      <div
-        style={{
-          padding: '15px',
-          borderBottom: '1px solid #3a3a3d',
-          fontWeight: 'bold',
-          color: '#efeff1',
-          fontSize: '0.9rem',
-          display: 'flex',
-          justifyContent: 'space-between',
-        }}
-      >
-        <span>LIVE CHAT</span>
-        <span style={{ fontSize: '0.75rem', color: '#4ade80' }}>Connected</span>
-      </div>
-
-      <div ref={chatScrollRef} style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
-        {messages.map((message, idx) => (
-          <div
-            key={message.id || idx}
-            style={{
-              marginBottom: '8px',
-              fontSize: '0.85rem',
-              lineHeight: '1.4',
-              wordWrap: 'break-word',
-            }}
-          >
-            <span style={{ fontWeight: 'bold', color: message.color || '#bf94ff' }}>
-              {message.displayName}:{' '}
-            </span>
-            <span style={{ color: '#efeff1' }}>{message.message}</span>
-          </div>
-        ))}
-      </div>
-
-      {twitchLinked && (
-        <div
-          style={{
-            padding: '8px',
-            borderTop: '1px solid #3a3a3d',
-            display: 'flex',
-            gap: '6px',
-            flexShrink: 0,
-          }}
-        >
-          <input
-            type="text"
-            value={chatInput}
-            onChange={(e) => {
-              setChatInput(e.target.value);
-              if (sendError) setSendError('');
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void sendMessage();
-            }}
-            placeholder={`Message as ${twitchDisplayName}`}
-            maxLength={500}
-            style={{
-              flex: 1,
-              padding: '6px 10px',
-              background: '#1f1f23',
-              border: '1px solid #3a3a3d',
-              borderRadius: '4px',
-              color: '#efeff1',
-              fontSize: '0.85rem',
-              outline: 'none',
-            }}
-          />
-          <button
-            onClick={() => void sendMessage()}
-            disabled={!chatInput.trim() || sending}
-            style={{
-              padding: '6px 12px',
-              background: '#9146ff',
-              border: 'none',
-              borderRadius: '4px',
-              color: 'white',
-              cursor: 'pointer',
-              fontSize: '0.85rem',
-              opacity: !chatInput.trim() || sending ? 0.5 : 1,
-            }}
-          >
-            {sending ? '...' : 'Send'}
-          </button>
-        </div>
-      )}
-
-      {sendError && (
-        <div
-          style={{
-            padding: '8px 10px',
-            color: '#f87171',
-            fontSize: '0.8rem',
-            borderTop: '1px solid #3a3a3d',
-            background: '#140f12',
-          }}
-        >
-          {sendError}
-        </div>
-      )}
-    </>
-  );
-};
 
 export default function Player() {
   const [searchParams] = useSearchParams();
@@ -675,278 +418,42 @@ export default function Player() {
             />
 
             {!liveId && showMarkers && markers.length > 0 && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '10px',
-                  left: '10px',
-                  backgroundColor: 'rgba(0,0,0,0.85)',
-                  padding: '15px',
-                  borderRadius: '8px',
-                  zIndex: 20,
-                  maxHeight: '80%',
-                  overflowY: 'auto',
-                  border: '1px solid #3a3a3d',
+              <MarkerPanel
+                markers={markers}
+                onSeek={(time) => {
+                  setSeekTo(time);
+                  setShowMarkers(false);
                 }}
-              >
-                <h3 style={{ marginTop: 0, fontSize: '1rem', color: '#fff' }}>Chapters</h3>
-                {markers.map((marker) => (
-                  <button
-                    key={marker.id}
-                    onClick={() => {
-                      setSeekTo(marker.displayTime);
-                      setShowMarkers(false);
-                    }}
-                    style={{
-                      display: 'block',
-                      width: '100%',
-                      textAlign: 'left',
-                      background: 'none',
-                      border: 'none',
-                      color: '#adadb8',
-                      padding: '8px 0',
-                      cursor: 'pointer',
-                      borderBottom: '1px solid #222',
-                    }}
-                  >
-                    <span style={{ color: '#9146ff', fontWeight: 'bold', marginRight: '10px' }}>
-                      {formatClock(marker.displayTime)}
-                    </span>
-                    {marker.description}
-                  </button>
-                ))}
-              </div>
+                onClose={() => setShowMarkers(false)}
+              />
             )}
           </div>
 
           {downloadMode && vodId && (
-            <div
-              style={{
-                display: 'flex',
-                gap: '10px',
-                alignItems: 'center',
-                margin: '12px 16px',
-                background: 'rgba(0,0,0,0.35)',
-                padding: '10px',
-                borderRadius: '10px',
-                flexWrap: 'wrap',
+            <ClipMode
+              currentTime={currentTime}
+              duration={duration}
+              clipStart={clipStart}
+              clipEnd={clipEnd}
+              vodId={vodId}
+              vodInfo={vodInfo}
+              onSetStart={() => setClipStart(currentTime)}
+              onSetEnd={() => setClipEnd(currentTime)}
+              onDownloadStart={() => {
+                setClipStart(null);
+                setClipEnd(null);
               }}
-            >
-              <span style={{ color: '#4ade80', fontWeight: 'bold', fontSize: '0.9rem' }}>
-                Clip Mode
-              </span>
-              <button
-                type="button"
-                onClick={() => setClipStart(currentTime)}
-                className="action-btn"
-                style={{ padding: '5px 10px', fontSize: '0.8rem' }}
-              >
-                Set Start
-              </button>
-              <span style={{ fontSize: '0.85rem', color: '#adadb8' }}>
-                {formatClock(clipStart || 0)}
-              </span>
-              <button
-                type="button"
-                onClick={() => setClipEnd(currentTime)}
-                className="action-btn"
-                style={{ padding: '5px 10px', fontSize: '0.8rem' }}
-              >
-                Set End
-              </button>
-              <span style={{ fontSize: '0.85rem', color: '#adadb8' }}>
-                {formatClock(clipEnd ?? duration)}
-              </span>
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    const res = await fetch('/api/download/start', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        vodId,
-                        title: vodInfo?.title || `Clip ${vodId}`,
-                        quality: 'best',
-                        startTime: clipStart || 0,
-                        endTime: clipEnd ?? duration,
-                        duration,
-                      }),
-                    });
-                    if (res.ok) {
-                      alert('Clip download started in background.');
-                    } else {
-                      throw new Error('Failed to start clip download');
-                    }
-                  } catch (e) {
-                    alert(`Error: ${e}`);
-                  }
-                }}
-                className="action-btn"
-                style={{ marginLeft: 'auto', padding: '5px 12px', fontSize: '0.8rem' }}
-              >
-                Download Selection
-              </button>
-            </div>
+            />
           )}
 
           {!isFullscreen && (vodInfo || liveInfo) && (
-            <div style={{ padding: '20px', backgroundColor: '#07080f', color: '#efeff1', flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '20px' }}>
-                <img
-                  src={
-                    liveInfo
-                      ? liveInfo.broadcaster?.profileImageURL
-                      : vodInfo?.owner?.profileImageURL || ''
-                  }
-                  alt="Profile"
-                  style={{
-                    width: '72px',
-                    height: '72px',
-                    borderRadius: '50%',
-                    objectFit: 'cover',
-                    border: '2px solid #3a3a3d',
-                  }}
-                />
-
-                <div style={{ flex: 1 }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'flex-start',
-                    }}
-                  >
-                    <h1 style={{ margin: '0 0 8px 0', fontSize: '1.4rem', lineHeight: '1.3' }}>
-                      {liveInfo ? liveInfo.title : vodInfo?.title}
-                    </h1>
-
-                    {vodInfo && (
-                      <div style={{ position: 'relative' }}>
-                        <button
-                          className="action-btn"
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            padding: '8px 16px',
-                            borderRadius: '8px',
-                            background: '#9146ff',
-                            color: '#fff',
-                            border: 'none',
-                            fontWeight: 'bold',
-                            cursor: 'pointer',
-                          }}
-                          onClick={() => setShowDownloadMenu((v) => !v)}
-                        >
-                          <DownloadIcon size={18} />
-                          Download
-                        </button>
-                        {showDownloadMenu && (
-                          <div
-                            style={{
-                              position: 'absolute',
-                              bottom: '100%',
-                              right: 0,
-                              marginBottom: '8px',
-                            }}
-                          >
-                            <DownloadMenu
-                              vodId={vodInfo.id}
-                              title={vodInfo.title}
-                              duration={duration}
-                              onClose={() => setShowDownloadMenu(false)}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  <div
-                    style={{
-                      fontWeight: 'bold',
-                      fontSize: '1.1rem',
-                      marginBottom: '10px',
-                      color: '#bf94ff',
-                    }}
-                  >
-                    {liveInfo
-                      ? liveInfo.broadcaster?.displayName
-                      : vodInfo?.owner?.displayName || 'Unknown Streamer'}
-                  </div>
-
-                  <div
-                    style={{
-                      color: '#adadb8',
-                      fontSize: '0.95rem',
-                      display: 'flex',
-                      gap: '20px',
-                      flexWrap: 'wrap',
-                    }}
-                  >
-                    <span
-                      style={{
-                        backgroundColor: '#18181b',
-                        padding: '4px 8px',
-                        borderRadius: '6px',
-                        fontWeight: 'bold',
-                      }}
-                    >
-                      {liveInfo ? liveInfo.game?.name : vodInfo?.game?.name || 'No Category'}
-                    </span>
-
-                    {liveInfo && (
-                      <>
-                        <span
-                          style={{
-                            color: '#eb0400',
-                            fontWeight: 'bold',
-                            backgroundColor: '#18181b',
-                            padding: '4px 8px',
-                            borderRadius: '6px',
-                          }}
-                        >
-                          {liveInfo.viewerCount.toLocaleString()} viewers
-                        </span>
-                        <span
-                          style={{
-                            backgroundColor: '#18181b',
-                            padding: '4px 8px',
-                            borderRadius: '6px',
-                          }}
-                        >
-                          <Uptime startedAt={liveInfo.startedAt} />
-                        </span>
-                      </>
-                    )}
-
-                    {vodInfo && (
-                      <>
-                        <span
-                          style={{
-                            backgroundColor: '#18181b',
-                            padding: '4px 8px',
-                            borderRadius: '6px',
-                          }}
-                        >
-                          {(vodInfo.viewCount || 0).toLocaleString()} views
-                        </span>
-                        <span
-                          style={{
-                            backgroundColor: '#18181b',
-                            padding: '4px 8px',
-                            borderRadius: '6px',
-                          }}
-                        >
-                          {new Date(vodInfo.createdAt).toLocaleDateString()}
-                        </span>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <PlayerInfo
+              vodInfo={vodInfo}
+              liveInfo={liveInfo}
+              duration={duration}
+              showDownloadMenu={showDownloadMenu}
+              onDownloadMenuToggle={(show) => setShowDownloadMenu(show)}
+            />
           )}
 
           {playerError && (
@@ -968,7 +475,7 @@ export default function Player() {
             }}
           >
             {liveId ? (
-              <LiveChat liveId={liveId} chatScrollRef={chatScrollRef} />
+              <LiveChatComponent liveId={liveId} chatScrollRef={chatScrollRef} />
             ) : (
               <>
                 <div

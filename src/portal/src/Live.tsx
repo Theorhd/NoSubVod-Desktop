@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LiveStream, LiveStreamsPage, SubEntry } from '../../shared/types';
+import { useInfiniteScroll } from './hooks/useInfiniteScroll';
+import { StreamCard } from './components/StreamCard';
+import { TopBar } from './components/TopBar';
 
 const PAGE_SIZE = 24;
 
@@ -15,21 +18,6 @@ type TopCategory = {
   name: string;
   boxArtURL: string;
 };
-
-function formatViewers(value: number): string {
-  if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M viewers`;
-  if (value >= 1000) return `${(value / 1000).toFixed(1)}K viewers`;
-  return `${value} viewers`;
-}
-
-function formatUptime(startedAt: string): string {
-  const diffMs = Date.now() - new Date(startedAt).getTime();
-  const hours = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60)));
-  const minutes = Math.max(0, Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60)));
-
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
-}
 
 function computeScore(stream: LiveStream, subLogins: Set<string>): number {
   const login = stream.broadcaster.login.toLowerCase();
@@ -241,35 +229,19 @@ export default function Live() {
   }, [subLogins]);
 
   // ── Infinite scroll observer (only in all/category modes) ────────────────
-  const observerRef = useRef<IntersectionObserver | null>(null);
 
-  const lastElementRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (mode === 'search') return;
-      if (isFetchingRef.current) return;
-
-      if (observerRef.current) {
-        observerRef.current.disconnect();
+  const { lastElementRef } = useInfiniteScroll({
+    isLoading: isFetchingRef.current || mode === 'search',
+    hasMore,
+    onLoadMore: () => {
+      if (mode === 'all') {
+        void fetchAllPage(nextCursor);
+      } else if (mode === 'category' && activeCategory) {
+        void fetchCategoryPage(activeCategory, nextCursor);
       }
+    }
+  });
 
-      if (node) {
-        observerRef.current = new IntersectionObserver(
-          (entries) => {
-            if (entries[0]?.isIntersecting && hasMore && !isFetchingRef.current) {
-              if (mode === 'all') {
-                void fetchAllPage(nextCursor);
-              } else if (mode === 'category' && activeCategory) {
-                void fetchCategoryPage(activeCategory, nextCursor);
-              }
-            }
-          },
-          { rootMargin: '400px' }
-        );
-        observerRef.current.observe(node);
-      }
-    },
-    [mode, hasMore, nextCursor, activeCategory, fetchAllPage, fetchCategoryPage]
-  );
   // ── Mode switching helpers ────────────────────────────────────────────────
   const switchToAll = useCallback(() => {
     setMode('all');
@@ -326,15 +298,7 @@ export default function Live() {
 
   return (
     <>
-      <div className="top-bar">
-        <div className="bar-main">
-          <h1>
-            <button className="logo-btn" onClick={switchToAll} aria-label="Home" type="button">
-              Live Twitch
-            </button>
-          </h1>
-        </div>
-      </div>
+      <TopBar mode="logo" title="Live Twitch" onLogoClick={switchToAll} />
 
       <div className="container">
         {/* ── Search bar ── */}
@@ -403,72 +367,13 @@ export default function Live() {
         {!isInitialLoading && streams.length > 0 && (
           <div className="vod-grid">
             {streams.map((stream) => (
-              <div key={stream.id} className="vod-card live-card">
-                <div className="vod-thumb-wrap">
-                  <img
-                    src={
-                      stream.previewImageURL ||
-                      'https://static-cdn.jtvnw.net/ttv-static/404_preview-320x180.jpg'
-                    }
-                    alt={stream.title}
-                    className="vod-thumb"
-                  />
-                  <div className="vod-chip live-chip">LIVE</div>
-                </div>
-                <div className="vod-body">
-                  <div className="vod-owner-row">
-                    {stream.broadcaster.profileImageURL && (
-                      <img
-                        src={stream.broadcaster.profileImageURL}
-                        alt={stream.broadcaster.displayName}
-                      />
-                    )}
-                    <span>{stream.broadcaster.displayName}</span>
-                  </div>
-                  <h3 title={stream.title}>
-                    <button
-                      type="button"
-                      className="stretched-link"
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: 'inherit',
-                        font: 'inherit',
-                        padding: 0,
-                        textAlign: 'left',
-                        cursor: 'pointer',
-                      }}
-                      onClick={() =>
-                        navigate(`/player?live=${encodeURIComponent(stream.broadcaster.login)}`)
-                      }
-                    >
-                      {stream.title}
-                    </button>
-                  </h3>
-                  <div className="vod-meta-row" style={{ position: 'relative', zIndex: 2 }}>
-                    {stream.game?.name && (
-                      <button
-                        type="button"
-                        className="meta-tag-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          switchToCategory(stream.game!.name);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.stopPropagation();
-                            switchToCategory(stream.game!.name);
-                          }
-                        }}
-                      >
-                        {stream.game.name}
-                      </button>
-                    )}
-                    <span className="live-viewers">{formatViewers(stream.viewerCount)}</span>
-                  </div>
-                  <div className="vod-date">Uptime: {formatUptime(stream.startedAt)}</div>
-                </div>
-              </div>
+              <StreamCard
+                key={stream.id}
+                stream={stream}
+                onWatch={(login) => navigate(`/player?live=${encodeURIComponent(login)}`)}
+                onCategoryClick={switchToCategory}
+                showBroadcaster={true}
+              />
             ))}
           </div>
         )}

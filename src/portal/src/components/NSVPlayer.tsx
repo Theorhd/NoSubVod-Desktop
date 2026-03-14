@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { MediaPlayer, MediaProvider, useMediaRemote, useMediaStore } from '@vidstack/react';
 import { defaultLayoutIcons, DefaultVideoLayout } from '@vidstack/react/player/layouts/default';
 import Hls from 'hls.js';
+import { safeStorageGet } from '../utils/storage.ts';
 
 export type NSVMediaSource = {
   src: string;
@@ -34,14 +35,6 @@ type NSVPlayerProps = {
   onPlayStateChange?: (playing: boolean) => void;
   onError?: (message: string) => void;
 };
-
-function safeStorageGet(storage: Storage, key: string): string {
-  try {
-    return storage.getItem(key) || '';
-  } catch {
-    return '';
-  }
-}
 
 function withAuthQuery(url: string): string {
   if (!url) return url;
