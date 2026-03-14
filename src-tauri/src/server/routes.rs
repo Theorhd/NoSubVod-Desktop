@@ -901,7 +901,16 @@ async fn handle_shared_downloads(
     }
 
     match ServeFile::new(&full_path_canon).oneshot(req).await {
-        Ok(res) => res.into_response(),
+        Ok(res) => {
+            let mut response = res.into_response();
+            if file_path.ends_with(".ts") {
+                response.headers_mut().insert(
+                    header::CONTENT_TYPE,
+                    "video/mp2t".parse().unwrap(),
+                );
+            }
+            response
+        }
         Err(_) => not_found("File not found"),
     }
 }
@@ -1105,8 +1114,9 @@ async fn handle_download_hls(
     };
 
     // Build a byte-range HLS playlist so hls.js can load the file progressively.
-    const CHUNK_BYTES: u64 = 10 * 1024 * 1024; // 10 MB per segment
-    const EST_SECS: f64 = 10.0;
+    // TS packets are 188 bytes. Aligning chunks to multiples of 188 prevents sync errors.
+    const CHUNK_BYTES: u64 = 188 * 50000; // ~9.4 MB per segment, perfectly aligned
+    const EST_SECS: f64 = 12.0;
     let num_chunks = file_size.div_ceil(CHUNK_BYTES);
 
     let mut playlist = format!(
@@ -1114,7 +1124,8 @@ async fn handle_download_hls(
         EST_SECS.ceil() as u64
     );
 
-    let segment_url = format!("/api/shared-downloads/{file_name}");
+    let encoded_name = urlencoding::encode(&file_name);
+    let segment_url = format!("/api/shared-downloads/{encoded_name}?t={}", state.server_token);
     for i in 0..num_chunks {
         let offset = i * CHUNK_BYTES;
         let length = std::cmp::min(CHUNK_BYTES, file_size - offset);
@@ -1222,6 +1233,11 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
             header::CONTENT_TYPE,
             header::AUTHORIZATION,
             "x-nsv-token".parse().unwrap(),
+        ])
+        .expose_headers([
+            header::CONTENT_RANGE,
+            header::CONTENT_LENGTH,
+            header::ACCEPT_RANGES,
         ]);
 
     // Auth callback must remain unauthenticated (Twitch redirects here)

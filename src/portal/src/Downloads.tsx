@@ -101,6 +101,13 @@ export default function Downloads() {
     else if (url.startsWith('/shared-downloads/')) resolved = `/api${url}`;
     else if (url.startsWith('/')) resolved = `/api${url}`;
     else resolved = `/api/${url}`;
+
+    const token = sessionStorage.getItem('nsv_token');
+    if (token) {
+      const sep = resolved.includes('?') ? '&' : '?';
+      resolved = `${resolved}${sep}t=${encodeURIComponent(token)}`;
+    }
+
     if (DEBUG_DOWNLOADS) {
       console.log('[Downloads] resolveDownloadUrl:', url, '->', resolved);
     }
