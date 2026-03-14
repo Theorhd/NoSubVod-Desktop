@@ -84,6 +84,7 @@ export interface ExperienceSettings {
   downloadLocalPath?: string;
   downloadNetworkSharedPath?: string;
   twitchImportFollows?: boolean;
+  launchAtLogin?: boolean;
 }
 
 export interface TwitchStatus {

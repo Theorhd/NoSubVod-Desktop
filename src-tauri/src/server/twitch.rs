@@ -1605,6 +1605,39 @@ impl TwitchService {
         serde_json::from_value(user).map_err(|e| e.to_string())
     }
 
+    pub async fn fetch_related_channels(&self, login: &str, first: usize) -> Vec<String> {
+        let cache_key = format!("related_channels_{login}");
+        if let Some(cached) = self.cache.get(&cache_key) {
+            if let Ok(list) = serde_json::from_value::<Vec<String>>(cached) {
+                return list;
+            }
+        }
+
+        let query = format!(
+            r#"{{"query":"query {{ user(login: \"{}\") {{ relatedLiveChannels(first: {}) {{ edges {{ node {{ login }} }} }} }} }}"}}"#,
+            gql_escape(login),
+            first
+        );
+
+        let Ok(data) = self.gql_post(&query).await else {
+            return vec![];
+        };
+
+        let result: Vec<String> = data["data"]["user"]["relatedLiveChannels"]["edges"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|e| e["node"]["login"].as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if !result.is_empty() {
+            self.cache.set(cache_key, serde_json::to_value(&result).unwrap_or_default(), 86400);
+        }
+        result
+    }
+
     pub async fn fetch_user_vods(&self, username: &str) -> Result<Vec<Vod>, String> {
         let cache_key = format!("vods_{username}");
         if let Some(cached) = self.cache.get(&cache_key) {
@@ -1988,41 +2021,84 @@ impl TwitchService {
         let watched_ids: Vec<String> = history_by_time.iter().map(|e| e.vod_id.clone()).collect();
         let watched_vods = self.fetch_watched_vod_metadata(&watched_ids).await;
         let profile = build_preference_profile(history, &watched_vods, subs);
-        let subs_set: std::collections::HashSet<String> =
+        let subs_set: HashSet<String> =
             subs.iter().map(|s| s.login.to_lowercase()).collect();
 
+        // ── Step 1: Expand source candidates ──
+
+        // Top 5 games (increased from 3)
         let mut top_games: Vec<String> = {
             let mut entries: Vec<_> = profile.game_scores.iter().collect();
             entries.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
-            entries.iter().take(3).map(|(k, _)| (*k).clone()).collect()
+            entries.iter().take(4).map(|(k, _)| (*k).clone()).collect()
         };
         if !top_games.iter().any(|g| g == "Just Chatting") {
             top_games.push("Just Chatting".to_string());
         }
         top_games.dedup();
-        top_games.truncate(4);
+        top_games.truncate(5);
+
+        // Top 5 most-watched channels
+        let top_channels: Vec<String> = {
+            let mut entries: Vec<_> = profile.channel_scores.iter().collect();
+            entries.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
+            entries.iter().take(5).map(|(k, _)| (*k).clone()).collect()
+        };
+
+        // Fetch related channels for top channels to provide variety ("If you like A, you might like B")
+        let mut related_futures = Vec::new();
+        for channel in &top_channels {
+            related_futures.push(self.fetch_related_channels(channel, 3));
+        }
+        let related_results = futures::future::join_all(related_futures).await;
+        let mut related_channels_set: HashSet<String> = HashSet::new();
+        for res in related_results {
+            for ch in res {
+                let login = ch.to_lowercase();
+                if !subs_set.contains(&login) && !profile.channel_scores.contains_key(&login) {
+                    related_channels_set.insert(login);
+                }
+            }
+        }
+
+        // ── Step 2: Fetch all candidate VODs concurrently ──
 
         let mut game_futures = Vec::new();
         for game in &top_games {
-            game_futures.push(self.fetch_game_vods(game, Some(vec!["fr".to_string()]), 35));
-            game_futures.push(self.fetch_game_vods(game, None, 35));
+            // Fetch more VODs per game (40 instead of 35)
+            game_futures.push(self.fetch_game_vods(game, Some(vec!["fr".to_string()]), 40));
+            game_futures.push(self.fetch_game_vods(game, None, 40));
         }
-        let sub_futures: Vec<_> = subs
+
+        let mut channels_to_fetch: HashSet<String> = HashSet::new();
+        // User's subs (up to 20)
+        for sub in subs.iter().take(20) {
+            channels_to_fetch.insert(sub.login.to_lowercase());
+        }
+        // User's top watched channels
+        for ch in &top_channels {
+            channels_to_fetch.insert(ch.clone());
+        }
+        // Discovered related channels
+        for ch in &related_channels_set {
+            channels_to_fetch.insert(ch.clone());
+        }
+
+        let channel_futures: Vec<_> = channels_to_fetch
             .iter()
-            .take(15)
-            .map(|s| self.fetch_user_vods(&s.login))
+            .map(|login| self.fetch_user_vods(login))
             .collect();
 
-        let (game_results, sub_results) = tokio::join!(
+        let (game_results, channel_results) = tokio::join!(
             futures::future::join_all(game_futures),
-            futures::future::join_all(sub_futures),
+            futures::future::join_all(channel_futures),
         );
 
         let all_candidates: Vec<Vod> = game_results
             .into_iter()
             .flatten()
             .chain(
-                sub_results
+                channel_results
                     .into_iter()
                     .flatten()
                     .flatten()
@@ -2036,6 +2112,8 @@ impl TwitchService {
             }
         }
 
+        // ── Step 3: Scoring and Diversity pass ──
+
         let mut scored: Vec<ScoredVod> = deduped
             .into_values()
             .map(|vod| {
@@ -2044,9 +2122,10 @@ impl TwitchService {
             })
             .collect();
         scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(200);
+        // Increase truncation limit to allow more candidates to survive for the diversity pass
+        scored.truncate(400);
 
-        // ── Diversity pass: cap same-channel VODs to avoid feed monopolisation ──
+        // Diversity pass: cap same-channel VODs to avoid feed monopolisation
         {
             let mut channel_count: HashMap<String, usize> = HashMap::new();
             scored.retain(|sv| {
@@ -2056,16 +2135,20 @@ impl TwitchService {
                     .as_ref()
                     .map(|o| o.login.to_lowercase())
                     .unwrap_or_default();
-                // Subs/watched channels get up to 3 slots; others get 2
-                let max_slots = if subs_set.contains(&login)
-                    || sv.vod.owner.as_ref().map(|o| {
-                        profile.channel_scores.contains_key(&o.login.to_lowercase())
-                    }).unwrap_or(false)
-                {
+                
+                let is_favorite = subs_set.contains(&login) 
+                    || profile.channel_scores.contains_key(&login);
+                let is_related = related_channels_set.contains(&login);
+
+                // Subs/favorites get 4 slots; related channels 3; others 2
+                let max_slots = if is_favorite {
+                    4
+                } else if is_related {
                     3
                 } else {
                     2
                 };
+
                 let count = channel_count.entry(login).or_insert(0);
                 if *count < max_slots {
                     *count += 1;
@@ -2075,6 +2158,7 @@ impl TwitchService {
                 }
             });
         }
+
         let total_lang_weight: f64 = profile.language_scores.values().sum();
         let foreign_weight: f64 = profile
             .language_scores
@@ -2089,10 +2173,10 @@ impl TwitchService {
         };
         let foreign_ratio = clamp(0.16 + foreign_affinity * 0.35, 0.16, 0.4);
 
-        let feed = interleave_localized_feed(scored, foreign_ratio, 100);
+        let feed = interleave_localized_feed(scored, foreign_ratio, 120);
 
         let val = serde_json::to_value(&feed).unwrap_or_default();
-        self.cache.set(cache_key, val, 900);
+        self.cache.set(cache_key, val, 1800); // 30 mins cache
         Ok(feed)
     }
 

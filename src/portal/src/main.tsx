@@ -4,8 +4,20 @@ import App from './App';
 import './index.css';
 import '@vidstack/react/player/styles/default/theme.css';
 import '@vidstack/react/player/styles/default/layouts/video.css';
+import { safeStorageGet, safeStorageSet } from './utils/storage.ts';
+
+function normalizeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'object' && error !== null) {
+    return JSON.stringify(error);
+  }
+  return String(error);
+}
+
 function createDeviceId(): string {
-  const api = globalThis.crypto as Crypto | undefined;
+  const api = globalThis.crypto;
   if (api?.randomUUID) {
     return `dev_${api.randomUUID().replaceAll('-', '')}`;
   }
@@ -13,9 +25,9 @@ function createDeviceId(): string {
 }
 
 (function initDeviceId() {
-  const existing = localStorage.getItem('nsv_device_id');
+  const existing = safeStorageGet(localStorage, 'nsv_device_id');
   if (!existing) {
-    localStorage.setItem('nsv_device_id', createDeviceId());
+    safeStorageSet(localStorage, 'nsv_device_id', createDeviceId());
   }
 })();
 
@@ -27,7 +39,7 @@ function createDeviceId(): string {
   const params = new URLSearchParams(globalThis.location.search);
   const token = params.get('t');
   if (token) {
-    sessionStorage.setItem('nsv_token', token);
+    safeStorageSet(sessionStorage, 'nsv_token', token);
     // Clean the URL without reloading
     params.delete('t');
     const clean = params.toString();
@@ -51,8 +63,8 @@ function createDeviceId(): string {
     }
     // Only inject token on our own API calls
     if (url.startsWith('/api/') || url.startsWith('api/')) {
-      const token = sessionStorage.getItem('nsv_token');
-      const deviceId = localStorage.getItem('nsv_device_id');
+      const token = safeStorageGet(sessionStorage, 'nsv_token');
+      const deviceId = safeStorageGet(localStorage, 'nsv_device_id');
       const headers = new Headers(init?.headers);
       if (token) {
         if (!headers.has('x-nsv-token')) {
@@ -82,7 +94,7 @@ class AppErrorBoundary extends React.Component<React.PropsWithChildren, AppError
   public static getDerivedStateFromError(error: unknown): AppErrorBoundaryState {
     return {
       hasError: true,
-      message: error instanceof Error ? error.message : String(error),
+      message: normalizeErrorMessage(error),
     };
   }
 
@@ -106,7 +118,7 @@ class AppErrorBoundary extends React.Component<React.PropsWithChildren, AppError
   }
 }
 
-ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
+ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <AppErrorBoundary>
       <App />

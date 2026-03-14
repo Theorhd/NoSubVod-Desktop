@@ -221,6 +221,8 @@ pub struct ExperienceSettings {
     pub twitch_user_avatar: Option<String>,
     #[serde(rename = "twitchImportFollows", default)]
     pub twitch_import_follows: bool,
+    #[serde(rename = "launchAtLogin", default)]
+    pub launch_at_login: bool,
 }
 
 /// Root of the persisted JSON file.

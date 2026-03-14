@@ -68,6 +68,7 @@ impl AppState {
             download,
             oauth,
             server_token,
+            app_handle: None,
         };
 
         Self {
@@ -119,7 +120,10 @@ pub async fn start_server(state: Arc<AppState>, app: AppHandle) {
     // Resolve portal dist directory in release (bundled resources first).
     let portal_dist = resolve_portal_dist(&app);
 
-    let router = build_router(state.api_state.clone(), portal_dist.clone());
+    let mut api_state = state.api_state.clone();
+    api_state.app_handle = Some(app);
+
+    let router = build_router(api_state, portal_dist.clone());
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], SERVER_PORT));
 
     match TcpListener::bind(addr).await {
