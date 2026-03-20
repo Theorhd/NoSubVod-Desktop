@@ -880,7 +880,7 @@ async fn handle_dev_portal_redirect(headers: axum::http::HeaderMap, uri: axum::h
         .map(|pq| pq.as_str())
         .unwrap_or("/");
 
-    Redirect::temporary(&format!("http://{host_without_port}:5173{path_and_query}"))
+    Redirect::temporary(&format!("https://{host_without_port}:5173{path_and_query}"))
 }
 
 async fn handle_shared_downloads(

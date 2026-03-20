@@ -111,6 +111,15 @@ npm ci
 npm run dev
 ```
 
+Le portail LAN tourne en **HTTPS** sur le port `5173` pour autoriser l'acces camera sur mobile (iOS/Android).
+Au premier acces, le navigateur peut afficher un avertissement de certificat local: acceptez-le pour continuer.
+
+URL type a ouvrir sur mobile:
+
+```text
+https://<ip-locale-du-pc>:5173
+```
+
 ### Qualité code
 
 ```bash
@@ -130,6 +139,7 @@ npm run build
 
 - Le portail local doit être accessible sur le même réseau local que l’appareil client.
 - Certaines disponibilités de contenus dépendent des endpoints Twitch.
+- En build desktop (.exe), le portail public mobile est servi en HTTPS sur `23456` et l'API interne reste en HTTP sur `23455`.
 
 ---
 

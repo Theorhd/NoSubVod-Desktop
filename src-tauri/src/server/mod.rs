@@ -9,10 +9,14 @@ pub mod types;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[cfg(not(debug_assertions))]
+use axum_server::tls_rustls::RustlsConfig;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use image::ImageEncoder;
 use qrcode::QrCode;
+#[cfg(not(debug_assertions))]
+use rcgen::generate_simple_self_signed;
 use tauri::AppHandle;
 #[cfg(not(debug_assertions))]
 use tauri::Manager;
@@ -26,6 +30,8 @@ use twitch::TwitchService;
 use types::ServerInfo;
 
 pub const SERVER_PORT: u16 = 23455;
+#[cfg(not(debug_assertions))]
+pub const SERVER_HTTPS_PORT: u16 = 23456;
 
 pub struct AppState {
     pub server_info: ServerInfo,
@@ -45,12 +51,17 @@ impl AppState {
         #[cfg(debug_assertions)]
         let portal_port = 5173u16;
         #[cfg(not(debug_assertions))]
-        let portal_port = port;
+        let portal_port = SERVER_HTTPS_PORT;
+
+        #[cfg(debug_assertions)]
+        let portal_scheme = "https";
+        #[cfg(not(debug_assertions))]
+        let portal_scheme = "http";
 
         // Generate a per-session authentication token to protect API endpoints
         let server_token = Uuid::new_v4().to_string().replace('-', "");
 
-        let url = format!("http://{ip}:{portal_port}?t={server_token}");
+        let url = format!("{portal_scheme}://{ip}:{portal_port}?t={server_token}");
         let qrcode = generate_qr_data_url(&url);
 
         let server_info = ServerInfo {
@@ -124,11 +135,26 @@ pub async fn start_server(state: Arc<AppState>, app: AppHandle) {
     api_state.app_handle = Some(app);
 
     let router = build_router(api_state, portal_dist.clone());
-    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], SERVER_PORT));
+    let http_addr = std::net::SocketAddr::from(([0, 0, 0, 0], SERVER_PORT));
 
-    match TcpListener::bind(addr).await {
+    #[cfg(not(debug_assertions))]
+    {
+        let https_router = router.clone();
+        match ensure_or_create_tls_files(&app, &state.server_info.ip) {
+            Ok((cert_path, key_path)) => {
+                tauri::async_runtime::spawn(async move {
+                    start_https_server(https_router, cert_path, key_path).await;
+                });
+            }
+            Err(e) => {
+                eprintln!("[NoSubVOD] Failed to initialize TLS files: {e}");
+            }
+        }
+    }
+
+    match TcpListener::bind(http_addr).await {
         Ok(listener) => {
-            eprintln!("[NoSubVOD] HTTP server listening on {addr}");
+            eprintln!("[NoSubVOD] HTTP server listening on {http_addr}");
             #[cfg(not(debug_assertions))]
             match &portal_dist {
                 Some(path) => eprintln!("[NoSubVOD] Serving portal from {}", path.display()),
@@ -141,6 +167,61 @@ pub async fn start_server(state: Arc<AppState>, app: AppHandle) {
         Err(e) => {
             eprintln!("[NoSubVOD] Failed to bind port {SERVER_PORT}: {e}");
         }
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn ensure_or_create_tls_files(app: &AppHandle, ip: &str) -> Result<(PathBuf, PathBuf), String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Unable to resolve app data directory: {e}"))?;
+
+    let tls_dir = app_data_dir.join("tls");
+    std::fs::create_dir_all(&tls_dir)
+        .map_err(|e| format!("Unable to create TLS directory {}: {e}", tls_dir.display()))?;
+
+    let cert_path = tls_dir.join("portal-cert.pem");
+    let key_path = tls_dir.join("portal-key.pem");
+
+    if cert_path.exists() && key_path.exists() {
+        return Ok((cert_path, key_path));
+    }
+
+    let mut subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
+    if ip != "127.0.0.1" {
+        subject_alt_names.push(ip.to_string());
+    }
+
+    let certified = generate_simple_self_signed(subject_alt_names)
+        .map_err(|e| format!("Unable to generate self-signed TLS certificate: {e}"))?;
+
+    std::fs::write(&cert_path, certified.cert.pem())
+        .map_err(|e| format!("Unable to write certificate {}: {e}", cert_path.display()))?;
+    std::fs::write(&key_path, certified.signing_key.serialize_pem())
+        .map_err(|e| format!("Unable to write private key {}: {e}", key_path.display()))?;
+
+    Ok((cert_path, key_path))
+}
+
+#[cfg(not(debug_assertions))]
+async fn start_https_server(router: axum::Router, cert_path: PathBuf, key_path: PathBuf) {
+    let https_addr = std::net::SocketAddr::from(([0, 0, 0, 0], SERVER_HTTPS_PORT));
+
+    let config = match RustlsConfig::from_pem_file(cert_path, key_path).await {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("[NoSubVOD] Failed to build rustls config: {e}");
+            return;
+        }
+    };
+
+    eprintln!("[NoSubVOD] HTTPS server listening on {https_addr}");
+    if let Err(e) = axum_server::bind_rustls(https_addr, config)
+        .serve(router.into_make_service())
+        .await
+    {
+        eprintln!("[NoSubVOD] HTTPS server error: {e}");
     }
 }
 

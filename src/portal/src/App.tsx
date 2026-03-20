@@ -1,6 +1,8 @@
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense, lazy, useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { TrendingUp, Home as HomeIcon, Search as SearchIcon, Radio, Download } from 'lucide-react';
+import Login from './Login';
+import { safeStorageGet } from './utils/storage.ts';
 
 const Home = lazy(() => import('./Home'));
 const Channel = lazy(() => import('./Channel'));
@@ -53,6 +55,54 @@ function BottomNav() {
 }
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    const existingToken =
+      safeStorageGet(sessionStorage, 'nsv_token') || safeStorageGet(localStorage, 'nsv_token');
+    if (existingToken) return true;
+
+    try {
+      const currentUrl = new URL(globalThis.location.href);
+      const queryToken = currentUrl.searchParams.get('t')?.trim();
+      if (queryToken) {
+        sessionStorage.setItem('nsv_token', queryToken);
+        localStorage.setItem('nsv_token', queryToken);
+        return true;
+      }
+    } catch {
+      // Ignore malformed URL edge-cases.
+    }
+
+    return false;
+  });
+
+  useEffect(() => {
+    try {
+      const currentUrl = new URL(globalThis.location.href);
+      const queryToken = currentUrl.searchParams.get('t')?.trim();
+      if (!queryToken) return;
+
+      currentUrl.searchParams.delete('t');
+      const cleanUrl = `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`;
+      globalThis.history.replaceState({}, '', cleanUrl || '/');
+    } catch {
+      // Ignore malformed URL edge-cases.
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleStorageChange = () => {
+      const token =
+        safeStorageGet(sessionStorage, 'nsv_token') || safeStorageGet(localStorage, 'nsv_token');
+      setIsAuthenticated(!!token);
+    };
+    globalThis.addEventListener('storage', handleStorageChange);
+    return () => globalThis.removeEventListener('storage', handleStorageChange);
+  }, []);
+
+  if (!isAuthenticated) {
+    return <Login />;
+  }
+
   return (
     <Router>
       <div className="app-container">

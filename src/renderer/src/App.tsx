@@ -14,7 +14,7 @@ export default function App() {
         setServerInfo({
           ip: '127.0.0.1',
           port: 23455,
-          url: 'http://127.0.0.1:23455',
+          url: 'https://127.0.0.1:5173',
           qrcode: '',
         });
       });
