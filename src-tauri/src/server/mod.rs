@@ -136,7 +136,7 @@ pub async fn start_server(state: Arc<AppState>, app: AppHandle) {
     let portal_dist = resolve_portal_dist(&app);
 
     let mut api_state = state.api_state.clone();
-    api_state.app_handle = Some(app);
+    api_state.app_handle = Some(app.clone());
 
     let router = build_router(api_state, portal_dist.clone());
     let http_addr = std::net::SocketAddr::from(([0, 0, 0, 0], SERVER_PORT));
@@ -202,7 +202,7 @@ fn ensure_or_create_tls_files(app: &AppHandle, ip: &str) -> Result<(PathBuf, Pat
 
     std::fs::write(&cert_path, certified.cert.pem())
         .map_err(|e| format!("Unable to write certificate {}: {e}", cert_path.display()))?;
-    std::fs::write(&key_path, certified.signing_key.serialize_pem())
+    std::fs::write(&key_path, certified.key_pair.serialize_pem())
         .map_err(|e| format!("Unable to write private key {}: {e}", key_path.display()))?;
 
     Ok((cert_path, key_path))
