@@ -11,10 +11,18 @@ use tauri::{
 
 use server::AppState;
 
+fn init_rustls_crypto_provider() {
+    // rustls 0.23 may require explicit provider installation when both
+    // providers are enabled through the dependency graph.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Load .env from the directory next to the binary (src-tauri/ in dev)
     dotenvy::dotenv().ok();
+    init_rustls_crypto_provider();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())

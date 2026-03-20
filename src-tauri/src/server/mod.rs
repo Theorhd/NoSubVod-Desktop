@@ -59,7 +59,7 @@ impl AppState {
         #[cfg(debug_assertions)]
         let portal_scheme = "https";
         #[cfg(not(debug_assertions))]
-        let portal_scheme = "http";
+        let portal_scheme = "https";
 
         // Generate a per-session authentication token to protect API endpoints
         let server_token = Uuid::new_v4().to_string().replace('-', "");
@@ -188,10 +188,6 @@ fn ensure_or_create_tls_files(app: &AppHandle, ip: &str) -> Result<(PathBuf, Pat
     let cert_path = tls_dir.join("portal-cert.pem");
     let key_path = tls_dir.join("portal-key.pem");
 
-    if cert_path.exists() && key_path.exists() {
-        return Ok((cert_path, key_path));
-    }
-
     let mut subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
     if ip != "127.0.0.1" {
         subject_alt_names.push(ip.to_string());
@@ -200,6 +196,8 @@ fn ensure_or_create_tls_files(app: &AppHandle, ip: &str) -> Result<(PathBuf, Pat
     let certified = generate_simple_self_signed(subject_alt_names)
         .map_err(|e| format!("Unable to generate self-signed TLS certificate: {e}"))?;
 
+    // Always rewrite cert/key on startup so we don't get stuck with stale or
+    // corrupted PEM files from a previous install/run.
     std::fs::write(&cert_path, certified.cert.pem())
         .map_err(|e| format!("Unable to write certificate {}: {e}", cert_path.display()))?;
     std::fs::write(&key_path, certified.key_pair.serialize_pem())
@@ -209,13 +207,24 @@ fn ensure_or_create_tls_files(app: &AppHandle, ip: &str) -> Result<(PathBuf, Pat
 }
 
 #[cfg(not(debug_assertions))]
-async fn start_https_server(router: axum::Router, cert_path: PathBuf, key_path: PathBuf) {
+async fn start_https_server(
+    router: axum::Router,
+    cert_path: PathBuf,
+    key_path: PathBuf,
+) {
     let https_addr = std::net::SocketAddr::from(([0, 0, 0, 0], SERVER_HTTPS_PORT));
+
+    let cert_path_for_log = cert_path.clone();
+    let key_path_for_log = key_path.clone();
 
     let config = match RustlsConfig::from_pem_file(cert_path, key_path).await {
         Ok(config) => config,
         Err(e) => {
-            eprintln!("[NoSubVOD] Failed to build rustls config: {e}");
+            eprintln!(
+                "[NoSubVOD] Failed to build rustls config from cert={} key={}: {e}",
+                cert_path_for_log.display(),
+                key_path_for_log.display()
+            );
             return;
         }
     };
