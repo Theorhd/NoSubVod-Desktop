@@ -345,6 +345,29 @@ impl ScreenShareService {
                     roles.insert(client_id.to_string(), role.clone());
                 }
 
+                let peers = {
+                    let roles = self.client_roles.read().await;
+                    roles
+                        .iter()
+                        .filter(|(id, _)| id.as_str() != client_id)
+                        .map(|(id, role)| {
+                            serde_json::json!({
+                                "clientId": id,
+                                "role": role,
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                };
+
+                self.send_to_client(
+                    client_id,
+                    serde_json::json!({
+                        "type": "peers",
+                        "peers": peers,
+                    }),
+                )
+                .await;
+
                 self.recompute_viewers().await;
                 self.broadcast_json(
                     serde_json::json!({

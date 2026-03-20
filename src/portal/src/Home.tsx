@@ -4,7 +4,6 @@ import {
   ExperienceSettings,
   HistoryVodEntry,
   LiveStatusMap,
-  ScreenShareSourceType,
   SubEntry,
   UserInfo,
   WatchlistEntry,
@@ -28,12 +27,9 @@ export default function Home() {
   const [liveStatus, setLiveStatus] = useState<LiveStatusMap>({});
 
   const [showModal, setShowModal] = useState(false);
-  const [showStreamModal, setShowStreamModal] = useState(false);
   const [streamerInput, setStreamerInput] = useState('');
   const [modalError, setModalError] = useState('');
   const [isSearchingStreamer, setIsSearchingStreamer] = useState(false);
-  const [isStartingStream, setIsStartingStream] = useState(false);
-  const [streamError, setStreamError] = useState('');
 
   const [channelSearch, setChannelSearch] = useState('');
   const [searchResults, setSearchResults] = useState<UserInfo[]>([]);
@@ -214,36 +210,6 @@ export default function Home() {
     saveSubsLocal(subs.filter((sub) => sub.login !== login));
   };
 
-  const handleStartScreenShare = async (sourceType: ScreenShareSourceType) => {
-    setIsStartingStream(true);
-    setStreamError('');
-
-    try {
-      const response = await fetch('/api/screenshare/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceType }),
-      });
-
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(payload?.error || 'Unable to start screen share session.');
-      }
-
-      const payload = (await response.json()) as { sessionId?: string | null };
-      if (payload.sessionId) {
-        localStorage.setItem('nsv_screenshare_host_session', payload.sessionId);
-      }
-
-      setShowStreamModal(false);
-      navigate('/screen-share');
-    } catch (error: any) {
-      setStreamError(error?.message || 'Unable to start screen share session.');
-    } finally {
-      setIsStartingStream(false);
-    }
-  };
-
   return (
     <>
       <TopBar
@@ -251,14 +217,6 @@ export default function Home() {
         title="NoSubVod"
         actions={
           <>
-            <button
-              className="stream-btn"
-              onClick={() => setShowStreamModal(true)}
-              aria-label="Start screen share"
-              type="button"
-            >
-              Lancer une diffusion
-            </button>
             <button
               className="add-btn"
               onClick={() => setShowModal(true)}
@@ -337,50 +295,6 @@ export default function Home() {
         </div>
       )}
 
-      {showStreamModal && (
-        <div className="modal-overlay">
-          <div className="modal">
-            <h3>Lancer une diffusion</h3>
-            <p className="card-subtitle">
-              Choisis la source a diffuser en direct sur l'onglet Screen Share.
-            </p>
-            {streamError && <div className="error-text">{streamError}</div>}
-
-            <div className="btn-col">
-              <button
-                className="action-btn"
-                disabled={isStartingStream}
-                onClick={() => void handleStartScreenShare('browser')}
-                type="button"
-              >
-                Solution 1: Fenetre navigateur Tauri (Google par defaut)
-              </button>
-              <button
-                className="action-btn"
-                disabled={isStartingStream}
-                onClick={() => void handleStartScreenShare('application')}
-                type="button"
-              >
-                Solution 2: Application locale (jeu, navigateur, etc.)
-              </button>
-            </div>
-
-            <div className="btn-row" style={{ marginTop: 10 }}>
-              <button
-                className="action-btn cancel"
-                disabled={isStartingStream}
-                onClick={() => setShowStreamModal(false)}
-                type="button"
-              >
-                Cancel
-              </button>
-              <span className="status-line" style={{ padding: 0, margin: 0 }}>
-                {isStartingStream ? 'Starting session...' : 'Interactive mode: ON'}
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 }

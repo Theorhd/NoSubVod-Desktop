@@ -15,8 +15,8 @@
         "label": "main",
         "title": "NoSubVOD",
         "width": 600,
-        "height": 700,
-        "resizable": false,
+        "height": 860,
+        "resizable": true,
         "fullscreen": false,
         "backgroundColor": "#18181b"
       }

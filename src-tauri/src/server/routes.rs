@@ -83,9 +83,21 @@ async fn handle_screenshare_snapshot(State(state): State<ApiState>) -> Response 
         return bad_request("No active screen share source");
     };
 
-    if !session.active || source_type != super::screenshare::ScreenShareSourceType::Browser {
-        return bad_request("Screen share browser source is not active");
+    if !session.active {
+        return bad_request("Screen share session is not active");
     }
+
+    let capture_window_title = match source_type {
+        super::screenshare::ScreenShareSourceType::Browser => {
+            "NoSubVOD - Screen Share Browser".to_string()
+        }
+        super::screenshare::ScreenShareSourceType::Application => {
+            let Some(label) = session.source_label else {
+                return bad_request("No selected application window for screen share");
+            };
+            label
+        }
+    };
 
     #[cfg(not(target_os = "windows"))]
     {
@@ -101,7 +113,7 @@ async fn handle_screenshare_snapshot(State(state): State<ApiState>) -> Response 
             .arg("-f")
             .arg("gdigrab")
             .arg("-i")
-            .arg("title=NoSubVOD - Screen Share Browser")
+            .arg(format!("title={capture_window_title}"))
             .arg("-frames:v")
             .arg("1")
             .arg("-q:v")
@@ -115,7 +127,7 @@ async fn handle_screenshare_snapshot(State(state): State<ApiState>) -> Response 
             .await;
 
         let Ok(result) = output else {
-            return internal("Unable to execute ffmpeg for snapshot capture");
+            return unavailable("Snapshot fallback is unavailable (ffmpeg not found or failed to start)");
         };
 
         if !result.status.success() {
@@ -333,6 +345,14 @@ fn internal(msg: impl std::fmt::Display) -> Response {
 fn bad_request(msg: impl std::fmt::Display) -> Response {
     (
         StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({ "error": msg.to_string() })),
+    )
+        .into_response()
+}
+
+fn unavailable(msg: impl std::fmt::Display) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
         Json(serde_json::json!({ "error": msg.to_string() })),
     )
         .into_response()
