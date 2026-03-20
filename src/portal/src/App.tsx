@@ -1,6 +1,16 @@
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense, lazy, useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
-import { TrendingUp, Home as HomeIcon, Search as SearchIcon, Radio, Download } from 'lucide-react';
+import {
+  TrendingUp,
+  Home as HomeIcon,
+  Search as SearchIcon,
+  Radio,
+  Download,
+  MonitorSmartphone,
+} from 'lucide-react';
+import { ScreenShareSessionState } from '../../shared/types';
+import Login from './Login';
+import { safeStorageGet } from './utils/storage.ts';
 
 const Home = lazy(() => import('./Home'));
 const Channel = lazy(() => import('./Channel'));
@@ -11,16 +21,29 @@ const Live = lazy(() => import('./Live'));
 const Settings = lazy(() => import('./Settings'));
 const History = lazy(() => import('./History'));
 const Downloads = lazy(() => import('./Downloads'));
+const ScreenShare = lazy(() => import('./ScreenShare.tsx'));
 
-const navItems = [
-  { path: '/trends', label: 'Trends', Icon: TrendingUp },
-  { path: '/live', label: 'Live', Icon: Radio },
-  { path: '/', label: 'Home', Icon: HomeIcon, isHome: true },
-  { path: '/search', label: 'Search', Icon: SearchIcon },
-  { path: '/downloads', label: 'Downloads', Icon: Download },
-];
+type NavItem = {
+  path: string;
+  label: string;
+  Icon: React.ComponentType<{ size?: number }>;
+  isHome?: boolean;
+};
 
-function BottomNav() {
+const defaultScreenShareState: ScreenShareSessionState = {
+  active: false,
+  sessionId: null,
+  sourceType: null,
+  sourceLabel: null,
+  startedAt: null,
+  interactive: true,
+  maxViewers: 5,
+  currentViewers: 0,
+  streamReady: false,
+  streamMessage: null,
+};
+
+function BottomNav({ items }: Readonly<{ items: NavItem[] }>) {
   const location = useLocation();
   const navigate = useNavigate();
   const hiddenRoutes = ['/player', '/channel'];
@@ -30,8 +53,12 @@ function BottomNav() {
   }
 
   return (
-    <nav className="bottom-nav" aria-label="Main Navigation">
-      {navItems.map((item) => {
+    <nav
+      className="bottom-nav"
+      aria-label="Main Navigation"
+      style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}
+    >
+      {items.map((item) => {
         const isActive =
           item.path === '/' ? location.pathname === '/' : location.pathname === item.path;
         return (
@@ -53,6 +80,98 @@ function BottomNav() {
 }
 
 export default function App() {
+  const [screenShareState, setScreenShareState] =
+    useState<ScreenShareSessionState>(defaultScreenShareState);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    const existingToken =
+      safeStorageGet(sessionStorage, 'nsv_token') || safeStorageGet(localStorage, 'nsv_token');
+    if (existingToken) return true;
+
+    try {
+      const currentUrl = new URL(globalThis.location.href);
+      const queryToken = currentUrl.searchParams.get('t')?.trim();
+      if (queryToken) {
+        sessionStorage.setItem('nsv_token', queryToken);
+        localStorage.setItem('nsv_token', queryToken);
+        return true;
+      }
+    } catch {
+      // Ignore malformed URL edge-cases.
+    }
+
+    return false;
+  });
+
+  useEffect(() => {
+    try {
+      const currentUrl = new URL(globalThis.location.href);
+      const queryToken = currentUrl.searchParams.get('t')?.trim();
+      if (!queryToken) return;
+
+      currentUrl.searchParams.delete('t');
+      const cleanUrl = `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`;
+      globalThis.history.replaceState({}, '', cleanUrl || '/');
+    } catch {
+      // Ignore malformed URL edge-cases.
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleStorageChange = () => {
+      const token =
+        safeStorageGet(sessionStorage, 'nsv_token') || safeStorageGet(localStorage, 'nsv_token');
+      setIsAuthenticated(!!token);
+    };
+    globalThis.addEventListener('storage', handleStorageChange);
+    return () => globalThis.removeEventListener('storage', handleStorageChange);
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+
+    let isMounted = true;
+
+    const loadScreenShareState = async () => {
+      try {
+        const response = await fetch('/api/screenshare/state');
+        if (!response.ok) return;
+        const state = (await response.json()) as ScreenShareSessionState;
+        if (isMounted) {
+          setScreenShareState(state);
+        }
+      } catch {
+        // Keep previous state when endpoint is temporarily unreachable.
+      }
+    };
+
+    void loadScreenShareState();
+    const interval = globalThis.setInterval(() => {
+      void loadScreenShareState();
+    }, 3000);
+
+    return () => {
+      isMounted = false;
+      globalThis.clearInterval(interval);
+    };
+  }, [isAuthenticated]);
+
+  if (!isAuthenticated) {
+    return <Login />;
+  }
+
+  const navItems: NavItem[] = [
+    { path: '/trends', label: 'Trends', Icon: TrendingUp },
+    { path: '/live', label: 'Live', Icon: Radio },
+    { path: '/', label: 'Home', Icon: HomeIcon, isHome: true },
+    ...(screenShareState.active
+      ? [{ path: '/screen-share', label: 'Screen Share', Icon: MonitorSmartphone }]
+      : []),
+    { path: '/search', label: 'Search', Icon: SearchIcon },
+    { path: '/downloads', label: 'Downloads', Icon: Download },
+  ];
+
   return (
     <Router>
       <div className="app-container">
@@ -74,10 +193,11 @@ export default function App() {
               <Route path="/channel" element={<Channel />} />
               <Route path="/player" element={<Player />} />
               <Route path="/downloads" element={<Downloads />} />
+              <Route path="/screen-share" element={<ScreenShare />} />
             </Routes>
           </div>
         </Suspense>
-        <BottomNav />
+        <BottomNav items={navItems} />
       </div>
     </Router>
   );

@@ -2,20 +2,19 @@
 
 NoSubVOD Desktop est une application locale pour regarder des VODs et des lives Twitch depuis n’importe quel appareil du réseau local (mobile, tablette, TV, PC), avec historique, watchlist et portail web intégré.
 
-## 🆕 v0.3.1 — Refonte UI Portal, durcissement auth locale & correctifs build/reseau
+## 🆕 v0.3.2 — Screen Share WebRTC, PlayerRTC immersif & navigation dock
 
-La version 0.3.1 consolide le portail React, améliore la robustesse de l'authentification locale (token + device id), et corrige plusieurs points de friction en environnement LAN/CI.
+La version 0.3.2 introduit le partage d'ecran en temps reel via WebRTC, rapproche l'experience PlayerRTC du player principal, et modernise la navigation sur tablette/desktop avec un rendu dock flottant.
 
-### Points clés v0.3.1
+### Points clés v0.3.2
 
-- **UI unifiée et composantisée** : ajout d'une base de composants partagés (TopBar, VODCard, StreamCard, blocs Home) pour homogénéiser l'UX sur Home, Channel, Live, Search, History, Trends et Settings.
-- **Player enrichi** : ajout des panneaux dédiés (infos vidéo, marqueurs, mode clip, chat live) et simplification de la logique du player pour réduire la complexité des vues.
-- **Refactor des données** : extraction de hooks dédiés (`useChannelData`, `useDownloadsData`, `useInfiniteScroll`) afin de séparer plus proprement logique API et rendu UI.
-- **Sécurisation du stockage local** : introduction d'accès sûrs au storage pour le token et le device id, avec injection plus fiable des en-têtes/query d'auth pour les routes API.
-- **Téléchargements plus fiables** : amélioration de la résolution des URL de fichiers partagés avec transmission du token d'accès.
-- **Serveur local renforcé** : fallback statique sur `index.html` pour le portail web et correction des chemins d'icônes.
-- **Autostart desktop** : ajout des permissions et paramètres pour lancer automatiquement l'application à l'ouverture de session.
-- **Sécurité NPM** : mise à jour de `flatted` vers une version corrigée afin de supprimer une vulnérabilité DoS signalée par `npm audit`.
+- **Screen Share WebRTC (Windows)** : nouveau module de partage d'ecran local avec roles host/viewer et signalisation WebSocket.
+- **Controle distant interactif** : transmission souris/clavier vers l'hote selon les permissions de session.
+- **PlayerRTC ameliore** : plein ecran immersif, controle du son (mute + volume) et masquage automatique des controles apres inactivite.
+- **Navigation modernisee** : navbar mobile conservee et adaptation tablette/desktop/laptop en dock centre type macOS.
+- **Portail LAN HTTPS** : support HTTPS via certificats auto-signes et parcours de connexion mobile ameliore (QR code).
+- **Stabilite & qualite** : nettoyage lint, corrections UI/UX et harmonisation des composants Screen Share / PlayerRTC / Player.
+- **Versioning** : montee de version globale en `0.3.2`.
 
 ## 🆕 v0.2.2 — Contrôle Qualité, Raccourcis & Chat Amélioré
 
@@ -56,6 +55,12 @@ Résultat: démarrage plus rapide, binaire bien plus léger et meilleure stabili
 - Serveur local accessible sur le LAN.
 - QR code affiché côté desktop pour ouverture rapide du portail.
 - Navigation: Home, Live, Search, Trends, Channel, Player, History, Settings.
+
+### 🖥️ Screen Share local
+
+- Diffusion d'ecran/fenetre en temps reel via WebRTC (Windows).
+- Session partagee sur le reseau local avec etat host/viewer.
+- Mode interactif pour piloter l'ecran distant (souris + clavier) selon configuration.
 
 ### 🎬 Expérience player
 
@@ -111,6 +116,15 @@ npm ci
 npm run dev
 ```
 
+Le portail LAN tourne en **HTTPS** sur le port `5173` pour autoriser l'acces camera sur mobile (iOS/Android).
+Au premier acces, le navigateur peut afficher un avertissement de certificat local: acceptez-le pour continuer.
+
+URL type a ouvrir sur mobile:
+
+```text
+https://<ip-locale-du-pc>:5173
+```
+
 ### Qualité code
 
 ```bash
@@ -130,6 +144,7 @@ npm run build
 
 - Le portail local doit être accessible sur le même réseau local que l’appareil client.
 - Certaines disponibilités de contenus dépendent des endpoints Twitch.
+- En build desktop (.exe), le portail public mobile est servi en HTTPS sur `23456` et l'API interne reste en HTTP sur `23455`.
 
 ---
 

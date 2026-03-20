@@ -7,6 +7,7 @@ import MarkerPanel from './components/player/MarkerPanel';
 import ClipMode from './components/player/ClipMode';
 import PlayerInfo from './components/player/PlayerInfo';
 import { formatSafeClock as formatClock } from './utils/formatters.ts';
+import PlayerRTC from './PlayerRTC';
 
 const DEFAULT_SETTINGS: ExperienceSettings = {
   oneSync: false,
@@ -25,6 +26,23 @@ export default function Player() {
   const vodId = searchParams.get('vod');
   const liveId = searchParams.get('live');
   const downloadMode = searchParams.get('downloadMode') === 'true';
+  const screenShareParam = searchParams.get('screenshare') ?? searchParams.get('screenShare');
+  const screenShareMode = screenShareParam === 'true' || screenShareParam === '1';
+
+  if (screenShareMode) {
+    return <PlayerRTC />;
+  }
+
+  return <VodLivePlayer vodId={vodId} liveId={liveId} downloadMode={downloadMode} />;
+}
+
+type VodLivePlayerProps = {
+  readonly vodId: string | null;
+  readonly liveId: string | null;
+  readonly downloadMode: boolean;
+};
+
+function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
   const navigate = useNavigate();
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
