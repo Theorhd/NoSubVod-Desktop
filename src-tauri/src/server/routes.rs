@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     body::Body,
-    extract::{Path, Query, State},
+    extract::{ws::WebSocketUpgrade, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -13,6 +13,8 @@ use axum::{
 use axum::response::Redirect;
 use serde::Deserialize;
 use serde_json::Value;
+#[cfg(target_os = "windows")]
+use tokio::process::Command;
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tower::ServiceExt;
@@ -22,6 +24,8 @@ use super::{
     auth::OAuthStateStore,
     download::DownloadManager,
     history::HistoryStore,
+    screenshare::StartScreenShareRequest,
+    screenshare::ScreenShareService,
     twitch::TwitchService,
     types::{SubEntry, WatchlistEntry},
 };
@@ -33,10 +37,117 @@ pub struct ApiState {
     pub twitch: Arc<TwitchService>,
     pub history: Arc<HistoryStore>,
     pub download: Arc<DownloadManager>,
+    pub screenshare: Arc<ScreenShareService>,
     pub oauth: Arc<OAuthStateStore>,
     /// Per-session token required for API access (prevents unauthorized LAN access).
     pub server_token: String,
     pub app_handle: Option<tauri::AppHandle>,
+}
+
+async fn handle_get_screenshare_state(State(state): State<ApiState>) -> impl IntoResponse {
+    Json(state.screenshare.get_state().await)
+}
+
+async fn handle_start_screenshare(
+    State(state): State<ApiState>,
+    Json(request): Json<StartScreenShareRequest>,
+) -> Response {
+    match state
+        .screenshare
+        .start(state.app_handle.as_ref(), request)
+        .await
+    {
+        Ok(session) => Json(session).into_response(),
+        Err(e) => bad_request(e),
+    }
+}
+
+async fn handle_stop_screenshare(State(state): State<ApiState>) -> Response {
+    match state.screenshare.stop(state.app_handle.as_ref()).await {
+        Ok(session) => Json(session).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+async fn handle_screenshare_ws(
+    ws: WebSocketUpgrade,
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| async move {
+        state.screenshare.handle_socket(socket).await;
+    })
+}
+
+async fn handle_screenshare_snapshot(State(state): State<ApiState>) -> Response {
+    let session = state.screenshare.get_state().await;
+    let Some(_source_type) = session.source_type else {
+        return bad_request("No active screen share source");
+    };
+
+    if !session.active {
+        return bad_request("Screen share session is not active");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        bad_request("Snapshot capture is currently supported on Windows only")
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let capture_window_title = match _source_type {
+            super::screenshare::ScreenShareSourceType::Browser => {
+                "NoSubVOD - Screen Share Browser".to_string()
+            }
+            super::screenshare::ScreenShareSourceType::Application => {
+                let Some(label) = session.source_label else {
+                    return bad_request("No selected application window for screen share");
+                };
+                label
+            }
+        };
+
+        let output = Command::new("ffmpeg")
+            .arg("-hide_banner")
+            .arg("-loglevel")
+            .arg("error")
+            .arg("-f")
+            .arg("gdigrab")
+            .arg("-i")
+            .arg(format!("title={capture_window_title}"))
+            .arg("-frames:v")
+            .arg("1")
+            .arg("-q:v")
+            .arg("5")
+            .arg("-f")
+            .arg("image2pipe")
+            .arg("-vcodec")
+            .arg("mjpeg")
+            .arg("-")
+            .output()
+            .await;
+
+        let Ok(result) = output else {
+            return unavailable("Snapshot fallback is unavailable (ffmpeg not found or failed to start)");
+        };
+
+        if !result.status.success() {
+            let stderr = String::from_utf8_lossy(&result.stderr).to_string();
+            let message = if stderr.trim().is_empty() {
+                "ffmpeg snapshot capture failed".to_string()
+            } else {
+                format!("ffmpeg snapshot capture failed: {stderr}")
+            };
+            return bad_request(message);
+        }
+
+        Response::builder()
+            .header(header::CONTENT_TYPE, "image/jpeg")
+            .header(header::CACHE_CONTROL, "no-store")
+            .body(Body::from(result.stdout))
+            .unwrap()
+            .into_response()
+    }
 }
 
 // ── Authentication middleware ──────────────────────────────────────────────────
@@ -235,6 +346,15 @@ fn internal(msg: impl std::fmt::Display) -> Response {
 fn bad_request(msg: impl std::fmt::Display) -> Response {
     (
         StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({ "error": msg.to_string() })),
+    )
+        .into_response()
+}
+
+#[cfg(target_os = "windows")]
+fn unavailable(msg: impl std::fmt::Display) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
         Json(serde_json::json!({ "error": msg.to_string() })),
     )
         .into_response()
@@ -880,7 +1000,7 @@ async fn handle_dev_portal_redirect(headers: axum::http::HeaderMap, uri: axum::h
         .map(|pq| pq.as_str())
         .unwrap_or("/");
 
-    Redirect::temporary(&format!("http://{host_without_port}:5173{path_and_query}"))
+    Redirect::temporary(&format!("https://{host_without_port}:5173{path_and_query}"))
 }
 
 async fn handle_shared_downloads(
@@ -1293,6 +1413,11 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         .route("/watchlist/:vod_id", delete(handle_remove_watchlist))
         // Settings
         .route("/settings", get(handle_get_settings).post(handle_update_settings))
+        .route("/screenshare/state", get(handle_get_screenshare_state))
+        .route("/screenshare/start", post(handle_start_screenshare))
+        .route("/screenshare/stop", post(handle_stop_screenshare))
+        .route("/screenshare/ws", get(handle_screenshare_ws))
+        .route("/screenshare/snapshot.jpg", get(handle_screenshare_snapshot))
         .route("/trusted-devices", get(handle_get_trusted_devices))
         .route("/trusted-devices/:device_id", put(handle_set_trusted_device))
         .route("/adblock/proxies", get(handle_get_adblock_proxies))

@@ -40,6 +40,7 @@ function createDeviceId(): string {
   const token = params.get('t');
   if (token) {
     safeStorageSet(sessionStorage, 'nsv_token', token);
+    safeStorageSet(localStorage, 'nsv_token', token);
     // Clean the URL without reloading
     params.delete('t');
     const clean = params.toString();
@@ -63,7 +64,8 @@ function createDeviceId(): string {
     }
     // Only inject token on our own API calls
     if (url.startsWith('/api/') || url.startsWith('api/')) {
-      const token = safeStorageGet(sessionStorage, 'nsv_token');
+      const token =
+        safeStorageGet(sessionStorage, 'nsv_token') || safeStorageGet(localStorage, 'nsv_token');
       const deviceId = safeStorageGet(localStorage, 'nsv_device_id');
       const headers = new Headers(init?.headers);
       if (token) {

@@ -1,7 +1,7 @@
 {
   "$schema": "gen/schemas/desktop-schema.json",
   "productName": "NoSubVOD",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "identifier": "com.nosubvod.desktop",
   "build": {
     "frontendDist": "../dist/renderer",
@@ -15,8 +15,8 @@
         "label": "main",
         "title": "NoSubVOD",
         "width": 600,
-        "height": 700,
-        "resizable": false,
+        "height": 860,
+        "resizable": true,
         "fullscreen": false,
         "backgroundColor": "#18181b"
       }
