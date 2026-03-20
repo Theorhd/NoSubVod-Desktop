@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ScreenShareSessionState } from '../../shared/types';
 import { TopBar } from './components/TopBar';
 
@@ -56,6 +57,7 @@ const rtcConfig: RTCConfiguration = {
 };
 
 export default function ScreenShare() {
+  const navigate = useNavigate();
   const [state, setState] = useState<ScreenShareSessionState>(defaultState);
   const [isStopping, setIsStopping] = useState(false);
   const [signalStatus, setSignalStatus] = useState('Disconnected');
@@ -650,7 +652,6 @@ export default function ScreenShare() {
   };
 
   const handleViewerWheel = (event: React.WheelEvent<HTMLButtonElement>) => {
-    event.preventDefault();
     const surface = viewerSurfaceRef.current;
     const rect = surface?.getBoundingClientRect();
     const x = rect
@@ -701,11 +702,12 @@ export default function ScreenShare() {
         ref={viewerSurfaceRef}
         type="button"
         className="screen-share-remote-surface"
+        style={{ touchAction: 'none' }}
         aria-label="Interactive remote stream"
         onMouseMove={handleViewerMouseMove}
         onMouseDown={handleViewerMouseDown}
         onMouseUp={handleViewerMouseUp}
-        onWheel={handleViewerWheel}
+        onWheelCapture={handleViewerWheel}
         onKeyDown={handleViewerKeyDown}
         onKeyUp={handleViewerKeyUp}
         onContextMenu={(event) => event.preventDefault()}
@@ -806,6 +808,23 @@ export default function ScreenShare() {
             WebRTC direct stream (optimized latency/performance) with HD capture.
           </p>
           {streamError && <div className="error-text">{streamError}</div>}
+
+          {state.active && (
+            <div className="screen-share-host-actions">
+              <button
+                className="action-btn"
+                type="button"
+                onClick={() => {
+                  const suffix = state.sessionId
+                    ? `?screenshare=true&sessionId=${encodeURIComponent(state.sessionId)}`
+                    : '?screenshare=true';
+                  navigate(`/player${suffix}`);
+                }}
+              >
+                Ouvrir dans le lecteur
+              </button>
+            </div>
+          )}
 
           {isHostMode && state.active && state.sourceType === 'browser' && (
             <div className="screen-share-host-actions">

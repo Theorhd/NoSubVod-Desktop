@@ -291,9 +291,8 @@ export default function App() {
     setIsBusy(true);
     setActionMessage('');
     try {
-      // Only application mode requires OS capture picker.
       if (sourceType === 'application') {
-        // Keep getDisplayMedia directly in the user-click flow to preserve browser activation.
+        // Application mode needs the picker before we touch signaling to keep user activation.
         await startHostCapture(sourceType);
       }
 
@@ -303,11 +302,16 @@ export default function App() {
       });
       setScreenShare(state);
 
-      if (sourceType === 'application') {
-        await connectHostSignaling();
+      // Always join signaling so viewers can negotiate WebRTC in both modes.
+      await connectHostSignaling();
+
+      if (sourceType === 'browser') {
+        setActionMessage(
+          'Selectionne la fenetre "NoSubVOD - Screen Share Browser" dans le picker Windows.',
+        );
+        await startHostCapture('browser');
       } else {
-        setHostRtcStatus('Browser mode active (no picker)');
-        setActionMessage('Mode navigateur: aucune selection manuelle requise.');
+        setActionMessage('Mode application: capture active et signalisation connectee.');
       }
     } catch (err: any) {
       stopHostCapture();
