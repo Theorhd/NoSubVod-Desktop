@@ -3,6 +3,7 @@ pub mod chat;
 pub mod download;
 pub mod history;
 pub mod routes;
+pub mod screenshare;
 pub mod twitch;
 pub mod types;
 
@@ -26,6 +27,7 @@ use uuid::Uuid;
 use download::DownloadManager;
 use history::HistoryStore;
 use routes::{build_router, ApiState};
+use screenshare::ScreenShareService;
 use twitch::TwitchService;
 use types::ServerInfo;
 
@@ -43,6 +45,7 @@ impl AppState {
         let history = Arc::new(HistoryStore::load(app_data_dir));
         let twitch = Arc::new(TwitchService::new());
         let download = Arc::new(DownloadManager::new());
+        let screenshare = Arc::new(ScreenShareService::new());
 
         let ip = get_local_ipv4();
         let port = SERVER_PORT;
@@ -77,6 +80,7 @@ impl AppState {
             twitch,
             history,
             download,
+            screenshare,
             oauth,
             server_token,
             app_handle: None,

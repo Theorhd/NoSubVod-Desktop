@@ -139,3 +139,18 @@ export interface LiveStreamsPage {
 }
 
 export type LiveStatusMap = Record<string, LiveStream>;
+
+export type ScreenShareSourceType = 'browser' | 'application';
+
+export interface ScreenShareSessionState {
+  active: boolean;
+  sessionId: string | null;
+  sourceType: ScreenShareSourceType | null;
+  sourceLabel: string | null;
+  startedAt: number | null;
+  interactive: boolean;
+  maxViewers: number;
+  currentViewers: number;
+  streamReady: boolean;
+  streamMessage: string | null;
+}
