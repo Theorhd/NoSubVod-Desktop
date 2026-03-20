@@ -1,6 +1,6 @@
 {
   "name": "nosubvod-desktop",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Bypass sub-only VODs and stream to local network with streamer subscriptions",
   "author": "Theorhd",
   "scripts": {

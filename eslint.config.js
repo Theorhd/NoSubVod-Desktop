@@ -1,9 +1,10 @@
+const { defineConfig } = require('eslint/config');
 const reactPlugin = require('eslint-plugin-react');
 const reactHooksPlugin = require('eslint-plugin-react-hooks');
 const prettierConfig = require('eslint-config-prettier');
 const tseslint = require('typescript-eslint');
 
-module.exports = tseslint.config(
+module.exports = defineConfig(
   {
     ignores: ['dist/**', 'node_modules/**', 'build/**', 'releasenotes/**', 'src-tauri/target/**'],
   },
