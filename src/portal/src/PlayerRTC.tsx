@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ScreenShareSessionState } from '../../shared/types';
 
@@ -77,6 +77,7 @@ export default function PlayerRTC() {
   const playerFrameRef = useRef<HTMLDivElement | null>(null);
   const lastPointerMoveRef = useRef(0);
   const controlsHideTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
+  const applyWsMessageRef = useRef<(message: WsMessage) => void>(() => {});
 
   const getAuthQuery = () => {
     const token =
@@ -142,7 +143,7 @@ export default function PlayerRTC() {
     }
   };
 
-  const ensureViewerPeer = async (hostId: string): Promise<RTCPeerConnection> => {
+  const ensureViewerPeer = async (): Promise<RTCPeerConnection> => {
     const existing = viewerPeerRef.current;
     if (existing) return existing;
 
@@ -200,7 +201,7 @@ export default function PlayerRTC() {
     if (sdp.type !== 'offer') return;
 
     try {
-      const peer = await ensureViewerPeer(hostId);
+      const peer = await ensureViewerPeer();
       await peer.setRemoteDescription(new RTCSessionDescription(sdp));
       const answer = await peer.createAnswer();
       await peer.setLocalDescription(answer);
@@ -219,7 +220,7 @@ export default function PlayerRTC() {
   const handleSignalCandidate = async (from: string, candidate: RTCIceCandidateInit) => {
     const hostId = hostClientIdRef.current;
     if (!hostId || from !== hostId) return;
-    const peer = await ensureViewerPeer(hostId);
+    const peer = await ensureViewerPeer();
     await peer.addIceCandidate(new RTCIceCandidate(candidate));
   };
 
@@ -309,6 +310,8 @@ export default function PlayerRTC() {
     }
   };
 
+  applyWsMessageRef.current = applyWsMessage;
+
   useEffect(() => {
     let mounted = true;
 
@@ -341,7 +344,6 @@ export default function PlayerRTC() {
     const protocol = globalThis.location.protocol === 'https:' ? 'wss' : 'ws';
 
     let disposed = false;
-    let pingTimer: ReturnType<typeof globalThis.setInterval> | undefined;
     let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
 
     const connect = () => {
@@ -379,7 +381,7 @@ export default function PlayerRTC() {
       ws.addEventListener('message', (event) => {
         try {
           const message = JSON.parse(event.data) as WsMessage;
-          applyWsMessage(message);
+          applyWsMessageRef.current(message);
         } catch {
           // Ignore malformed realtime payloads.
         }
@@ -388,7 +390,7 @@ export default function PlayerRTC() {
 
     connect();
 
-    pingTimer = globalThis.setInterval(() => {
+    const pingTimer = globalThis.setInterval(() => {
       const ws = wsRef.current;
       if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'ping' }));
@@ -397,9 +399,7 @@ export default function PlayerRTC() {
 
     return () => {
       disposed = true;
-      if (pingTimer !== undefined) {
-        globalThis.clearInterval(pingTimer);
-      }
+      globalThis.clearInterval(pingTimer);
       if (reconnectTimer !== undefined) {
         globalThis.clearTimeout(reconnectTimer);
       }
@@ -567,7 +567,7 @@ export default function PlayerRTC() {
     }
   };
 
-  const scheduleControlsHide = () => {
+  const scheduleControlsHide = useCallback(() => {
     if (controlsHideTimerRef.current) {
       globalThis.clearTimeout(controlsHideTimerRef.current);
       controlsHideTimerRef.current = null;
@@ -580,12 +580,12 @@ export default function PlayerRTC() {
     controlsHideTimerRef.current = globalThis.setTimeout(() => {
       setControlsVisible(false);
     }, 2000);
-  };
+  }, [hasRemoteStream, isFullscreen]);
 
-  const revealControls = () => {
+  const revealControls = useCallback(() => {
     setControlsVisible(true);
     scheduleControlsHide();
-  };
+  }, [scheduleControlsHide]);
 
   useEffect(() => {
     if (!hasRemoteStream) {
@@ -599,7 +599,7 @@ export default function PlayerRTC() {
 
     setControlsVisible(true);
     scheduleControlsHide();
-  }, [hasRemoteStream, isFullscreen]);
+  }, [hasRemoteStream, isFullscreen, scheduleControlsHide]);
 
   return (
     <div
@@ -707,7 +707,12 @@ export default function PlayerRTC() {
                 className="screen-share-video"
                 autoPlay
                 playsInline
-                style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  backgroundColor: '#000',
+                }}
               >
                 <track kind="captions" />
               </video>
@@ -720,9 +725,12 @@ export default function PlayerRTC() {
                 padding: '24px',
               }}
             >
-              <div style={{ fontSize: '18px', marginBottom: '8px' }}>Waiting for host stream...</div>
+              <div style={{ fontSize: '18px', marginBottom: '8px' }}>
+                Waiting for host stream...
+              </div>
               <div style={{ color: '#a1a1aa', fontSize: '14px' }}>
-                {state.streamMessage || 'When the host starts sharing, the WebRTC feed will appear here.'}
+                {state.streamMessage ||
+                  'When the host starts sharing, the WebRTC feed will appear here.'}
               </div>
             </div>
           )}
@@ -735,7 +743,8 @@ export default function PlayerRTC() {
                 bottom: '14px',
                 transform: 'translateX(-50%)',
                 width: 'min(620px, calc(100% - 28px))',
-                background: 'linear-gradient(180deg, rgba(16, 18, 28, 0.84) 0%, rgba(9, 10, 16, 0.9) 100%)',
+                background:
+                  'linear-gradient(180deg, rgba(16, 18, 28, 0.84) 0%, rgba(9, 10, 16, 0.9) 100%)',
                 border: '1px solid rgba(150, 162, 220, 0.28)',
                 borderRadius: '10px',
                 padding: '8px 10px',
@@ -780,7 +789,9 @@ export default function PlayerRTC() {
                 style={{ flex: 1, accentColor: '#8ca6ff', cursor: 'pointer' }}
               />
 
-              <span style={{ color: '#c9d2f3', fontSize: '12px', minWidth: '38px', textAlign: 'right' }}>
+              <span
+                style={{ color: '#c9d2f3', fontSize: '12px', minWidth: '38px', textAlign: 'right' }}
+              >
                 {Math.round((isMuted ? 0 : volume) * 100)}%
               </span>
 
@@ -875,7 +886,9 @@ export default function PlayerRTC() {
 
           <div>
             <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Started</div>
-            <div style={{ color: '#efeff1', fontSize: '14px' }}>{formatStartedAt(state.startedAt)}</div>
+            <div style={{ color: '#efeff1', fontSize: '14px' }}>
+              {formatStartedAt(state.startedAt)}
+            </div>
           </div>
 
           <div style={{ color: '#a1a1aa', fontSize: '12px', marginTop: '8px' }}>

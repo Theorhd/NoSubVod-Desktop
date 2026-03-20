@@ -128,7 +128,6 @@ export default function App() {
 
   useEffect(() => {
     if (!isAuthenticated) {
-      setScreenShareState(defaultScreenShareState);
       return;
     }
 

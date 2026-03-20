@@ -81,10 +81,13 @@ export default function ScreenShare() {
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const viewerSurfaceRef = useRef<HTMLButtonElement | null>(null);
   const lastPointerMoveRef = useRef(0);
+  const applyWsMessageRef = useRef<(message: WsMessage) => void>(() => {});
+  const stopLocalStreamRef = useRef<() => void>(() => {});
 
   const getAuthQuery = () => {
     const token =
-      globalThis.sessionStorage.getItem('nsv_token') || globalThis.localStorage.getItem('nsv_token');
+      globalThis.sessionStorage.getItem('nsv_token') ||
+      globalThis.localStorage.getItem('nsv_token');
     const deviceId = globalThis.localStorage.getItem('nsv_device_id');
     const params = new URLSearchParams();
     if (token) {
@@ -167,6 +170,8 @@ export default function ScreenShare() {
     }
   };
 
+  stopLocalStreamRef.current = stopLocalStream;
+
   const ensureViewerPeer = async (hostId: string): Promise<RTCPeerConnection> => {
     const existing = viewerPeerRef.current;
     if (existing) return existing;
@@ -177,7 +182,7 @@ export default function ScreenShare() {
     peer.ontrack = (event) => {
       const [stream] = event.streams;
       if (!stream) return;
-      
+
       setHasRemoteStream(true);
       setStreamError('');
 
@@ -251,7 +256,10 @@ export default function ScreenShare() {
       }
     };
 
-    const offer = await peer.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false });
+    const offer = await peer.createOffer({
+      offerToReceiveAudio: false,
+      offerToReceiveVideo: false,
+    });
     await peer.setLocalDescription(offer);
     sendWs({
       type: 'signal',
@@ -346,7 +354,9 @@ export default function ScreenShare() {
 
     const hostIntentSession = localStorage.getItem('nsv_screenshare_host_session');
     const shouldJoinAsHost = !!(
-      hostIntentSession && message.state?.sessionId && hostIntentSession === message.state.sessionId
+      hostIntentSession &&
+      message.state?.sessionId &&
+      hostIntentSession === message.state.sessionId
     );
     const role: JoinRole = shouldJoinAsHost ? 'host' : 'viewer';
     roleRef.current = role;
@@ -419,6 +429,8 @@ export default function ScreenShare() {
         return;
     }
   };
+
+  applyWsMessageRef.current = applyWsMessage;
 
   const startHostWebRtc = async () => {
     setStreamError('');
@@ -516,8 +528,9 @@ export default function ScreenShare() {
     const protocol = globalThis.location.protocol === 'https:' ? 'wss' : 'ws';
 
     let disposed = false;
-    let pingTimer: ReturnType<typeof globalThis.setInterval> | undefined;
     let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+    const hostPeers = hostPeersRef.current;
+    const waitingViewerIds = waitingViewerIdsRef.current;
 
     const connect = () => {
       if (disposed) {
@@ -549,7 +562,7 @@ export default function ScreenShare() {
       ws.addEventListener('message', (event) => {
         try {
           const message = JSON.parse(event.data) as WsMessage;
-          applyWsMessage(message);
+          applyWsMessageRef.current(message);
         } catch {
           // Ignore malformed realtime payloads.
         }
@@ -558,7 +571,7 @@ export default function ScreenShare() {
 
     connect();
 
-    pingTimer = globalThis.setInterval(() => {
+    const pingTimer = globalThis.setInterval(() => {
       const ws = wsRef.current;
       if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'ping' }));
@@ -567,9 +580,7 @@ export default function ScreenShare() {
 
     return () => {
       disposed = true;
-      if (pingTimer !== undefined) {
-        globalThis.clearInterval(pingTimer);
-      }
+      globalThis.clearInterval(pingTimer);
       if (reconnectTimer !== undefined) {
         globalThis.clearTimeout(reconnectTimer);
       }
@@ -579,10 +590,12 @@ export default function ScreenShare() {
         ws.close();
       }
       cleanupViewerPeer();
-      for (const viewerId of hostPeersRef.current.keys()) {
-        cleanupHostPeer(viewerId);
+      for (const peer of hostPeers.values()) {
+        peer.close();
       }
-      stopLocalStream();
+      hostPeers.clear();
+      waitingViewerIds.clear();
+      stopLocalStreamRef.current();
     };
   }, []);
 
@@ -768,7 +781,9 @@ export default function ScreenShare() {
             </div>
             <div>
               <strong>Viewers</strong>
-              <div>{state.currentViewers}/{state.maxViewers}</div>
+              <div>
+                {state.currentViewers}/{state.maxViewers}
+              </div>
             </div>
             <div>
               <strong>Signal</strong>

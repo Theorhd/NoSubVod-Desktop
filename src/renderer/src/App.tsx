@@ -17,8 +17,7 @@ const defaultScreenShareState: ScreenShareSessionState = {
 
 export default function App() {
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
-  const [screenShare, setScreenShare] =
-    useState<ScreenShareSessionState>(defaultScreenShareState);
+  const [screenShare, setScreenShare] = useState<ScreenShareSessionState>(defaultScreenShareState);
   const [isBusy, setIsBusy] = useState(false);
   const [actionMessage, setActionMessage] = useState('');
   const [hostRtcStatus, setHostRtcStatus] = useState('Idle');
@@ -155,7 +154,7 @@ export default function App() {
       setActionMessage(
         sourceType === 'browser'
           ? 'Selectionne la fenetre "NoSubVOD - Screen Share Browser" dans le picker Windows.'
-          : 'Selectionne la fenetre de l application a diffuser dans le picker Windows.',
+          : 'Selectionne la fenetre de l application a diffuser dans le picker Windows.'
       );
 
       const [videoTrack] = stream.getVideoTracks();
@@ -307,7 +306,7 @@ export default function App() {
 
       if (sourceType === 'browser') {
         setActionMessage(
-          'Selectionne la fenetre "NoSubVOD - Screen Share Browser" dans le picker Windows.',
+          'Selectionne la fenetre "NoSubVOD - Screen Share Browser" dans le picker Windows.'
         );
         await startHostCapture('browser');
       } else {
@@ -395,7 +394,7 @@ export default function App() {
             <button
               style={{
                 ...styles.primaryButton,
-                ...((isBusy || screenShare.active) ? styles.disabledButton : {}),
+                ...(isBusy || screenShare.active ? styles.disabledButton : {}),
               }}
               disabled={isBusy || screenShare.active}
               onClick={() => void startShare('browser')}
@@ -406,7 +405,7 @@ export default function App() {
             <button
               style={{
                 ...styles.secondaryButton,
-                ...((isBusy || screenShare.active) ? styles.disabledButton : {}),
+                ...(isBusy || screenShare.active ? styles.disabledButton : {}),
               }}
               disabled={isBusy || screenShare.active}
               onClick={() => void startShare('application')}
@@ -417,7 +416,7 @@ export default function App() {
             <button
               style={{
                 ...styles.dangerButton,
-                ...((isBusy || !screenShare.active) ? styles.disabledButton : {}),
+                ...(isBusy || !screenShare.active ? styles.disabledButton : {}),
               }}
               disabled={isBusy || !screenShare.active}
               onClick={() => void stopShare()}
