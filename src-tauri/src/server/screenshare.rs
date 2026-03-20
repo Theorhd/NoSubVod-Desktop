@@ -682,6 +682,12 @@ impl ScreenShareService {
     }
 }
 
+impl Default for ScreenShareService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn window_title_utf16(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
@@ -860,6 +866,7 @@ struct ClientMessage {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 struct RemoteInputPayload {
     kind: String,
     action: Option<String>,

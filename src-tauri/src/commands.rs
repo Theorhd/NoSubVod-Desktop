@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use tauri::State;
+#[cfg(target_os = "windows")]
 use tokio::process::Command;
 
 use crate::server::{AppState, types::ServerInfo};
@@ -117,7 +118,7 @@ pub async fn get_screen_share_state(
 pub async fn list_stream_windows() -> Result<Vec<String>, String> {
     #[cfg(not(target_os = "windows"))]
     {
-        return Err("Window selection is currently supported on Windows only".to_string());
+        Err("Window selection is currently supported on Windows only".to_string())
     }
 
     #[cfg(target_os = "windows")]

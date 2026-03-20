@@ -13,6 +13,7 @@ use axum::{
 use axum::response::Redirect;
 use serde::Deserialize;
 use serde_json::Value;
+#[cfg(target_os = "windows")]
 use tokio::process::Command;
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
@@ -79,7 +80,7 @@ async fn handle_screenshare_ws(
 
 async fn handle_screenshare_snapshot(State(state): State<ApiState>) -> Response {
     let session = state.screenshare.get_state().await;
-    let Some(source_type) = session.source_type else {
+    let Some(_source_type) = session.source_type else {
         return bad_request("No active screen share source");
     };
 
@@ -87,25 +88,25 @@ async fn handle_screenshare_snapshot(State(state): State<ApiState>) -> Response 
         return bad_request("Screen share session is not active");
     }
 
-    let capture_window_title = match source_type {
-        super::screenshare::ScreenShareSourceType::Browser => {
-            "NoSubVOD - Screen Share Browser".to_string()
-        }
-        super::screenshare::ScreenShareSourceType::Application => {
-            let Some(label) = session.source_label else {
-                return bad_request("No selected application window for screen share");
-            };
-            label
-        }
-    };
-
     #[cfg(not(target_os = "windows"))]
     {
-        return bad_request("Snapshot capture is currently supported on Windows only");
+        bad_request("Snapshot capture is currently supported on Windows only")
     }
 
     #[cfg(target_os = "windows")]
     {
+        let capture_window_title = match _source_type {
+            super::screenshare::ScreenShareSourceType::Browser => {
+                "NoSubVOD - Screen Share Browser".to_string()
+            }
+            super::screenshare::ScreenShareSourceType::Application => {
+                let Some(label) = session.source_label else {
+                    return bad_request("No selected application window for screen share");
+                };
+                label
+            }
+        };
+
         let output = Command::new("ffmpeg")
             .arg("-hide_banner")
             .arg("-loglevel")
@@ -140,12 +141,12 @@ async fn handle_screenshare_snapshot(State(state): State<ApiState>) -> Response 
             return bad_request(message);
         }
 
-        return Response::builder()
+        Response::builder()
             .header(header::CONTENT_TYPE, "image/jpeg")
             .header(header::CACHE_CONTROL, "no-store")
             .body(Body::from(result.stdout))
             .unwrap()
-            .into_response();
+            .into_response()
     }
 }
 
@@ -350,6 +351,7 @@ fn bad_request(msg: impl std::fmt::Display) -> Response {
         .into_response()
 }
 
+#[cfg(target_os = "windows")]
 fn unavailable(msg: impl std::fmt::Display) -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
