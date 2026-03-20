@@ -340,6 +340,13 @@ export default function App() {
     }
   };
 
+  let sourceTypeLabel = 'Non definie';
+  if (screenShare.sourceType === 'browser') {
+    sourceTypeLabel = 'Navigateur';
+  } else if (screenShare.sourceType === 'application') {
+    sourceTypeLabel = 'Fenetre';
+  }
+
   return (
     <div style={styles.body}>
       <div style={styles.container}>
@@ -350,31 +357,68 @@ export default function App() {
         {serverInfo?.qrcode && <img style={styles.qrcode} src={serverInfo.qrcode} alt="QR Code" />}
 
         <div style={styles.screenShareCard}>
-          <h2 style={styles.sectionTitle}>Screen Share Host Control</h2>
-          <p style={styles.screenShareState}>
-            Etat: {screenShare.active ? 'Live' : 'Offline'}
-            {screenShare.sourceType ? ` (${screenShare.sourceType})` : ''}
+          <div style={styles.screenShareHeader}>
+            <h2 style={styles.sectionTitle}>Screen Share Host Control</h2>
+            <span
+              style={{
+                ...styles.statusBadge,
+                ...(screenShare.active ? styles.statusBadgeLive : styles.statusBadgeOffline),
+              }}
+            >
+              {screenShare.active ? 'Live' : 'Offline'}
+            </span>
+          </div>
+
+          <div style={styles.screenShareMetaGrid}>
+            <div style={styles.metaItem}>
+              <span style={styles.metaLabel}>Etat</span>
+              <span style={styles.metaValue}>
+                {screenShare.active ? 'Diffusion active' : 'Aucune diffusion'}
+              </span>
+            </div>
+            <div style={styles.metaItem}>
+              <span style={styles.metaLabel}>Source</span>
+              <span style={styles.metaValue}>{sourceTypeLabel}</span>
+            </div>
+            <div style={styles.metaItem}>
+              <span style={styles.metaLabel}>WebRTC</span>
+              <span style={styles.metaValue}>{hostRtcStatus}</span>
+            </div>
+          </div>
+
+          <p style={styles.screenShareHint}>
+            Conseil: demarre d abord le mode navigateur. Si le partage echoue, utilise le mode
+            fenetre.
           </p>
-          <p style={styles.screenShareState}>Host WebRTC: {hostRtcStatus}</p>
+
           <div style={styles.buttonRow}>
             <button
-              style={styles.primaryButton}
+              style={{
+                ...styles.primaryButton,
+                ...((isBusy || screenShare.active) ? styles.disabledButton : {}),
+              }}
               disabled={isBusy || screenShare.active}
               onClick={() => void startShare('browser')}
               type="button"
             >
-              Solution 1: Lancer navigateur
+              Ouvrir le navigateur
             </button>
             <button
-              style={styles.primaryButton}
+              style={{
+                ...styles.secondaryButton,
+                ...((isBusy || screenShare.active) ? styles.disabledButton : {}),
+              }}
               disabled={isBusy || screenShare.active}
               onClick={() => void startShare('application')}
               type="button"
             >
-              Solution 2: Choisir une fenetre (picker Windows)
+              Streamer une fenetre
             </button>
             <button
-              style={styles.dangerButton}
+              style={{
+                ...styles.dangerButton,
+                ...((isBusy || !screenShare.active) ? styles.disabledButton : {}),
+              }}
               disabled={isBusy || !screenShare.active}
               onClick={() => void stopShare()}
               type="button"
@@ -456,17 +500,70 @@ const styles: Record<string, React.CSSProperties> = {
   },
   screenShareCard: {
     marginTop: '1.5rem',
-    backgroundColor: '#16161f',
+    background: 'linear-gradient(180deg, #16161f 0%, #13131b 100%)',
     border: '1px solid #2c2d3a',
-    borderRadius: '8px',
-    padding: '1rem',
+    borderRadius: '12px',
+    padding: '1rem 1rem 1.1rem',
     textAlign: 'left',
+    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.25)',
+  },
+  screenShareHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    marginBottom: '0.75rem',
+  },
+  statusBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    fontSize: '0.76rem',
+    fontWeight: 700,
+    padding: '0.25rem 0.6rem',
+    border: '1px solid transparent',
+    letterSpacing: '0.02em',
+  },
+  statusBadgeLive: {
+    color: '#9ff0ba',
+    borderColor: '#235f3d',
+    backgroundColor: '#143322',
+  },
+  statusBadgeOffline: {
+    color: '#c8cbd8',
+    borderColor: '#3a3f59',
+    backgroundColor: '#1f2337',
+  },
+  screenShareMetaGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+    gap: '0.55rem',
+    marginBottom: '0.75rem',
+  },
+  metaItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.2rem',
+    backgroundColor: '#1a1b28',
+    border: '1px solid #2e324a',
+    borderRadius: '8px',
+    padding: '0.55rem 0.65rem',
+  },
+  metaLabel: {
+    color: '#9aa0bc',
+    fontSize: '0.72rem',
+    letterSpacing: '0.02em',
+    textTransform: 'uppercase',
+  },
+  metaValue: {
+    color: '#e9ecf8',
+    fontSize: '0.87rem',
+    fontWeight: 600,
   },
   sectionTitle: {
     margin: 0,
-    marginBottom: '0.6rem',
     color: '#fff',
-    fontSize: '1rem',
+    fontSize: '1.03rem',
   },
   screenShareState: {
     margin: 0,
@@ -474,33 +571,69 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#d0d3dd',
     fontSize: '0.92rem',
   },
+  screenShareHint: {
+    margin: 0,
+    marginBottom: '0.8rem',
+    color: '#b7bfdc',
+    fontSize: '0.82rem',
+    lineHeight: 1.45,
+  },
   buttonRow: {
     display: 'flex',
     flexDirection: 'column',
     gap: '0.5rem',
   },
   primaryButton: {
-    border: '1px solid #3f4780',
-    background: '#2b3263',
+    border: '1px solid #3f4f95',
+    background: 'linear-gradient(180deg, #34408a 0%, #2b346f 100%)',
+    boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.1)',
     color: '#fff',
-    borderRadius: '6px',
-    padding: '0.55rem 0.7rem',
-    fontSize: '0.9rem',
+    borderRadius: '8px',
+    padding: '0.6rem 0.75rem',
+    fontSize: '0.88rem',
+    fontWeight: 600,
+    letterSpacing: '0.01em',
+    transition: 'transform 120ms ease, opacity 120ms ease',
+    transform: 'translateY(0)',
+    cursor: 'pointer',
+  },
+  secondaryButton: {
+    border: '1px solid #36506f',
+    background: 'linear-gradient(180deg, #264d72 0%, #1f3f5e 100%)',
+    boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.08)',
+    color: '#fff',
+    borderRadius: '8px',
+    padding: '0.6rem 0.75rem',
+    fontSize: '0.88rem',
+    fontWeight: 600,
+    letterSpacing: '0.01em',
+    transition: 'transform 120ms ease, opacity 120ms ease',
+    transform: 'translateY(0)',
     cursor: 'pointer',
   },
   dangerButton: {
-    border: '1px solid #7a3044',
-    background: '#5a2533',
+    border: '1px solid #7d3348',
+    background: 'linear-gradient(180deg, #6b2d3f 0%, #572234 100%)',
+    boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.08)',
     color: '#fff',
-    borderRadius: '6px',
-    padding: '0.55rem 0.7rem',
-    fontSize: '0.9rem',
+    borderRadius: '8px',
+    padding: '0.6rem 0.75rem',
+    fontSize: '0.88rem',
+    fontWeight: 600,
+    letterSpacing: '0.01em',
+    transition: 'transform 120ms ease, opacity 120ms ease',
+    transform: 'translateY(0)',
     cursor: 'pointer',
   },
+  disabledButton: {
+    opacity: 0.55,
+    cursor: 'not-allowed',
+  },
   actionMessage: {
-    marginTop: '0.7rem',
+    marginTop: '0.75rem',
     color: '#9fb0ff',
-    fontSize: '0.86rem',
+    fontSize: '0.84rem',
+    lineHeight: 1.45,
     minHeight: '1.2rem',
   },
 };

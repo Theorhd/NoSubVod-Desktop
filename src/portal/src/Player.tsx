@@ -37,9 +37,9 @@ export default function Player() {
 }
 
 type VodLivePlayerProps = {
-  vodId: string | null;
-  liveId: string | null;
-  downloadMode: boolean;
+  readonly vodId: string | null;
+  readonly liveId: string | null;
+  readonly downloadMode: boolean;
 };
 
 function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {

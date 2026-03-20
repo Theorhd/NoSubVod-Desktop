@@ -63,6 +63,10 @@ export default function PlayerRTC() {
   const [rtcStatus, setRtcStatus] = useState('Idle');
   const [hasRemoteStream, setHasRemoteStream] = useState(false);
   const [streamError, setStreamError] = useState('');
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [volume, setVolume] = useState(1);
+  const [isMuted, setIsMuted] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
 
   const wsRef = useRef<WebSocket | null>(null);
   const clientIdRef = useRef<string | null>(null);
@@ -70,7 +74,9 @@ export default function PlayerRTC() {
   const viewerPeerRef = useRef<RTCPeerConnection | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const viewerSurfaceRef = useRef<HTMLButtonElement | null>(null);
+  const playerFrameRef = useRef<HTMLDivElement | null>(null);
   const lastPointerMoveRef = useRef(0);
+  const controlsHideTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
 
   const getAuthQuery = () => {
     const token =
@@ -412,12 +418,39 @@ export default function PlayerRTC() {
     }
   }, [hasRemoteStream]);
 
+  useEffect(() => {
+    const onFullScreenChanged = () => {
+      const frame = playerFrameRef.current;
+      setIsFullscreen(Boolean(frame && document.fullscreenElement === frame));
+    };
+
+    document.addEventListener('fullscreenchange', onFullScreenChanged);
+    return () => document.removeEventListener('fullscreenchange', onFullScreenChanged);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (controlsHideTimerRef.current) {
+        globalThis.clearTimeout(controlsHideTimerRef.current);
+        controlsHideTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const video = remoteVideoRef.current;
+    if (!video) return;
+    video.volume = volume;
+    video.muted = isMuted;
+  }, [isMuted, volume, hasRemoteStream]);
+
   const statusLabel = useMemo(() => {
     if (!state.active) return 'Offline';
     return state.streamReady ? 'Live' : 'Preparing';
   }, [state.active, state.streamReady]);
 
   const handleViewerMouseMove = (event: React.MouseEvent<HTMLButtonElement>) => {
+    revealControls();
     const now = performance.now();
     if (now - lastPointerMoveRef.current < 8) {
       return;
@@ -434,6 +467,7 @@ export default function PlayerRTC() {
   };
 
   const handleViewerMouseDown = (event: React.MouseEvent<HTMLButtonElement>) => {
+    revealControls();
     const pos = normalizedPointerPosition(event);
     sendRemoteInput({
       kind: 'pointer',
@@ -445,6 +479,7 @@ export default function PlayerRTC() {
   };
 
   const handleViewerMouseUp = (event: React.MouseEvent<HTMLButtonElement>) => {
+    revealControls();
     const pos = normalizedPointerPosition(event);
     sendRemoteInput({
       kind: 'pointer',
@@ -456,6 +491,7 @@ export default function PlayerRTC() {
   };
 
   const handleViewerWheel = (event: React.WheelEvent<HTMLButtonElement>) => {
+    revealControls();
     const surface = viewerSurfaceRef.current;
     const rect = surface?.getBoundingClientRect();
     const x = rect
@@ -475,6 +511,7 @@ export default function PlayerRTC() {
   };
 
   const handleViewerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    revealControls();
     if (event.repeat) {
       return;
     }
@@ -486,6 +523,7 @@ export default function PlayerRTC() {
   };
 
   const handleViewerKeyUp = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    revealControls();
     sendRemoteInput({
       kind: 'keyboard',
       action: 'up',
@@ -500,6 +538,68 @@ export default function PlayerRTC() {
       navigate('/screen-share');
     }
   };
+
+  const toggleFullscreen = async () => {
+    const frame = playerFrameRef.current;
+    if (!frame) return;
+
+    try {
+      if (document.fullscreenElement === frame) {
+        await document.exitFullscreen();
+      } else {
+        await frame.requestFullscreen();
+      }
+    } catch {
+      // Ignore fullscreen API errors (browser permissions/user gesture constraints).
+    }
+  };
+
+  const toggleMute = () => {
+    setIsMuted((prev) => !prev);
+  };
+
+  const handleVolumeChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const next = Number(event.target.value);
+    if (!Number.isFinite(next)) return;
+    setVolume(next);
+    if (next > 0 && isMuted) {
+      setIsMuted(false);
+    }
+  };
+
+  const scheduleControlsHide = () => {
+    if (controlsHideTimerRef.current) {
+      globalThis.clearTimeout(controlsHideTimerRef.current);
+      controlsHideTimerRef.current = null;
+    }
+
+    if (!isFullscreen || !hasRemoteStream) {
+      return;
+    }
+
+    controlsHideTimerRef.current = globalThis.setTimeout(() => {
+      setControlsVisible(false);
+    }, 2000);
+  };
+
+  const revealControls = () => {
+    setControlsVisible(true);
+    scheduleControlsHide();
+  };
+
+  useEffect(() => {
+    if (!hasRemoteStream) {
+      setControlsVisible(true);
+      if (controlsHideTimerRef.current) {
+        globalThis.clearTimeout(controlsHideTimerRef.current);
+        controlsHideTimerRef.current = null;
+      }
+      return;
+    }
+
+    setControlsVisible(true);
+    scheduleControlsHide();
+  }, [hasRemoteStream, isFullscreen]);
 
   return (
     <div
@@ -564,14 +664,17 @@ export default function PlayerRTC() {
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <div
+          ref={playerFrameRef}
           style={{
             flex: 1,
             display: 'flex',
             flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
+            alignItems: 'stretch',
+            justifyContent: 'stretch',
             backgroundColor: '#000',
             position: 'relative',
+            overflow: 'hidden',
+            cursor: isFullscreen && hasRemoteStream && !controlsVisible ? 'none' : 'default',
           }}
         >
           {hasRemoteStream ? (
@@ -586,6 +689,7 @@ export default function PlayerRTC() {
                 background: 'transparent',
                 width: '100%',
                 height: '100%',
+                display: 'block',
               }}
               aria-label="Interactive remote stream"
               onMouseMove={handleViewerMouseMove}
@@ -594,6 +698,7 @@ export default function PlayerRTC() {
               onWheelCapture={handleViewerWheel}
               onKeyDown={handleViewerKeyDown}
               onKeyUp={handleViewerKeyUp}
+              onTouchStart={revealControls}
               onContextMenu={(event) => event.preventDefault()}
               onClick={() => viewerSurfaceRef.current?.focus()}
             >
@@ -602,7 +707,7 @@ export default function PlayerRTC() {
                 className="screen-share-video"
                 autoPlay
                 playsInline
-                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }}
               >
                 <track kind="captions" />
               </video>
@@ -619,6 +724,86 @@ export default function PlayerRTC() {
               <div style={{ color: '#a1a1aa', fontSize: '14px' }}>
                 {state.streamMessage || 'When the host starts sharing, the WebRTC feed will appear here.'}
               </div>
+            </div>
+          )}
+
+          {hasRemoteStream && controlsVisible && (
+            <div
+              style={{
+                position: 'absolute',
+                left: '50%',
+                bottom: '14px',
+                transform: 'translateX(-50%)',
+                width: 'min(620px, calc(100% - 28px))',
+                background: 'linear-gradient(180deg, rgba(16, 18, 28, 0.84) 0%, rgba(9, 10, 16, 0.9) 100%)',
+                border: '1px solid rgba(150, 162, 220, 0.28)',
+                borderRadius: '10px',
+                padding: '8px 10px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                backdropFilter: 'blur(6px)',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  toggleMute();
+                  revealControls();
+                }}
+                style={{
+                  border: '1px solid #36466f',
+                  background: '#1f2a46',
+                  color: '#eff3ff',
+                  borderRadius: '7px',
+                  padding: '6px 10px',
+                  cursor: 'pointer',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                }}
+                aria-label={isMuted ? 'Activer le son' : 'Couper le son'}
+              >
+                {isMuted || volume <= 0 ? 'Son coupe' : 'Son actif'}
+              </button>
+
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={isMuted ? 0 : volume}
+                onChange={(event) => {
+                  handleVolumeChange(event);
+                  revealControls();
+                }}
+                aria-label="Volume"
+                style={{ flex: 1, accentColor: '#8ca6ff', cursor: 'pointer' }}
+              />
+
+              <span style={{ color: '#c9d2f3', fontSize: '12px', minWidth: '38px', textAlign: 'right' }}>
+                {Math.round((isMuted ? 0 : volume) * 100)}%
+              </span>
+
+              <button
+                type="button"
+                onClick={() => {
+                  void toggleFullscreen();
+                  revealControls();
+                }}
+                style={{
+                  border: '1px solid #36466f',
+                  background: '#1f2a46',
+                  color: '#eff3ff',
+                  borderRadius: '7px',
+                  padding: '6px 10px',
+                  cursor: 'pointer',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                }}
+                aria-label={isFullscreen ? 'Quitter le plein ecran' : 'Activer le plein ecran'}
+              >
+                {isFullscreen ? 'Quitter plein ecran' : 'Plein ecran'}
+              </button>
             </div>
           )}
 
