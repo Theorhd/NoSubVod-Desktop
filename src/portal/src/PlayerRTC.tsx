@@ -54,6 +54,7 @@ function formatStartedAt(startedAt: number | null): string {
 }
 
 export default function PlayerRTC() {
+  // NOSONAR
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const sessionIdParam = searchParams.get('sessionId');
@@ -65,8 +66,16 @@ export default function PlayerRTC() {
   const [streamError, setStreamError] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [volume, setVolume] = useState(1);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [isMobileLayout, setIsMobileLayout] = useState(() => globalThis.innerWidth <= 900);
+  const [isTouchDevice, setIsTouchDevice] = useState(() =>
+    Boolean(
+      'ontouchstart' in globalThis ||
+      (globalThis.navigator?.maxTouchPoints ?? 0) > 0 ||
+      (globalThis.navigator as any)?.msMaxTouchPoints > 0
+    )
+  );
 
   const wsRef = useRef<WebSocket | null>(null);
   const clientIdRef = useRef<string | null>(null);
@@ -429,6 +438,23 @@ export default function PlayerRTC() {
   }, []);
 
   useEffect(() => {
+    const updateLayoutMode = () => {
+      setIsMobileLayout(globalThis.innerWidth <= 900);
+      setIsTouchDevice(
+        Boolean(
+          'ontouchstart' in globalThis ||
+          (globalThis.navigator?.maxTouchPoints ?? 0) > 0 ||
+          (globalThis.navigator as any)?.msMaxTouchPoints > 0
+        )
+      );
+    };
+
+    updateLayoutMode();
+    globalThis.addEventListener('resize', updateLayoutMode);
+    return () => globalThis.removeEventListener('resize', updateLayoutMode);
+  }, []);
+
+  useEffect(() => {
     return () => {
       if (controlsHideTimerRef.current) {
         globalThis.clearTimeout(controlsHideTimerRef.current);
@@ -448,6 +474,8 @@ export default function PlayerRTC() {
     if (!state.active) return 'Offline';
     return state.streamReady ? 'Live' : 'Preparing';
   }, [state.active, state.streamReady]);
+
+  const useNativeMobilePlayer = isMobileLayout || isTouchDevice;
 
   const handleViewerMouseMove = (event: React.MouseEvent<HTMLButtonElement>) => {
     revealControls();
@@ -546,11 +574,27 @@ export default function PlayerRTC() {
     try {
       if (document.fullscreenElement === frame) {
         await document.exitFullscreen();
-      } else {
+      } else if (frame.requestFullscreen) {
         await frame.requestFullscreen();
+      } else {
+        const video = remoteVideoRef.current as HTMLVideoElement & {
+          webkitEnterFullscreen?: () => void;
+        };
+        if (video?.webkitEnterFullscreen) {
+          video.webkitEnterFullscreen();
+        }
       }
     } catch {
-      // Ignore fullscreen API errors (browser permissions/user gesture constraints).
+      const video = remoteVideoRef.current as HTMLVideoElement & {
+        webkitEnterFullscreen?: () => void;
+      };
+      if (video?.webkitEnterFullscreen) {
+        try {
+          video.webkitEnterFullscreen();
+        } catch {
+          // Ignore fullscreen API errors (browser permissions/user gesture constraints).
+        }
+      }
     }
   };
 
@@ -601,6 +645,77 @@ export default function PlayerRTC() {
     scheduleControlsHide();
   }, [hasRemoteStream, isFullscreen, scheduleControlsHide]);
 
+  const remoteStreamNode = useNativeMobilePlayer ? (
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#000',
+      }}
+    >
+      <video
+        ref={remoteVideoRef}
+        className="screen-share-video"
+        autoPlay
+        playsInline
+        muted={isMuted}
+        controls
+        controlsList="nodownload noplaybackrate"
+        style={{
+          width: '100%',
+          height: '100%',
+          objectFit: 'contain',
+          backgroundColor: '#000',
+        }}
+      >
+        <track kind="captions" />
+      </video>
+    </div>
+  ) : (
+    <button
+      ref={viewerSurfaceRef}
+      type="button"
+      className="screen-share-remote-surface"
+      style={{
+        touchAction: 'none',
+        border: 'none',
+        padding: 0,
+        background: 'transparent',
+        width: '100%',
+        height: '100%',
+        display: 'block',
+      }}
+      aria-label="Interactive remote stream"
+      onMouseMove={handleViewerMouseMove}
+      onMouseDown={handleViewerMouseDown}
+      onMouseUp={handleViewerMouseUp}
+      onWheelCapture={handleViewerWheel}
+      onKeyDown={handleViewerKeyDown}
+      onKeyUp={handleViewerKeyUp}
+      onTouchStart={revealControls}
+      onContextMenu={(event) => event.preventDefault()}
+      onClick={() => viewerSurfaceRef.current?.focus()}
+    >
+      <video
+        ref={remoteVideoRef}
+        className="screen-share-video"
+        autoPlay
+        playsInline
+        style={{
+          width: '100%',
+          height: '100%',
+          objectFit: 'contain',
+          backgroundColor: '#000',
+        }}
+      >
+        <track kind="captions" />
+      </video>
+    </button>
+  );
+
   return (
     <div
       style={{
@@ -617,13 +732,13 @@ export default function PlayerRTC() {
       <div
         style={{
           backgroundColor: '#18181b',
-          padding: '10px 20px',
+          padding: isMobileLayout ? '10px 12px' : '10px 20px',
           display: 'flex',
           alignItems: 'center',
           borderBottom: '1px solid #3a3a3d',
           zIndex: 10,
           flexShrink: 0,
-          gap: '10px',
+          gap: isMobileLayout ? '8px' : '10px',
         }}
       >
         <button
@@ -658,15 +773,25 @@ export default function PlayerRTC() {
         </h2>
 
         <span style={{ color: '#efeff1', fontSize: '12px' }}>
-          {statusLabel} · {signalStatus} · {rtcStatus}
+          {isMobileLayout
+            ? `${statusLabel} · ${rtcStatus}`
+            : `${statusLabel} · ${signalStatus} · ${rtcStatus}`}
         </span>
       </div>
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div
+        style={{
+          display: 'flex',
+          flex: 1,
+          overflow: 'hidden',
+          flexDirection: isMobileLayout ? 'column' : 'row',
+        }}
+      >
         <div
           ref={playerFrameRef}
           style={{
             flex: 1,
+            minHeight: isMobileLayout ? '50vh' : undefined,
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'stretch',
@@ -678,45 +803,7 @@ export default function PlayerRTC() {
           }}
         >
           {hasRemoteStream ? (
-            <button
-              ref={viewerSurfaceRef}
-              type="button"
-              className="screen-share-remote-surface"
-              style={{
-                touchAction: 'none',
-                border: 'none',
-                padding: 0,
-                background: 'transparent',
-                width: '100%',
-                height: '100%',
-                display: 'block',
-              }}
-              aria-label="Interactive remote stream"
-              onMouseMove={handleViewerMouseMove}
-              onMouseDown={handleViewerMouseDown}
-              onMouseUp={handleViewerMouseUp}
-              onWheelCapture={handleViewerWheel}
-              onKeyDown={handleViewerKeyDown}
-              onKeyUp={handleViewerKeyUp}
-              onTouchStart={revealControls}
-              onContextMenu={(event) => event.preventDefault()}
-              onClick={() => viewerSurfaceRef.current?.focus()}
-            >
-              <video
-                ref={remoteVideoRef}
-                className="screen-share-video"
-                autoPlay
-                playsInline
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
-                  backgroundColor: '#000',
-                }}
-              >
-                <track kind="captions" />
-              </video>
-            </button>
+            remoteStreamNode
           ) : (
             <div
               style={{
@@ -735,14 +822,14 @@ export default function PlayerRTC() {
             </div>
           )}
 
-          {hasRemoteStream && controlsVisible && (
+          {hasRemoteStream && controlsVisible && !useNativeMobilePlayer && (
             <div
               style={{
                 position: 'absolute',
                 left: '50%',
-                bottom: '14px',
+                bottom: isMobileLayout ? '8px' : '14px',
                 transform: 'translateX(-50%)',
-                width: 'min(620px, calc(100% - 28px))',
+                width: isMobileLayout ? 'calc(100% - 16px)' : 'min(620px, calc(100% - 28px))',
                 background:
                   'linear-gradient(180deg, rgba(16, 18, 28, 0.84) 0%, rgba(9, 10, 16, 0.9) 100%)',
                 border: '1px solid rgba(150, 162, 220, 0.28)',
@@ -751,6 +838,7 @@ export default function PlayerRTC() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '10px',
+                flexWrap: isMobileLayout ? 'wrap' : 'nowrap',
                 backdropFilter: 'blur(6px)',
               }}
             >
@@ -786,7 +874,12 @@ export default function PlayerRTC() {
                   revealControls();
                 }}
                 aria-label="Volume"
-                style={{ flex: 1, accentColor: '#8ca6ff', cursor: 'pointer' }}
+                style={{
+                  flex: isMobileLayout ? '1 1 100%' : 1,
+                  accentColor: '#8ca6ff',
+                  cursor: 'pointer',
+                  order: isMobileLayout ? 3 : 0,
+                }}
               />
 
               <span
@@ -839,14 +932,17 @@ export default function PlayerRTC() {
 
         <div
           style={{
-            width: '320px',
+            width: isMobileLayout ? '100%' : '320px',
             backgroundColor: '#0e0e10',
-            borderLeft: '1px solid #3a3a3d',
-            padding: '16px',
+            borderLeft: isMobileLayout ? 'none' : '1px solid #3a3a3d',
+            borderTop: isMobileLayout ? '1px solid #3a3a3d' : 'none',
+            padding: isMobileLayout ? '12px' : '16px',
             display: 'flex',
             flexDirection: 'column',
             gap: '12px',
             flexShrink: 0,
+            maxHeight: isMobileLayout ? '38vh' : 'none',
+            overflowY: isMobileLayout ? 'auto' : 'visible',
           }}
         >
           <div>
