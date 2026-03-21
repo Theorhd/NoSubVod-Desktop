@@ -80,10 +80,6 @@ async fn handle_screenshare_ws(
 
 async fn handle_screenshare_snapshot(State(state): State<ApiState>) -> Response {
     let session = state.screenshare.get_state().await;
-    let Some(source_type) = session.source_type else {
-        return bad_request("No active screen share source");
-    };
-
     if !session.active {
         return bad_request("Screen share session is not active");
     }
@@ -95,6 +91,10 @@ async fn handle_screenshare_snapshot(State(state): State<ApiState>) -> Response 
 
     #[cfg(target_os = "windows")]
     {
+        let Some(source_type) = session.source_type else {
+            return bad_request("No active screen share source");
+        };
+
         let capture_window_title = match source_type {
             super::screenshare::ScreenShareSourceType::Browser => {
                 "NoSubVOD - Screen Share Browser".to_string()
@@ -144,6 +144,7 @@ async fn handle_screenshare_snapshot(State(state): State<ApiState>) -> Response 
     }
 }
 
+#[cfg(target_os = "windows")]
 fn snapshot_unavailable_image(reason: &str) -> Response {
     // Return a valid inline SVG so the viewer UI does not hit repeated 4xx/5xx errors.
     let body = format!(
