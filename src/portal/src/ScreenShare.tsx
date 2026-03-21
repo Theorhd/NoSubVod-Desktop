@@ -65,7 +65,7 @@ export default function ScreenShare() {
   const [isHostMode, setIsHostMode] = useState(false);
   const [hostStreaming, setHostStreaming] = useState(false);
   const [hasRemoteStream, setHasRemoteStream] = useState(false);
-  const [snapshotTick, setSnapshotTick] = useState(0);
+  const [snapshotUrl, setSnapshotUrl] = useState<string | null>(null);
   const [snapshotAvailable, setSnapshotAvailable] = useState(true);
   const [streamError, setStreamError] = useState('');
 
@@ -501,24 +501,87 @@ export default function ScreenShare() {
   useEffect(() => {
     if (!state.active) {
       setSnapshotAvailable(true);
+      setSnapshotUrl((previous) => {
+        if (previous) {
+          URL.revokeObjectURL(previous);
+        }
+        return null;
+      });
       setStreamError('');
     }
   }, [state.active]);
 
   useEffect(() => {
     if (!state.active || state.sourceType !== 'browser') {
+      setSnapshotUrl((previous) => {
+        if (previous) {
+          URL.revokeObjectURL(previous);
+        }
+        return null;
+      });
       return;
     }
 
     if (hasRemoteStream || !snapshotAvailable) {
+      setSnapshotUrl((previous) => {
+        if (previous) {
+          URL.revokeObjectURL(previous);
+        }
+        return null;
+      });
       return;
     }
 
+    let disposed = false;
+
+    const loadSnapshot = async () => {
+      const authQuery = getAuthQuery();
+      const src = authQuery
+        ? `/api/screenshare/snapshot.jpg?tick=${Date.now()}&${authQuery}`
+        : `/api/screenshare/snapshot.jpg?tick=${Date.now()}`;
+
+      try {
+        const response = await fetch(src, {
+          cache: 'no-store',
+          headers: {
+            Accept: 'image/*',
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`snapshot-http-${response.status}`);
+        }
+
+        const blob = await response.blob();
+        if (disposed) {
+          return;
+        }
+
+        const nextUrl = URL.createObjectURL(blob);
+        setSnapshotUrl((previous) => {
+          if (previous) {
+            URL.revokeObjectURL(previous);
+          }
+          return nextUrl;
+        });
+      } catch {
+        if (disposed) {
+          return;
+        }
+        setSnapshotAvailable(false);
+        if (!hasRemoteStream) {
+          setStreamError('Snapshot fallback unavailable. Waiting for host WebRTC stream.');
+        }
+      }
+    };
+
+    void loadSnapshot();
     const timer = globalThis.setInterval(() => {
-      setSnapshotTick((tick) => tick + 1);
+      void loadSnapshot();
     }, 450);
 
     return () => {
+      disposed = true;
       globalThis.clearInterval(timer);
     };
   }, [state.active, state.sourceType, hasRemoteStream, snapshotAvailable]);
@@ -730,26 +793,12 @@ export default function ScreenShare() {
         </video>
       </button>
     );
-  } else if (state.active && state.sourceType === 'browser' && snapshotAvailable) {
-    const authQuery = getAuthQuery();
+  } else if (state.active && state.sourceType === 'browser' && snapshotAvailable && snapshotUrl) {
     feedContent = (
-      <img
-        key={snapshotTick}
-        className="screen-share-preview"
-        src={
-          authQuery
-            ? `/api/screenshare/snapshot.jpg?tick=${snapshotTick}&${authQuery}`
-            : `/api/screenshare/snapshot.jpg?tick=${snapshotTick}`
-        }
-        alt="Screen share browser preview"
-        onError={() => {
-          setSnapshotAvailable(false);
-          if (!hasRemoteStream) {
-            setStreamError('Snapshot fallback unavailable. Waiting for host WebRTC stream.');
-          }
-        }}
-      />
+      <img className="screen-share-preview" src={snapshotUrl} alt="Screen share browser preview" />
     );
+  } else if (state.active && state.sourceType === 'browser' && snapshotAvailable) {
+    feedContent = <div className="screen-share-placeholder">Preparing preview…</div>;
   } else {
     feedContent = <div className="screen-share-placeholder">Live preview coming next.</div>;
   }

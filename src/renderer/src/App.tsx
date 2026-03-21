@@ -43,6 +43,62 @@ export default function App() {
     message?: string;
   };
 
+  async function openWebSocketWithTimeout(url: string, timeoutMs = 8000): Promise<WebSocket> {
+    return await new Promise<WebSocket>((resolve, reject) => {
+      let settled = false;
+      let ws: WebSocket;
+
+      try {
+        ws = new WebSocket(url);
+      } catch (error) {
+        reject(error);
+        return;
+      }
+
+      const settleAndClearTimer = () => {
+        if (settled) {
+          return false;
+        }
+        settled = true;
+        globalThis.clearTimeout(openTimer);
+        return true;
+      };
+
+      const openTimer = globalThis.setTimeout(() => {
+        if (!settleAndClearTimer()) {
+          return;
+        }
+        try {
+          ws.close();
+        } catch {
+          // Ignore close errors after timeout.
+        }
+        reject(new Error(`WebSocket timeout while connecting host signaling: ${url}`));
+      }, timeoutMs);
+
+      ws.addEventListener('open', () => {
+        if (!settleAndClearTimer()) {
+          return;
+        }
+        resolve(ws);
+      });
+
+      ws.addEventListener('error', () => {
+        if (!settleAndClearTimer()) {
+          return;
+        }
+        reject(new Error(`Unable to establish host signaling WebSocket: ${url}`));
+      });
+
+      ws.addEventListener('close', () => {
+        if (!settleAndClearTimer()) {
+          return;
+        }
+        reject(new Error(`Host signaling socket closed before open: ${url}`));
+      });
+    });
+  }
+
   useEffect(() => {
     invoke<ServerInfo>('get_server_info')
       .then(setServerInfo)
@@ -186,109 +242,114 @@ export default function App() {
 
     const portalUrl = new URL(serverInfo.url);
     const token = portalUrl.searchParams.get('t') || '';
-    const wsUrl = `ws://127.0.0.1:${serverInfo.port}/api/screenshare/ws${
-      token ? `?t=${encodeURIComponent(token)}` : ''
-    }`;
+    const authQuery = token ? `?t=${encodeURIComponent(token)}` : '';
+    const httpsPort = portalUrl.port || '23456';
+    const candidateHosts = Array.from(new Set(['127.0.0.1', 'localhost', portalUrl.hostname]));
+    const wsCandidates = [
+      ...candidateHosts.map(
+        (host) => `ws://${host}:${serverInfo.port}/api/screenshare/ws${authQuery}`
+      ),
+      ...candidateHosts.map((host) => `wss://${host}:${httpsPort}/api/screenshare/ws${authQuery}`),
+    ];
 
-    await new Promise<void>((resolve, reject) => {
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+    const handleHostSignal = (message: HostWsMessage) => {
+      const target = message.target;
+      const me = clientIdRef.current;
+      if (target && me && target !== me) {
+        return;
+      }
 
-      const openTimer = globalThis.setTimeout(() => {
-        reject(new Error('WebSocket timeout while connecting host signaling.'));
-      }, 8000);
+      if (!message.from || !message.payload) {
+        return;
+      }
 
-      ws.addEventListener('open', () => {
-        globalThis.clearTimeout(openTimer);
+      const peer = hostPeersRef.current.get(message.from);
+      if (!peer) {
+        return;
+      }
+
+      if (message.payload.sdp?.type === 'answer') {
+        void peer.setRemoteDescription(new RTCSessionDescription(message.payload.sdp));
+        setHostRtcStatus('WebRTC live');
+      }
+
+      if (message.payload.candidate) {
+        void peer.addIceCandidate(new RTCIceCandidate(message.payload.candidate));
+      }
+    };
+
+    const handleHostWsMessage = (message: HostWsMessage) => {
+      switch (message.type) {
+        case 'welcome':
+          clientIdRef.current = message.clientId || null;
+          return;
+        case 'peer-joined':
+          if (message.role === 'viewer' && message.clientId) {
+            void createHostPeer(message.clientId);
+          }
+          return;
+        case 'peers':
+          for (const peer of message.peers || []) {
+            if (peer.role === 'viewer' && peer.clientId) {
+              void createHostPeer(peer.clientId);
+            }
+          }
+          return;
+        case 'peer-left':
+          if (message.role === 'viewer' && message.clientId) {
+            closeHostPeer(message.clientId);
+            waitingViewerIdsRef.current.delete(message.clientId);
+          }
+          return;
+        case 'signal':
+          handleHostSignal(message);
+          return;
+        case 'error':
+          if (message.message) {
+            setActionMessage(message.message);
+          }
+          return;
+        default:
+          return;
+      }
+    };
+
+    let lastError: unknown = null;
+    for (const candidate of wsCandidates) {
+      try {
+        const ws = await openWebSocketWithTimeout(candidate);
+        wsRef.current = ws;
+
+        ws.addEventListener('message', (event) => {
+          try {
+            const message = JSON.parse(event.data) as HostWsMessage;
+            handleHostWsMessage(message);
+          } catch {
+            // Ignore malformed WS messages.
+          }
+        });
+
+        ws.addEventListener('close', () => {
+          setHostRtcStatus('Signaling disconnected');
+        });
+
         setHostRtcStatus('Signaling connected');
         sendWs({ type: 'join', role: 'host' });
-        resolve();
-      });
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
 
-      const handleHostSignal = (message: HostWsMessage) => {
-        const target = message.target;
-        const me = clientIdRef.current;
-        if (target && me && target !== me) {
-          return;
-        }
-
-        if (!message.from || !message.payload) {
-          return;
-        }
-
-        const peer = hostPeersRef.current.get(message.from);
-        if (!peer) {
-          return;
-        }
-
-        if (message.payload.sdp?.type === 'answer') {
-          void peer.setRemoteDescription(new RTCSessionDescription(message.payload.sdp));
-          setHostRtcStatus('WebRTC live');
-        }
-
-        if (message.payload.candidate) {
-          void peer.addIceCandidate(new RTCIceCandidate(message.payload.candidate));
-        }
-      };
-
-      const handleHostWsMessage = (message: HostWsMessage) => {
-        switch (message.type) {
-          case 'welcome':
-            clientIdRef.current = message.clientId || null;
-            return;
-          case 'peer-joined':
-            if (message.role === 'viewer' && message.clientId) {
-              void createHostPeer(message.clientId);
-            }
-            return;
-          case 'peers':
-            for (const peer of message.peers || []) {
-              if (peer.role === 'viewer' && peer.clientId) {
-                void createHostPeer(peer.clientId);
-              }
-            }
-            return;
-          case 'peer-left':
-            if (message.role === 'viewer' && message.clientId) {
-              closeHostPeer(message.clientId);
-              waitingViewerIdsRef.current.delete(message.clientId);
-            }
-            return;
-          case 'signal':
-            handleHostSignal(message);
-            return;
-          case 'error':
-            if (message.message) {
-              setActionMessage(message.message);
-            }
-            return;
-          default:
-            return;
-        }
-      };
-
-      ws.addEventListener('message', (event) => {
-        try {
-          const message = JSON.parse(event.data) as HostWsMessage;
-          handleHostWsMessage(message);
-        } catch {
-          // Ignore malformed WS messages.
-        }
-      });
-
-      ws.addEventListener('close', () => {
-        setHostRtcStatus('Signaling disconnected');
-      });
-
-      ws.addEventListener('error', () => {
-        reject(new Error('Unable to establish host signaling WebSocket.'));
-      });
-    });
+    throw new Error(
+      `Unable to establish host signaling WebSocket on any endpoint: ${String(lastError)}`
+    );
   };
 
   const startShare = async (sourceType: 'browser' | 'application') => {
     setIsBusy(true);
     setActionMessage('');
+    let sessionStarted = false;
     try {
       if (sourceType === 'application') {
         // Application mode needs the picker before we touch signaling to keep user activation.
@@ -300,6 +361,7 @@ export default function App() {
         sourceLabel: sourceType === 'application' ? 'Selected application window' : null,
       });
       setScreenShare(state);
+      sessionStarted = true;
 
       // Always join signaling so viewers can negotiate WebRTC in both modes.
       await connectHostSignaling();
@@ -314,6 +376,14 @@ export default function App() {
       }
     } catch (err: any) {
       stopHostCapture();
+      if (sessionStarted) {
+        try {
+          const resetState = await invoke<ScreenShareSessionState>('stop_screen_share');
+          setScreenShare(resetState);
+        } catch {
+          // Keep current state if emergency stop fails.
+        }
+      }
       setActionMessage(err?.toString?.() || 'Impossible de lancer la diffusion.');
     } finally {
       setIsBusy(false);
