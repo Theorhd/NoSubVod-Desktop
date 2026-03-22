@@ -2,6 +2,7 @@ pub mod auth;
 pub mod chat;
 pub mod download;
 pub mod download_paths;
+pub mod dto;
 pub mod error;
 pub mod history;
 pub mod http_utils;

@@ -11,7 +11,6 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
-use serde::Deserialize;
 use serde_json::Value;
 use tauri_plugin_autostart::ManagerExt;
 #[cfg(target_os = "windows")]
@@ -26,6 +25,11 @@ use super::{
     download_paths::{
         build_master_m3u8_url, build_output_file_base_path, build_output_file_path,
         resolve_download_output_dir,
+    },
+    dto::{
+        ChatQuery, ChatSendBody, DownloadRequest, DownloadedFile, HistoryBody, HistoryListQuery,
+        LiveCategoryQuery, LiveQuery, LiveSearchQuery, LiveStatusQuery, SearchCategoryQuery,
+        SearchQuery, SettingsPatch, TrustedDevicePatch, VariantProxyQuery,
     },
     error::{AppError, AppResult},
     history::HistoryStore,
@@ -189,61 +193,6 @@ fn m3u8_response(body: String) -> Response {
             )
                 .into_response()
         })
-}
-
-// ── Query param structs ───────────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-struct ChatQuery {
-    offset: Option<f64>,
-}
-
-#[derive(Deserialize)]
-struct SearchQuery {
-    q: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct VariantProxyQuery {
-    id: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct LiveQuery {
-    limit: Option<String>,
-    cursor: Option<String>,
-    after: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct LiveStatusQuery {
-    logins: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct HistoryListQuery {
-    limit: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct SearchCategoryQuery {
-    id: Option<String>,
-    name: Option<String>,
-    cursor: Option<String>,
-    limit: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct LiveCategoryQuery {
-    name: Option<String>,
-    cursor: Option<String>,
-    limit: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct LiveSearchQuery {
-    q: Option<String>,
-    limit: Option<String>,
 }
 
 // ── Route handlers ────────────────────────────────────────────────────────────
@@ -420,11 +369,6 @@ async fn handle_get_trusted_devices(State(state): State<ApiState>) -> impl IntoR
     Json(state.history.get_trusted_devices().await)
 }
 
-#[derive(Deserialize)]
-struct TrustedDevicePatch {
-    trusted: bool,
-}
-
 async fn handle_set_trusted_device(
     Path(device_id): Path<String>,
     State(state): State<ApiState>,
@@ -438,28 +382,6 @@ async fn handle_set_trusted_device(
         Some(device) => Ok(Json(device).into_response()),
         None => Err(AppError::NotFound("Device not found".to_string())),
     }
-}
-
-#[derive(Deserialize)]
-struct SettingsPatch {
-    #[serde(rename = "oneSync")]
-    one_sync: Option<bool>,
-    #[serde(rename = "adblockEnabled")]
-    adblock_enabled: Option<bool>,
-    #[serde(rename = "adblockProxy")]
-    adblock_proxy: Option<Option<String>>,
-    #[serde(rename = "adblockProxyMode")]
-    adblock_proxy_mode: Option<Option<String>>,
-    #[serde(rename = "minVideoQuality")]
-    min_video_quality: Option<Option<String>>,
-    #[serde(rename = "preferredVideoQuality")]
-    preferred_video_quality: Option<Option<String>>,
-    #[serde(rename = "downloadLocalPath")]
-    download_local_path: Option<Option<String>>,
-    #[serde(rename = "downloadNetworkSharedPath")]
-    download_network_shared_path: Option<Option<String>>,
-    #[serde(rename = "launchAtLogin")]
-    launch_at_login: Option<bool>,
 }
 
 async fn handle_update_settings(
@@ -734,14 +656,6 @@ async fn handle_get_history_vod(
     }
 }
 
-#[derive(Deserialize)]
-struct HistoryBody {
-    #[serde(rename = "vodId")]
-    vod_id: Option<String>,
-    timecode: Option<f64>,
-    duration: Option<f64>,
-}
-
 async fn handle_post_history(
     State(state): State<ApiState>,
     Json(body): Json<HistoryBody>,
@@ -862,16 +776,6 @@ async fn handle_shared_downloads(
     }
 }
 
-use serde::Serialize;
-
-#[derive(Serialize)]
-struct DownloadedFile {
-    name: String,
-    size: u64,
-    url: String,
-    metadata: Option<Value>,
-}
-
 async fn handle_get_downloads(State(state): State<ApiState>) -> impl IntoResponse {
     let settings = state.history.get_settings().await;
     let Some(base_path) = settings
@@ -926,11 +830,6 @@ async fn handle_get_active_downloads(State(state): State<ApiState>) -> impl Into
 }
 
 // ── Live chat send ─────────────────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-struct ChatSendBody {
-    message: String,
-}
 
 async fn handle_live_chat_send(
     Path(login): Path<String>,
@@ -1089,19 +988,6 @@ async fn handle_download_hls(
     playlist.push_str("#EXT-X-ENDLIST\n");
 
     Ok(m3u8_response(playlist))
-}
-
-#[derive(Deserialize)]
-struct DownloadRequest {
-    #[serde(rename = "vodId")]
-    vod_id: String,
-    title: Option<String>,
-    quality: String,
-    #[serde(rename = "startTime")]
-    start_time: Option<f64>,
-    #[serde(rename = "endTime")]
-    end_time: Option<f64>,
-    duration: Option<f64>,
 }
 
 async fn handle_start_download(
