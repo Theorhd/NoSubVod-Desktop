@@ -358,12 +358,12 @@ async fn handle_get_settings(State(state): State<ApiState>) -> impl IntoResponse
 
 async fn handle_get_adblock_proxies(State(state): State<ApiState>) -> impl IntoResponse {
     state.twitch.refresh_adblock_proxy_state();
-    Json(state.twitch.get_all_proxies())
+    Json(state.twitch.get_all_proxies().await)
 }
 
 async fn handle_get_adblock_status(State(state): State<ApiState>) -> impl IntoResponse {
     state.twitch.refresh_adblock_proxy_state();
-    Json(state.twitch.get_current_proxy())
+    Json(state.twitch.get_current_proxy().await)
 }
 
 async fn handle_get_trusted_devices(State(state): State<ApiState>) -> impl IntoResponse {
