@@ -628,7 +628,9 @@ async fn handle_live_status(
 }
 
 async fn handle_get_history(State(state): State<ApiState>) -> impl IntoResponse {
-    Json::<std::collections::HashMap<String, crate::server::types::HistoryEntry>>(state.history.get_all_history().await)
+    Json::<std::collections::HashMap<String, crate::server::types::HistoryEntry>>(
+        state.history.get_all_history().await,
+    )
 }
 
 async fn handle_get_history_list(
@@ -641,10 +643,7 @@ async fn handle_get_history_list(
         .map(|l| l.clamp(1, 100))
         .unwrap_or(50);
 
-    let offset = q
-        .offset
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(0);
+    let offset = q.offset.and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
 
     let (entries, _total) = state.history.get_history_paged(offset, limit).await;
 
@@ -844,7 +843,10 @@ async fn handle_get_downloads(State(state): State<ApiState>) -> impl IntoRespons
         }
     }
 
-    state.download_cache.insert("list".to_string(), files.clone()).await;
+    state
+        .download_cache
+        .insert("list".to_string(), files.clone())
+        .await;
     Json(files).into_response()
 }
 

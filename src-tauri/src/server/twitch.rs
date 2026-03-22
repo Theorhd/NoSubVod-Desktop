@@ -2063,18 +2063,22 @@ impl TwitchService {
 
         let watched_ids: Vec<String> = history.iter().map(|e| e.vod_id.clone()).collect();
         let watched_vods = self.fetch_watched_vod_metadata(&watched_ids).await;
-        
+
         // Convert optimized inputs back to what build_preference_profile expects if needed,
         // or update build_preference_profile.
         // Looking at build_preference_profile, it expects &HashMap and &[SubEntry].
         // I will update build_preference_profile to be more flexible or adapt here.
-        
-        let history_map: HashMap<String, HistoryEntry> = history.into_iter().map(|e| (e.vod_id.clone(), e)).collect();
-        let subs_entries: Vec<SubEntry> = subs.iter().map(|login| SubEntry {
-            login: login.clone(),
-            display_name: String::new(),
-            profile_image_url: String::new(),
-        }).collect();
+
+        let history_map: HashMap<String, HistoryEntry> =
+            history.into_iter().map(|e| (e.vod_id.clone(), e)).collect();
+        let subs_entries: Vec<SubEntry> = subs
+            .iter()
+            .map(|login| SubEntry {
+                login: login.clone(),
+                display_name: String::new(),
+                profile_image_url: String::new(),
+            })
+            .collect();
 
         let profile = build_preference_profile(&history_map, &watched_vods, &subs_entries);
         let subs_set: HashSet<String> = subs.iter().map(|s| s.to_lowercase()).collect();
@@ -2347,9 +2351,13 @@ impl TwitchService {
 
         let client = self.get_client(settings).await;
 
-        let master =
-            get_text_with_direct_fallback(&client, &self.android_tv_client, &source_url, "live master")
-                .await?;
+        let master = get_text_with_direct_fallback(
+            &client,
+            &self.android_tv_client,
+            &source_url,
+            "live master",
+        )
+        .await?;
 
         Ok(rewrite_master_with_proxy(
             &master,
@@ -2479,7 +2487,8 @@ impl TwitchService {
         let client = self.get_client(settings).await;
 
         let mut body =
-            get_text_with_direct_fallback(&client, &self.android_tv_client, &target_url, "variant").await?;
+            get_text_with_direct_fallback(&client, &self.android_tv_client, &target_url, "variant")
+                .await?;
 
         body = filter_live_playlist(&body);
         body = body.replace("-unmuted", "-muted");

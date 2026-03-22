@@ -157,18 +157,13 @@ pub async fn handle_auth_start(State(state): State<ApiState>) -> Response {
         .unwrap_or_default()
         .as_secs();
 
-    state
-        .oauth
-        .pending
-        .write()
-        .await
-        .insert(
-            state_token.clone(),
-            PendingOAuth {
-                code_verifier,
-                created_at: now,
-            },
-        );
+    state.oauth.pending.write().await.insert(
+        state_token.clone(),
+        PendingOAuth {
+            code_verifier,
+            created_at: now,
+        },
+    );
 
     let auth_url = format!(
         "https://id.twitch.tv/oauth2/authorize\
@@ -206,7 +201,7 @@ pub async fn handle_auth_callback(
     State(state): State<ApiState>,
 ) -> Response {
     info!("Received Twitch OAuth callback");
-    
+
     // Proactive cleanup
     state.oauth.cleanup_expired().await;
 
@@ -341,7 +336,13 @@ pub async fn handle_auth_callback(
                 tokio::spawn({
                     let state = state.clone();
                     async move {
-                        let _ = import_followed_channels(&token, &uid, state.twitch.shared_client(), &state).await;
+                        let _ = import_followed_channels(
+                            &token,
+                            &uid,
+                            state.twitch.shared_client(),
+                            &state,
+                        )
+                        .await;
                     }
                 });
             }

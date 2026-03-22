@@ -1,6 +1,6 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::collections::HashMap;
 
 use ax_ws::{Message, WebSocket};
 use axum::extract::ws as ax_ws;
@@ -130,7 +130,7 @@ impl ScreenShareService {
             .as_millis() as u64;
 
         let mut internal = self.internal.write().await;
-        
+
         match request.source_type {
             ScreenShareSourceType::Browser => {
                 let app = app_handle.ok_or_else(|| {
@@ -178,8 +178,9 @@ impl ScreenShareService {
         drop(internal);
 
         self.broadcast_state(&snapshot).await;
-        self.broadcast_system_message("Screen share source is ready for signaling.").await;
-        
+        self.broadcast_system_message("Screen share source is ready for signaling.")
+            .await;
+
         Ok(snapshot)
     }
 
@@ -198,12 +199,13 @@ impl ScreenShareService {
         internal.host_client_id = None;
         internal.input_rate_limit.clear();
         // We keep clients connected but they will see session is inactive
-        
+
         let snapshot = internal.state.clone();
         drop(internal);
 
         self.broadcast_state(&snapshot).await;
-        self.broadcast_system_message("Screen share session stopped by host.").await;
+        self.broadcast_system_message("Screen share session stopped by host.")
+            .await;
 
         Ok(snapshot)
     }
@@ -215,10 +217,13 @@ impl ScreenShareService {
 
         {
             let mut internal = self.internal.write().await;
-            internal.clients.insert(client_id.clone(), ScreenShareClient {
-                role: "pending".to_string(),
-                sender: tx,
-            });
+            internal.clients.insert(
+                client_id.clone(),
+                ScreenShareClient {
+                    role: "pending".to_string(),
+                    sender: tx,
+                },
+            );
         }
 
         let (mut ws_sender, mut ws_receiver) = socket.split();
@@ -232,7 +237,8 @@ impl ScreenShareService {
                 "clientId": client_id,
                 "state": internal.state,
                 "hostClientId": internal.host_client_id,
-            }).to_string()
+            })
+            .to_string()
         };
         let _ = ws_sender.send(Message::Text(initial_data)).await;
 
@@ -258,9 +264,12 @@ impl ScreenShareService {
         });
 
         while let Some(result) = ws_receiver.next().await {
-            let Ok(message) = result else { break; };
+            let Ok(message) = result else {
+                break;
+            };
             if let Message::Text(text) = message {
-                self.handle_client_message(&writer_client_id, text.to_string()).await;
+                self.handle_client_message(&writer_client_id, text.to_string())
+                    .await;
             } else if let Message::Close(_) = message {
                 break;
             }
@@ -272,7 +281,8 @@ impl ScreenShareService {
 
     async fn handle_client_message(&self, client_id: &str, payload: String) {
         let Ok(message) = serde_json::from_str::<ClientMessage>(&payload) else {
-            self.send_error(client_id, "Invalid signaling payload").await;
+            self.send_error(client_id, "Invalid signaling payload")
+                .await;
             return;
         };
 
@@ -281,33 +291,43 @@ impl ScreenShareService {
             "signal" => self.handle_signal(client_id, message).await,
             "input" => self.handle_input(client_id, message).await,
             "ping" => self.handle_ping(client_id).await,
-            _ => self.send_error(client_id, "Unknown signaling message type").await,
+            _ => {
+                self.send_error(client_id, "Unknown signaling message type")
+                    .await
+            }
         }
     }
 
     async fn handle_join(&self, client_id: &str, message: ClientMessage) {
         let Some(role) = message.role else {
-            self.send_error(client_id, "Missing role in join message").await;
+            self.send_error(client_id, "Missing role in join message")
+                .await;
             return;
         };
 
         let mut internal = self.internal.write().await;
-        
+
         if role == "host" {
             if let Some(existing_host) = internal.host_client_id.as_ref() {
                 if existing_host != client_id {
                     drop(internal);
-                    self.send_error(client_id, "A host is already connected").await;
+                    self.send_error(client_id, "A host is already connected")
+                        .await;
                     return;
                 }
             } else {
                 internal.host_client_id = Some(client_id.to_string());
             }
         } else if role == "viewer" {
-            let current_viewers = internal.clients.values().filter(|c| c.role == "viewer").count();
+            let current_viewers = internal
+                .clients
+                .values()
+                .filter(|c| c.role == "viewer")
+                .count();
             if current_viewers >= internal.state.max_viewers as usize {
                 drop(internal);
-                self.send_error(client_id, "Viewer limit reached for this session").await;
+                self.send_error(client_id, "Viewer limit reached for this session")
+                    .await;
                 return;
             }
         }
@@ -316,18 +336,26 @@ impl ScreenShareService {
             client.role = role.clone();
         }
 
-        let peers: Vec<_> = internal.clients.iter()
+        let peers: Vec<_> = internal
+            .clients
+            .iter()
             .filter(|(id, _)| id.as_str() != client_id)
             .map(|(id, c)| serde_json::json!({ "clientId": id, "role": c.role }))
             .collect();
 
         // Update current viewers in state
-        let viewer_count = internal.clients.values().filter(|c| c.role == "viewer").count();
+        let viewer_count = internal
+            .clients
+            .values()
+            .filter(|c| c.role == "viewer")
+            .count();
         internal.state.current_viewers = viewer_count as u8;
         let state_snapshot = internal.state.clone();
 
         // 1. Send peer list to new client
-        let peers_msg: Arc<str> = serde_json::json!({ "type": "peers", "peers": peers }).to_string().into();
+        let peers_msg: Arc<str> = serde_json::json!({ "type": "peers", "peers": peers })
+            .to_string()
+            .into();
         if let Some(c) = internal.clients.get(client_id) {
             let _ = c.sender.send(peers_msg);
         }
@@ -337,14 +365,20 @@ impl ScreenShareService {
             "type": "peer-joined",
             "clientId": client_id,
             "role": role
-        }).to_string().into();
-        
+        })
+        .to_string()
+        .into();
+
         drop(internal);
 
         let _ = self.broadcast_tx.send(joined_msg);
         self.broadcast_state(&state_snapshot).await;
-        
-        self.send_json(client_id, serde_json::json!({ "type": "joined", "clientId": client_id })).await;
+
+        self.send_json(
+            client_id,
+            serde_json::json!({ "type": "joined", "clientId": client_id }),
+        )
+        .await;
     }
 
     async fn handle_signal(&self, client_id: &str, message: ClientMessage) {
@@ -354,7 +388,9 @@ impl ScreenShareService {
             "from": client_id,
             "target": target,
             "payload": message.payload.unwrap_or(Value::Null),
-        }).to_string().into();
+        })
+        .to_string()
+        .into();
 
         let internal = self.internal.read().await;
         if let Some(target_id) = target {
@@ -369,11 +405,14 @@ impl ScreenShareService {
 
     async fn handle_input(&self, client_id: &str, message: ClientMessage) {
         let internal = self.internal.read().await;
-        let Some(client) = internal.clients.get(client_id) else { return; };
-        
+        let Some(client) = internal.clients.get(client_id) else {
+            return;
+        };
+
         if client.role != "viewer" {
             drop(internal);
-            self.send_error(client_id, "Only viewers can send remote inputs").await;
+            self.send_error(client_id, "Only viewers can send remote inputs")
+                .await;
             return;
         }
 
@@ -382,14 +421,19 @@ impl ScreenShareService {
         }
         drop(internal);
 
-        let Some(raw_payload) = message.payload else { return; };
+        let Some(raw_payload) = message.payload else {
+            return;
+        };
         let Ok(input_payload) = serde_json::from_value::<RemoteInputPayload>(raw_payload) else {
             self.send_error(client_id, "Invalid input payload").await;
             return;
         };
 
-        if input_payload.kind == "pointer" && input_payload.action.as_deref() == Some("move") {
-            if !self.allow_input_tick(client_id, 8).await { return; }
+        if input_payload.kind == "pointer"
+            && input_payload.action.as_deref() == Some("move")
+            && !self.allow_input_tick(client_id, 8).await
+        {
+            return;
         }
 
         if let Err(err) = self.inject_remote_input(&input_payload).await {
@@ -398,8 +442,12 @@ impl ScreenShareService {
     }
 
     async fn handle_ping(&self, client_id: &str) {
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
-        self.send_json(client_id, serde_json::json!({ "type": "pong", "ts": ts })).await;
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.send_json(client_id, serde_json::json!({ "type": "pong", "ts": ts }))
+            .await;
     }
 
     async fn unregister_client(&self, client_id: &str) {
@@ -410,7 +458,11 @@ impl ScreenShareService {
         }
         internal.input_rate_limit.remove(client_id);
 
-        let viewer_count = internal.clients.values().filter(|c| c.role == "viewer").count();
+        let viewer_count = internal
+            .clients
+            .values()
+            .filter(|c| c.role == "viewer")
+            .count();
         internal.state.current_viewers = viewer_count as u8;
         let state_snapshot = internal.state.clone();
         drop(internal);
@@ -422,18 +474,24 @@ impl ScreenShareService {
                 "type": "peer-left",
                 "clientId": client_id,
                 "role": client.role,
-            }).to_string().into();
+            })
+            .to_string()
+            .into();
             let _ = self.broadcast_tx.send(left_msg);
         }
     }
 
     async fn broadcast_state(&self, state: &ScreenShareSessionState) {
-        let msg: Arc<str> = serde_json::json!({ "type": "session-state", "state": state }).to_string().into();
+        let msg: Arc<str> = serde_json::json!({ "type": "session-state", "state": state })
+            .to_string()
+            .into();
         let _ = self.broadcast_tx.send(msg);
     }
 
     async fn broadcast_system_message(&self, message: &str) {
-        let msg: Arc<str> = serde_json::json!({ "type": "system", "message": message }).to_string().into();
+        let msg: Arc<str> = serde_json::json!({ "type": "system", "message": message })
+            .to_string()
+            .into();
         let _ = self.broadcast_tx.send(msg);
     }
 
@@ -446,7 +504,11 @@ impl ScreenShareService {
     }
 
     async fn send_error(&self, client_id: &str, message: &str) {
-        self.send_json(client_id, serde_json::json!({ "type": "error", "message": message })).await;
+        self.send_json(
+            client_id,
+            serde_json::json!({ "type": "error", "message": message }),
+        )
+        .await;
     }
 
     async fn open_browser_window(

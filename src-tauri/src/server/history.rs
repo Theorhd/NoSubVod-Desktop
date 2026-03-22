@@ -201,19 +201,15 @@ impl HistoryStore {
         }
 
         let mut entries: Vec<HistoryEntry> = data.history.values().cloned().collect();
-        
+
         // Partial sort: only sort what's needed for the current page
         let end = (offset + limit).min(total);
-        let (prefix, _, _) = entries.select_nth_unstable_by(end - 1, |a, b| b.updated_at.cmp(&a.updated_at));
-        
+        let (prefix, _, _) =
+            entries.select_nth_unstable_by(end - 1, |a, b| b.updated_at.cmp(&a.updated_at));
+
         prefix.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
-        let paginated = prefix
-            .iter()
-            .skip(offset)
-            .take(limit)
-            .cloned()
-            .collect();
+        let paginated = prefix.iter().skip(offset).take(limit).cloned().collect();
 
         (paginated, total)
     }
@@ -268,26 +264,19 @@ impl HistoryStore {
         }
 
         let mut entries = data.watchlist.clone();
-        
+
         // Partial sort: newest first
         let end = (offset + limit).min(total);
-        let (prefix, _, _) = entries.select_nth_unstable_by(end - 1, |a, b| b.added_at.cmp(&a.added_at));
+        let (prefix, _, _) =
+            entries.select_nth_unstable_by(end - 1, |a, b| b.added_at.cmp(&a.added_at));
         prefix.sort_by(|a, b| b.added_at.cmp(&a.added_at));
 
-        let paginated = prefix
-            .iter()
-            .skip(offset)
-            .take(limit)
-            .cloned()
-            .collect();
+        let paginated = prefix.iter().skip(offset).take(limit).cloned().collect();
 
         (paginated, total)
     }
 
-    pub async fn add_to_watchlist(
-        &self,
-        mut entry: WatchlistEntry,
-    ) -> AppResult<WatchlistEntry> {
+    pub async fn add_to_watchlist(&self, mut entry: WatchlistEntry) -> AppResult<WatchlistEntry> {
         let mut should_save = false;
         {
             let mut data = self.data.write().await;
@@ -389,18 +378,14 @@ impl HistoryStore {
         }
 
         let mut entries = data.subs.clone();
-        
+
         // Partial sort: alphabetical by display_name
         let end = (offset + limit).min(total);
-        let (prefix, _, _) = entries.select_nth_unstable_by(end - 1, |a, b| a.display_name.cmp(&b.display_name));
+        let (prefix, _, _) =
+            entries.select_nth_unstable_by(end - 1, |a, b| a.display_name.cmp(&b.display_name));
         prefix.sort_by(|a, b| a.display_name.cmp(&b.display_name));
 
-        let paginated = prefix
-            .iter()
-            .skip(offset)
-            .take(limit)
-            .cloned()
-            .collect();
+        let paginated = prefix.iter().skip(offset).take(limit).cloned().collect();
 
         (paginated, total)
     }
@@ -498,10 +483,11 @@ impl HistoryStore {
         let data = self.data.read().await;
         let mut history: Vec<HistoryEntry> = data.history.values().cloned().collect();
         let total = history.len();
-        
+
         let count = 35.min(total);
         if count > 0 {
-            let (prefix, _, _) = history.select_nth_unstable_by(count - 1, |a, b| b.updated_at.cmp(&a.updated_at));
+            let (prefix, _, _) =
+                history.select_nth_unstable_by(count - 1, |a, b| b.updated_at.cmp(&a.updated_at));
             prefix.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
             history.truncate(count);
         }
