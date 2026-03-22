@@ -702,11 +702,7 @@ fn urlencoding_simple(s: &str) -> String {
     out
 }
 
-async fn rewrite_tag_uri_with_proxy(
-    line: &str,
-    base_url: &str,
-    token: &str,
-) -> String {
+async fn rewrite_tag_uri_with_proxy(line: &str, base_url: &str, token: &str) -> String {
     if !line.contains("URI=\"") {
         return line.to_string();
     }
