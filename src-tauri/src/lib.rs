@@ -4,14 +4,6 @@ mod commands;
 #[cfg(not(test))]
 pub mod server;
 
-#[cfg(test)]
-pub mod server {
-    pub mod download_paths;
-    pub mod error;
-    pub mod http_utils;
-    pub mod url_utils;
-}
-
 #[cfg(not(test))]
 use std::sync::Arc;
 #[cfg(not(test))]
@@ -139,3 +131,11 @@ pub fn run() {
 
 #[cfg(test)]
 pub fn run() {}
+
+#[cfg(test)]
+pub mod server {
+    pub mod download_paths;
+    pub mod error;
+    pub mod http_utils;
+    pub mod url_utils;
+}

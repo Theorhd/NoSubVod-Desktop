@@ -102,9 +102,9 @@ async fn handle_screenshare_snapshot(State(state): State<ApiState>) -> AppResult
 
     #[cfg(not(target_os = "windows"))]
     {
-        return Err(AppError::BadRequest(
+        Err(AppError::BadRequest(
             "Snapshot capture is currently supported on Windows only".to_string(),
-        ));
+        ))
     }
 
     #[cfg(target_os = "windows")]

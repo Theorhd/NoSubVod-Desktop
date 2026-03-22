@@ -2,6 +2,19 @@
 
 NoSubVOD Desktop est une application locale pour regarder des VODs et des lives Twitch depuis n’importe quel appareil du réseau local (mobile, tablette, TV, PC), avec historique, watchlist et portail web intégré.
 
+## 🆕 v0.3.3 — Fiabilite streaming, optimisations Rust et backend durci
+
+La version 0.3.3 se concentre sur la stabilite de lecture VOD/Live, l'optimisation du backend Rust et l'amelioration de la maintenabilite globale.
+
+### Points clés v0.3.3
+
+- **Streaming plus fiable** : correction des 404 intermittents sur le proxy HLS (`/api/stream/variant.*`) avec support du proxy segment via URL directe validee.
+- **Perf backend Rust** : regex lazy, selection proxy optimisee, client HTTP partage dans TwitchService/routes, taches async harmonisees.
+- **Memoire et I/O** : optimisations `Arc`/`Cow`, download manager avec verrouillage granulaire, historique en buffered I/O.
+- **Pagination et etat** : pagination history/watchlist backend+frontend, state management consolide (ScreenShareService, OAuth pending cleanup).
+- **Securite et robustesse** : middleware/validation renforces, refactor global de la gestion d'erreurs.
+- **Qualite projet** : compression async, tracing/logging etendus, tests unitaires supplementaires, lint cleanup.
+
 ## 🆕 v0.3.2 — Screen Share WebRTC, PlayerRTC immersif & navigation dock
 
 La version 0.3.2 introduit le partage d'ecran en temps reel via WebRTC, rapproche l'experience PlayerRTC du player principal, et modernise la navigation sur tablette/desktop avec un rendu dock flottant.
