@@ -31,8 +31,15 @@ pub struct LiveStatusQuery {
 }
 
 #[derive(Deserialize)]
+pub struct PagedQuery {
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
 pub struct HistoryListQuery {
     pub limit: Option<String>,
+    pub offset: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -113,7 +120,7 @@ pub struct DownloadRequest {
 
 // ── Response structs ───────────────────────────────────────────────────────────
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct DownloadedFile {
     pub name: String,
     pub size: u64,

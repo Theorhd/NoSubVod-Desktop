@@ -30,8 +30,8 @@ use super::{
     },
     dto::{
         ChatQuery, ChatSendBody, DownloadRequest, DownloadedFile, HistoryBody, HistoryListQuery,
-        LiveCategoryQuery, LiveQuery, LiveSearchQuery, LiveStatusQuery, SearchCategoryQuery,
-        SearchQuery, SettingsPatch, TrustedDevicePatch, VariantProxyQuery,
+        LiveCategoryQuery, LiveQuery, LiveSearchQuery, LiveStatusQuery, PagedQuery,
+        SearchCategoryQuery, SearchQuery, SettingsPatch, TrustedDevicePatch, VariantProxyQuery,
     },
     error::{AppError, AppResult},
     history::HistoryStore,
@@ -44,6 +44,8 @@ use super::{
         filter_hevc_variants_for_ios, is_ios_family_request, is_valid_id, is_valid_login,
     },
 };
+use moka::future::Cache;
+use std::time::Duration;
 
 // ── Application state shared across all routes ─────────────────────────────────
 
@@ -57,6 +59,8 @@ pub struct ApiState {
     /// Per-session token required for API access (prevents unauthorized LAN access).
     pub server_token: String,
     pub app_handle: Option<tauri::AppHandle>,
+    /// Cache for the downloads list (short TTL to avoid frequent disk scans)
+    pub download_cache: Cache<String, Vec<DownloadedFile>>,
 }
 
 async fn handle_get_screenshare_state(State(state): State<ApiState>) -> impl IntoResponse {
@@ -335,22 +339,31 @@ async fn handle_proxy_segment(
         .map_err(|e| AppError::Internal(e.to_string()))
 }
 
-async fn handle_get_watchlist(State(state): State<ApiState>) -> impl IntoResponse {
-    Json(state.history.get_watchlist().await)
+async fn handle_get_watchlist(
+    Query(q): Query<PagedQuery>,
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let offset = q.offset.unwrap_or(0);
+    let limit = q.limit.unwrap_or(100).clamp(1, 250);
+
+    let (items, _total) = state.history.get_watchlist_paged(offset, limit).await;
+    Json(items)
 }
 
 async fn handle_add_watchlist(
     State(state): State<ApiState>,
     Json(entry): Json<WatchlistEntry>,
 ) -> AppResult<Response> {
-    Ok(Json(state.history.add_to_watchlist(entry).await?).into_response())
+    state.history.add_to_watchlist(entry).await?;
+    Ok(Json(serde_json::json!({ "ok": true })).into_response())
 }
 
 async fn handle_remove_watchlist(
     Path(vod_id): Path<String>,
     State(state): State<ApiState>,
 ) -> AppResult<impl IntoResponse> {
-    Ok(Json(state.history.remove_from_watchlist(&vod_id).await?))
+    state.history.remove_from_watchlist(&vod_id).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 async fn handle_get_settings(State(state): State<ApiState>) -> impl IntoResponse {
@@ -418,8 +431,15 @@ async fn handle_update_settings(
     .into_response())
 }
 
-async fn handle_get_subs(State(state): State<ApiState>) -> impl IntoResponse {
-    Json(state.history.get_subs().await)
+async fn handle_get_subs(
+    Query(q): Query<PagedQuery>,
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let offset = q.offset.unwrap_or(0);
+    let limit = q.limit.unwrap_or(100).clamp(1, 250);
+
+    let (items, _total) = state.history.get_subs_paged(offset, limit).await;
+    Json(items)
 }
 
 async fn handle_add_sub(
@@ -430,14 +450,16 @@ async fn handle_add_sub(
     {
         return Err(AppError::BadRequest("Invalid sub payload".to_string()));
     }
-    Ok(Json(state.history.add_sub(entry).await?).into_response())
+    state.history.add_sub(entry).await?;
+    Ok(Json(serde_json::json!({ "ok": true })).into_response())
 }
 
 async fn handle_remove_sub(
     Path(login): Path<String>,
     State(state): State<ApiState>,
 ) -> AppResult<impl IntoResponse> {
-    Ok(Json(state.history.remove_sub(&login).await?))
+    state.history.remove_sub(&login).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 async fn handle_search_channels(
@@ -507,9 +529,8 @@ async fn handle_search_category_vods(
 }
 
 async fn handle_trends(State(state): State<ApiState>) -> AppResult<Response> {
-    let history = state.history.get_all_history().await;
-    let subs = state.history.get_subs().await;
-    let results = state.twitch.fetch_trending_vods(&history, &subs).await?;
+    let (history, subs) = state.history.get_trending_input().await;
+    let results = state.twitch.fetch_trending_vods(history, subs).await?;
     Ok(Json(results).into_response())
 }
 
@@ -607,7 +628,7 @@ async fn handle_live_status(
 }
 
 async fn handle_get_history(State(state): State<ApiState>) -> impl IntoResponse {
-    Json(state.history.get_all_history().await)
+    Json::<std::collections::HashMap<String, crate::server::types::HistoryEntry>>(state.history.get_all_history().await)
 }
 
 async fn handle_get_history_list(
@@ -617,15 +638,15 @@ async fn handle_get_history_list(
     let limit = q
         .limit
         .and_then(|s| s.parse::<usize>().ok())
-        .map(|l| l.clamp(1, 100));
+        .map(|l| l.clamp(1, 100))
+        .unwrap_or(50);
 
-    let all_history = state.history.get_all_history().await;
-    let mut entries: Vec<_> = all_history.into_values().collect();
-    entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    let offset = q
+        .offset
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
 
-    if let Some(l) = limit {
-        entries.truncate(l);
-    }
+    let (entries, _total) = state.history.get_history_paged(offset, limit).await;
 
     let vod_ids: Vec<String> = entries.iter().map(|e| e.vod_id.clone()).collect();
     let metadata = state.twitch.fetch_vods_by_ids(vod_ids).await;
@@ -789,6 +810,11 @@ async fn handle_get_downloads(State(state): State<ApiState>) -> impl IntoRespons
         return Json(Vec::<DownloadedFile>::new()).into_response();
     };
 
+    // Try cache first (5s TTL)
+    if let Some(cached) = state.download_cache.get("list").await {
+        return Json::<Vec<DownloadedFile>>(cached).into_response();
+    }
+
     let mut files = Vec::new();
     if let Ok(mut entries) = tokio::fs::read_dir(&base_path).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
@@ -818,6 +844,7 @@ async fn handle_get_downloads(State(state): State<ApiState>) -> impl IntoRespons
         }
     }
 
+    state.download_cache.insert("list".to_string(), files.clone()).await;
     Json(files).into_response()
 }
 
@@ -862,13 +889,14 @@ async fn handle_live_chat_send(
     let client = state.twitch.shared_client().clone();
 
     // Resolve login → broadcaster_id
-    let broadcaster_id = match client
+    let broadcaster_id_res: Result<reqwest::Response, reqwest::Error> = client
         .get(format!("https://api.twitch.tv/helix/users?login={}", login))
         .header("Authorization", format!("Bearer {access_token}"))
         .header("Client-Id", crate::server::auth::TWITCH_CLIENT_ID.as_str())
         .send()
-        .await
-    {
+        .await;
+
+    let broadcaster_id = match broadcaster_id_res {
         Ok(r) if r.status().is_success() => {
             let body: serde_json::Value = r.json().await.unwrap_or_default();
             body.get("data")
@@ -1039,7 +1067,13 @@ async fn handle_start_download(
 
 // ── Router factory ────────────────────────────────────────────────────────────
 
-pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) -> Router {
+pub fn build_router(mut state: ApiState, portal_dist: Option<std::path::PathBuf>) -> Router {
+    // Initialize download cache with 5s TTL
+    state.download_cache = Cache::builder()
+        .time_to_live(Duration::from_secs(5))
+        .max_capacity(1) // Only one entry for the whole list
+        .build();
+
     // CORS: allow only same-origin and local network origins (not Any)
     let cors = CorsLayer::new()
         .allow_origin(tower_http::cors::AllowOrigin::mirror_request())

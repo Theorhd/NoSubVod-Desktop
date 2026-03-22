@@ -189,6 +189,25 @@ impl HistoryStore {
         self.data.read().await.history.clone()
     }
 
+    pub async fn get_history_paged(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> (Vec<HistoryEntry>, usize) {
+        let data = self.data.read().await;
+        let mut entries: Vec<HistoryEntry> = data.history.values().cloned().collect();
+        entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+        let total = entries.len();
+        let paginated = entries
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .collect();
+
+        (paginated, total)
+    }
+
     pub async fn get_history_by_vod_id(&self, vod_id: &str) -> Option<HistoryEntry> {
         self.data.read().await.history.get(vod_id).cloned()
     }
@@ -227,10 +246,26 @@ impl HistoryStore {
         self.data.read().await.watchlist.clone()
     }
 
+    pub async fn get_watchlist_paged(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> (Vec<WatchlistEntry>, usize) {
+        let data = self.data.read().await;
+        let mut entries = data.watchlist.clone();
+        // Newest first
+        entries.sort_by(|a, b| b.added_at.cmp(&a.added_at));
+
+        let total = entries.len();
+        let paginated = entries.into_iter().skip(offset).take(limit).collect();
+
+        (paginated, total)
+    }
+
     pub async fn add_to_watchlist(
         &self,
         mut entry: WatchlistEntry,
-    ) -> AppResult<Vec<WatchlistEntry>> {
+    ) -> AppResult<WatchlistEntry> {
         let mut should_save = false;
         {
             let mut data = self.data.write().await;
@@ -239,23 +274,30 @@ impl HistoryStore {
                     .duration_since(UNIX_EPOCH)
                     .map_err(|e| AppError::Internal(e.to_string()))?
                     .as_millis() as u64;
-                data.watchlist.push(entry);
+                data.watchlist.push(entry.clone());
                 should_save = true;
             }
         }
         if should_save {
             self.schedule_save();
         }
-        Ok(self.data.read().await.watchlist.clone())
+        Ok(entry)
     }
 
-    pub async fn remove_from_watchlist(&self, vod_id: &str) -> AppResult<Vec<WatchlistEntry>> {
+    pub async fn remove_from_watchlist(&self, vod_id: &str) -> AppResult<()> {
+        let mut should_save = false;
         {
             let mut data = self.data.write().await;
+            let initial_len = data.watchlist.len();
             data.watchlist.retain(|w| w.vod_id != vod_id);
+            if data.watchlist.len() != initial_len {
+                should_save = true;
+            }
         }
-        self.schedule_save();
-        Ok(self.data.read().await.watchlist.clone())
+        if should_save {
+            self.schedule_save();
+        }
+        Ok(())
     }
 
     // ── Settings ─────────────────────────────────────────────────────────────
@@ -317,10 +359,19 @@ impl HistoryStore {
         self.data.read().await.subs.clone()
     }
 
-    pub async fn add_sub(&self, entry: SubEntry) -> AppResult<Vec<SubEntry>> {
+    pub async fn get_subs_paged(&self, offset: usize, limit: usize) -> (Vec<SubEntry>, usize) {
+        let data = self.data.read().await;
+        let entries = data.subs.clone();
+        let total = entries.len();
+        let paginated = entries.into_iter().skip(offset).take(limit).collect();
+
+        (paginated, total)
+    }
+
+    pub async fn add_sub(&self, entry: SubEntry) -> AppResult<SubEntry> {
         let login = entry.login.trim().to_lowercase();
         if login.is_empty() {
-            return Ok(self.data.read().await.subs.clone());
+            return Err(AppError::BadRequest("Invalid sub login".to_string()));
         }
 
         let mut should_save = false;
@@ -328,9 +379,9 @@ impl HistoryStore {
             let mut data = self.data.write().await;
             if !data.subs.iter().any(|s| s.login == login) {
                 data.subs.push(SubEntry {
-                    login,
-                    display_name: entry.display_name,
-                    profile_image_url: entry.profile_image_url,
+                    login: login.clone(),
+                    display_name: entry.display_name.clone(),
+                    profile_image_url: entry.profile_image_url.clone(),
                 });
                 should_save = true;
             }
@@ -338,17 +389,24 @@ impl HistoryStore {
         if should_save {
             self.schedule_save();
         }
-        Ok(self.data.read().await.subs.clone())
+        Ok(entry)
     }
 
-    pub async fn remove_sub(&self, login: &str) -> AppResult<Vec<SubEntry>> {
+    pub async fn remove_sub(&self, login: &str) -> AppResult<()> {
         let login = login.trim().to_lowercase();
+        let mut should_save = false;
         {
             let mut data = self.data.write().await;
+            let initial_len = data.subs.len();
             data.subs.retain(|s| s.login != login);
+            if data.subs.len() != initial_len {
+                should_save = true;
+            }
         }
-        self.schedule_save();
-        Ok(self.data.read().await.subs.clone())
+        if should_save {
+            self.schedule_save();
+        }
+        Ok(())
     }
 
     // ── Twitch token (kept server-side only, never serialised to API) ─────────
@@ -396,6 +454,17 @@ impl HistoryStore {
         }
         self.schedule_save();
         Ok(())
+    }
+
+    /// Returns (top 35 history entries, all sub logins) for trending calculation.
+    pub async fn get_trending_input(&self) -> (Vec<HistoryEntry>, Vec<String>) {
+        let data = self.data.read().await;
+        let mut history: Vec<HistoryEntry> = data.history.values().cloned().collect();
+        history.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        history.truncate(35);
+
+        let subs = data.subs.iter().map(|s| s.login.clone()).collect();
+        (history, subs)
     }
 
     pub async fn update_import_follows_setting(&self, value: bool) -> AppResult<()> {

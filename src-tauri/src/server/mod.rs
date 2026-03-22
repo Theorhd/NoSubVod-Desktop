@@ -16,6 +16,8 @@ pub mod validation;
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
+use moka::future::Cache;
 
 #[cfg(not(debug_assertions))]
 use axum_server::tls_rustls::RustlsConfig;
@@ -85,6 +87,11 @@ impl AppState {
 
         let oauth = Arc::new(auth::OAuthStateStore::new());
 
+        let download_cache = Cache::builder()
+            .time_to_live(Duration::from_secs(5))
+            .max_capacity(1)
+            .build();
+
         let api_state = ApiState {
             twitch,
             history,
@@ -93,6 +100,7 @@ impl AppState {
             oauth,
             server_token,
             app_handle: None,
+            download_cache,
         };
 
         Ok(Self {

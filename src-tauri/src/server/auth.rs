@@ -205,7 +205,7 @@ pub async fn handle_auth_callback(
 
     // ── Exchange authorization code for access token ────────────────────────
     let client = state.twitch.shared_client().clone();
-    let token_res = client
+    let token_res: Result<reqwest::Response, reqwest::Error> = client
         .post("https://id.twitch.tv/oauth2/token")
         .form(&[
             ("client_id", TWITCH_CLIENT_ID.as_str()),
@@ -241,7 +241,7 @@ pub async fn handle_auth_callback(
     };
 
     // ── Fetch user profile ──────────────────────────────────────────────────
-    let user_res = client
+    let user_res: Result<reqwest::Response, reqwest::Error> = client
         .get("https://api.twitch.tv/helix/users")
         .header("Authorization", format!("Bearer {access_token}"))
         .header("Client-Id", TWITCH_CLIENT_ID.as_str())
@@ -306,7 +306,7 @@ pub async fn handle_auth_callback(
                 tokio::spawn({
                     let state = state.clone();
                     async move {
-                        let _ = import_followed_channels(&token, &uid, state.twitch.shared_client()).await;
+                        let _ = import_followed_channels(&token, &uid, state.twitch.shared_client(), &state).await;
                     }
                 });
             }
@@ -376,7 +376,8 @@ pub async fn handle_auth_import_follows(
         state.history.update_import_follows_setting(true).await?;
     }
 
-    let imported = import_followed_channels(&access_token, &uid, state.twitch.shared_client()).await;
+    let imported =
+        import_followed_channels(&access_token, &uid, state.twitch.shared_client(), &state).await;
     Ok(Json(serde_json::json!({ "imported": imported })).into_response())
 }
 
@@ -403,6 +404,7 @@ pub async fn import_followed_channels(
     access_token: &str,
     user_id: &str,
     client: &reqwest::Client,
+    state: &ApiState,
 ) -> usize {
     let mut cursor: Option<String> = None;
     // (broadcaster_id, login, display_name)

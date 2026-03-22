@@ -250,7 +250,7 @@ impl ProxyManager {
         let url = "https://api.proxyscrape.com/v2/?request=displayproxies\
 &protocol=http&timeout=10000&country=all&ssl=all&anonymity=all&simplified=true";
         let resp = self
-            .android_tv_client
+            .client
             .get(url)
             .header("Accept", "text/plain")
             .send()
@@ -285,7 +285,7 @@ impl ProxyManager {
 
         let mut out = Vec::new();
         for source in sources {
-            let Ok(resp) = self.android_tv_client.get(source).send().await else {
+            let Ok(resp) = self.client.get(source).send().await else {
                 continue;
             };
             let Ok(text) = resp.text().await else {
@@ -399,6 +399,10 @@ impl TwitchService {
         }
     }
 
+    pub fn shared_client(&self) -> &Client {
+        &self.shared_client
+    }
+
     pub async fn get_all_proxies(&self) -> Vec<ProxyInfo> {
         self.proxy_manager.get_all_proxies().await
     }
@@ -481,7 +485,7 @@ impl TwitchService {
 
     async fn gql_post(&self, body: &str) -> AppResult<Value> {
         let resp = self
-            .client
+            .android_tv_client
             .post("https://gql.twitch.tv/gql")
             .header("Client-Id", ANDROID_TV_CLIENT_ID)
             .header("Accept", "application/json")
@@ -2028,15 +2032,11 @@ impl TwitchService {
 
     pub async fn fetch_trending_vods(
         &self,
-        history: &HashMap<String, HistoryEntry>,
-        subs: &[SubEntry],
+        history: Vec<HistoryEntry>,
+        subs: Vec<String>,
     ) -> AppResult<Vec<Vod>> {
-        let mut history_by_time: Vec<&HistoryEntry> = history.values().collect();
-        history_by_time.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-        history_by_time.truncate(35);
-
         let fingerprint = create_simple_hash(&{
-            let h: Vec<_> = history_by_time
+            let h: Vec<_> = history
                 .iter()
                 .map(|e| {
                     format!(
@@ -2049,7 +2049,7 @@ impl TwitchService {
                 })
                 .collect();
             let s_subs: Vec<_> = {
-                let mut v: Vec<_> = subs.iter().map(|s| s.login.to_lowercase()).collect();
+                let mut v: Vec<_> = subs.iter().map(|s| s.to_lowercase()).collect();
                 v.sort();
                 v
             };
@@ -2061,10 +2061,23 @@ impl TwitchService {
             return Ok(cached);
         }
 
-        let watched_ids: Vec<String> = history_by_time.iter().map(|e| e.vod_id.clone()).collect();
+        let watched_ids: Vec<String> = history.iter().map(|e| e.vod_id.clone()).collect();
         let watched_vods = self.fetch_watched_vod_metadata(&watched_ids).await;
-        let profile = build_preference_profile(history, &watched_vods, subs);
-        let subs_set: HashSet<String> = subs.iter().map(|s| s.login.to_lowercase()).collect();
+        
+        // Convert optimized inputs back to what build_preference_profile expects if needed,
+        // or update build_preference_profile.
+        // Looking at build_preference_profile, it expects &HashMap and &[SubEntry].
+        // I will update build_preference_profile to be more flexible or adapt here.
+        
+        let history_map: HashMap<String, HistoryEntry> = history.into_iter().map(|e| (e.vod_id.clone(), e)).collect();
+        let subs_entries: Vec<SubEntry> = subs.iter().map(|login| SubEntry {
+            login: login.clone(),
+            display_name: String::new(),
+            profile_image_url: String::new(),
+        }).collect();
+
+        let profile = build_preference_profile(&history_map, &watched_vods, &subs_entries);
+        let subs_set: HashSet<String> = subs.iter().map(|s| s.to_lowercase()).collect();
 
         // ── Step 1: Expand source candidates ──
 
@@ -2113,7 +2126,7 @@ impl TwitchService {
 
         let mut channels_to_fetch: HashSet<String> = HashSet::new();
         for sub in subs.iter().take(20) {
-            channels_to_fetch.insert(sub.login.to_lowercase());
+            channels_to_fetch.insert(sub.to_lowercase());
         }
         for ch in &top_channels {
             channels_to_fetch.insert(ch.clone());
@@ -2407,7 +2420,7 @@ impl TwitchService {
                 });
 
                 let resp = self
-                    .client
+                    .android_tv_client
                     .post("https://gql.twitch.tv/gql")
                     .header("Client-Id", "kimne78kx3ncx6brgo4mv6wki5h1ko")
                     .header("X-Device-Id", &device_id)
