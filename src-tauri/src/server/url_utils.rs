@@ -1,22 +1,24 @@
-pub fn extract_origin(url: &str) -> String {
+use std::borrow::Cow;
+
+pub fn extract_origin(url: &str) -> Cow<'_, str> {
     if let Some(sep) = url.find("://") {
         let after = &url[sep + 3..];
         let end = after.find('/').unwrap_or(after.len());
-        return format!("{}://{}", &url[..sep], &after[..end]);
+        return Cow::Owned(format!("{}://{}", &url[..sep], &after[..end]));
     }
 
-    url.to_string()
+    Cow::Borrowed(url)
 }
 
-pub fn resolve_url(raw: &str, origin: &str, base_url: &str) -> String {
+pub fn resolve_url<'a>(raw: &'a str, origin: &str, base_url: &str) -> Cow<'a, str> {
     let raw = raw.trim();
 
     if raw.starts_with("http://") || raw.starts_with("https://") {
-        return raw.to_string();
+        return Cow::Borrowed(raw);
     }
 
     if raw.starts_with('/') {
-        return format!("{origin}{raw}");
+        return Cow::Owned(format!("{origin}{raw}"));
     }
 
     let base_dir = base_url
@@ -24,7 +26,7 @@ pub fn resolve_url(raw: &str, origin: &str, base_url: &str) -> String {
         .map(|index| &base_url[..=index])
         .unwrap_or(base_url);
 
-    format!("{base_dir}{raw}")
+     Cow::Owned(format!("{base_dir}{raw}"))
 }
 
 #[cfg(test)]
