@@ -114,7 +114,10 @@ export default function Home() {
     });
 
     if (res.ok) {
-      setSubs((await res.json()) as SubEntry[]);
+      setSubs((prev) => {
+        if (prev.some((s) => s.login === entry.login)) return prev;
+        return [...prev, entry];
+      });
     }
   };
 
@@ -124,14 +127,16 @@ export default function Home() {
     });
 
     if (res.ok) {
-      setSubs((await res.json()) as SubEntry[]);
+      setSubs((prev) => prev.filter((s) => s.login !== login));
     }
   };
 
   const removeFromWatchlist = async (vodId: string) => {
     try {
       const res = await fetch(`/api/watchlist/${vodId}`, { method: 'DELETE' });
-      if (res.ok) setWatchlist((await res.json()) as WatchlistEntry[]);
+      if (res.ok) {
+        setWatchlist((prev) => prev.filter((w) => w.vodId !== vodId));
+      }
     } catch (error) {
       console.error(error);
     }

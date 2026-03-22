@@ -1,16 +1,35 @@
+#[cfg(not(test))]
 mod commands;
+
+#[cfg(not(test))]
 pub mod server;
 
+#[cfg(not(test))]
 use std::sync::Arc;
-
+#[cfg(not(test))]
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
     Manager,
 };
+#[cfg(not(test))]
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+#[cfg(not(test))]
 use server::AppState;
 
+#[cfg(not(test))]
+fn init_tracing() {
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "nosubvod_desktop_lib=debug,tower_http=debug".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+}
+
+#[cfg(not(test))]
 fn init_rustls_crypto_provider() {
     // rustls 0.23 may require explicit provider installation when both
     // providers are enabled through the dependency graph.
@@ -19,9 +38,11 @@ fn init_rustls_crypto_provider() {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[cfg(not(test))]
 pub fn run() {
     // Load .env from the directory next to the binary (src-tauri/ in dev)
     dotenvy::dotenv().ok();
+    init_tracing();
     init_rustls_crypto_provider();
 
     tauri::Builder::default()
@@ -80,10 +101,13 @@ pub fn run() {
             let app_data_dir = app
                 .path()
                 .app_data_dir()
-                .expect("Failed to resolve app data dir");
+                .map_err(|e| tauri::Error::from(std::io::Error::other(e.to_string())))?;
 
             // Initialize state synchronously (history loaded with std::fs)
-            let state = Arc::new(AppState::new(app_data_dir));
+            let state = Arc::new(
+                AppState::new(app_data_dir)
+                    .map_err(|e| tauri::Error::from(std::io::Error::other(e.to_string())))?,
+            );
             app.manage(state.clone());
 
             let app_handle = app.handle().clone();
@@ -103,4 +127,15 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+pub fn run() {}
+
+#[cfg(test)]
+pub mod server {
+    pub mod download_paths;
+    pub mod error;
+    pub mod http_utils;
+    pub mod url_utils;
 }
