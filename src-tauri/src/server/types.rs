@@ -211,13 +211,29 @@ pub struct ExperienceSettings {
     #[serde(rename = "downloadNetworkSharedPath", default)]
     pub download_network_shared_path: Option<String>,
     // Twitch linked account (public info — token stored separately in PersistedData)
-    #[serde(rename = "twitchUserId", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "twitchUserId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub twitch_user_id: Option<String>,
-    #[serde(rename = "twitchUserLogin", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "twitchUserLogin",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub twitch_user_login: Option<String>,
-    #[serde(rename = "twitchUserDisplayName", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "twitchUserDisplayName",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub twitch_user_display_name: Option<String>,
-    #[serde(rename = "twitchUserAvatar", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "twitchUserAvatar",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub twitch_user_avatar: Option<String>,
     #[serde(rename = "twitchImportFollows", default)]
     pub twitch_import_follows: bool,
@@ -239,6 +255,10 @@ pub struct PersistedData {
     #[serde(rename = "trustedDevices", default)]
     pub trusted_devices: Vec<TrustedDevice>,
     /// OAuth access token — stored in JSON but never sent to the frontend via /api/settings.
-    #[serde(rename = "twitchToken", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "twitchToken",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub twitch_token: Option<String>,
 }

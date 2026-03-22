@@ -20,10 +20,20 @@ use super::types::SubEntry;
 // 2. Add this redirect URI: http://localhost:23455/api/auth/twitch/callback
 // 3. Required scopes: user:read:follows user:write:chat
 // 4. Set TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET in src-tauri/.env (see .env.example)
-pub static TWITCH_CLIENT_ID: Lazy<String> =
-    Lazy::new(|| std::env::var("TWITCH_CLIENT_ID").unwrap_or_else(|_| option_env!("TWITCH_CLIENT_ID").unwrap_or_default().to_string()));
-pub static TWITCH_CLIENT_SECRET: Lazy<String> =
-    Lazy::new(|| std::env::var("TWITCH_CLIENT_SECRET").unwrap_or_else(|_| option_env!("TWITCH_CLIENT_SECRET").unwrap_or_default().to_string()));
+pub static TWITCH_CLIENT_ID: Lazy<String> = Lazy::new(|| {
+    std::env::var("TWITCH_CLIENT_ID").unwrap_or_else(|_| {
+        option_env!("TWITCH_CLIENT_ID")
+            .unwrap_or_default()
+            .to_string()
+    })
+});
+pub static TWITCH_CLIENT_SECRET: Lazy<String> = Lazy::new(|| {
+    std::env::var("TWITCH_CLIENT_SECRET").unwrap_or_else(|_| {
+        option_env!("TWITCH_CLIENT_SECRET")
+            .unwrap_or_default()
+            .to_string()
+    })
+});
 
 const REDIRECT_URI: &str = "http://localhost:23455/api/auth/twitch/callback";
 const SCOPES: &str = "user:read:follows user:write:chat";
@@ -77,7 +87,11 @@ fn pkce_challenge(verifier: &str) -> String {
 // ── Shared HTML helper ─────────────────────────────────────────────────────────
 
 fn close_tab_html(msg: &str, success: bool) -> Html<String> {
-    let (icon, color) = if success { ("✓", "#4ade80") } else { ("✗", "#ff4a4a") };
+    let (icon, color) = if success {
+        ("✓", "#4ade80")
+    } else {
+        ("✗", "#ff4a4a")
+    };
     Html(format!(
         r#"<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
         body{{background:#0e0e10;color:#efeff1;font-family:Inter,Helvetica,sans-serif;
@@ -204,11 +218,8 @@ pub async fn handle_auth_callback(
             Ok(body) => match body.get("access_token").and_then(|v| v.as_str()) {
                 Some(t) => t.to_string(),
                 None => {
-                    return close_tab_html(
-                        "Pas de token dans la réponse Twitch.",
-                        false,
-                    )
-                    .into_response()
+                    return close_tab_html("Pas de token dans la réponse Twitch.", false)
+                        .into_response()
                 }
             },
             Err(e) => {
@@ -221,9 +232,7 @@ pub async fn handle_auth_callback(
             return close_tab_html(&format!("Erreur Twitch {status}: {body}"), false)
                 .into_response();
         }
-        Err(e) => {
-            return close_tab_html(&format!("Erreur réseau : {e}"), false).into_response()
-        }
+        Err(e) => return close_tab_html(&format!("Erreur réseau : {e}"), false).into_response(),
     };
 
     // ── Fetch user profile ──────────────────────────────────────────────────
@@ -243,8 +252,14 @@ pub async fn handle_auth_callback(
                 .and_then(|a| a.first())
             {
                 Some(u) => (
-                    u.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    u.get("login").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    u.get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    u.get("login")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     u.get("display_name")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
@@ -255,20 +270,14 @@ pub async fn handle_auth_callback(
                         .to_string(),
                 ),
                 None => {
-                    return close_tab_html(
-                        "Impossible de récupérer le profil utilisateur.",
-                        false,
-                    )
-                    .into_response()
+                    return close_tab_html("Impossible de récupérer le profil utilisateur.", false)
+                        .into_response()
                 }
             }
         }
         _ => {
-            return close_tab_html(
-                "Impossible de récupérer le profil utilisateur.",
-                false,
-            )
-            .into_response()
+            return close_tab_html("Impossible de récupérer le profil utilisateur.", false)
+                .into_response()
         }
     };
 
@@ -276,7 +285,12 @@ pub async fn handle_auth_callback(
     state.history.set_twitch_token(Some(access_token)).await;
     state
         .history
-        .update_twitch_account(user_id, user_login.clone(), user_display_name.clone(), user_avatar)
+        .update_twitch_account(
+            user_id,
+            user_login.clone(),
+            user_display_name.clone(),
+            user_avatar,
+        )
         .await;
 
     // Auto-import follows if the setting is enabled
@@ -395,9 +409,8 @@ pub async fn import_followed_channels(
 
     // ── Page through all followed channels ──────────────────────────────────
     loop {
-        let mut url = format!(
-            "https://api.twitch.tv/helix/channels/followed?user_id={user_id}&first=100"
-        );
+        let mut url =
+            format!("https://api.twitch.tv/helix/channels/followed?user_id={user_id}&first=100");
         if let Some(ref c) = cursor {
             url.push_str(&format!("&after={c}"));
         }
@@ -480,8 +493,7 @@ pub async fn import_followed_channels(
                         arr.iter()
                             .filter_map(|u| {
                                 let id = u.get("id")?.as_str()?.to_string();
-                                let avatar =
-                                    u.get("profile_image_url")?.as_str()?.to_string();
+                                let avatar = u.get("profile_image_url")?.as_str()?.to_string();
                                 Some((id, avatar))
                             })
                             .collect()

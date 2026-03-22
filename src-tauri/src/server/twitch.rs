@@ -7,10 +7,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use super::http_utils::get_text_with_direct_fallback;
 use super::types::{
     ExperienceSettings, HistoryEntry, LiveBroadcaster, LiveGame, LiveStream, LiveStreamsPage,
     SubEntry, UserInfo, Vod,
 };
+use super::url_utils::{extract_origin, resolve_url};
 
 // ── Simple in-process TTL cache ────────────────────────────────────────────────
 
@@ -159,10 +161,8 @@ impl ProxyManager {
 
     async fn refresh_proxies(&self) -> Result<(), String> {
         // Launch all sources concurrently — proxyscrape + 3 GitHub lists in parallel
-        let (scrape_api, scrape_gh) = tokio::join!(
-            self.scrape_proxyscrape(),
-            self.scrape_github_proxy_lists(),
-        );
+        let (scrape_api, scrape_gh) =
+            tokio::join!(self.scrape_proxyscrape(), self.scrape_github_proxy_lists(),);
 
         let mut candidates: Vec<(String, String)> = Vec::new();
 
@@ -216,7 +216,11 @@ impl ProxyManager {
             }
         }
 
-        eprintln!("[adblock] {}/{} proxies passed probe", working.len(), seen.len());
+        eprintln!(
+            "[adblock] {}/{} proxies passed probe",
+            working.len(),
+            seen.len()
+        );
 
         if working.is_empty() {
             return Err("No working proxies after probing".to_string());
@@ -275,8 +279,7 @@ impl ProxyManager {
 
     /// proxyscrape.com v2 — no country/timeout filter, maximises candidate count
     async fn scrape_proxyscrape(&self) -> Result<Vec<(String, String)>, String> {
-        let url =
-            "https://api.proxyscrape.com/v2/?request=displayproxies\
+        let url = "https://api.proxyscrape.com/v2/?request=displayproxies\
 &protocol=http&timeout=10000&country=all&ssl=all&anonymity=all&simplified=true";
         let resp = self
             .client
@@ -562,9 +565,7 @@ fn build_stream_url(
     channel_login: &str,
 ) -> String {
     if broadcast_type == "highlight" {
-        return format!(
-            "https://{domain}/{vod_special_id}/{res_key}/highlight-{vod_id}.m3u8"
-        );
+        return format!("https://{domain}/{vod_special_id}/{res_key}/highlight-{vod_id}.m3u8");
     }
     if broadcast_type == "upload" && days_diff > 7.0 {
         return format!(
@@ -589,9 +590,7 @@ fn validate_variant_target_url(url: &str) -> Result<String, String> {
     let allowed_exact = ["ttvnw.net", "twitch.tv", "jtvnw.net", "cloudfront.net"];
 
     let is_allowed = allowed_exact.contains(&hostname.as_str())
-        || allowed_suffixes
-            .iter()
-            .any(|s| hostname.ends_with(s));
+        || allowed_suffixes.iter().any(|s| hostname.ends_with(s));
 
     if !is_allowed {
         return Err(format!("Disallowed host: {hostname}"));
@@ -603,9 +602,11 @@ fn validate_variant_target_url(url: &str) -> Result<String, String> {
     let is_vod_path = path.starts_with("/vod/");
     let is_chunked = path.starts_with("/chunked/");
     let is_m3u8 = path.ends_with(".m3u8");
-    let is_media_segment = [".ts", ".m4s", ".mp4", ".aac", ".mp3", ".vtt", ".webvtt", ".key"]
-        .iter()
-        .any(|ext| path.ends_with(ext));
+    let is_media_segment = [
+        ".ts", ".m4s", ".mp4", ".aac", ".mp3", ".vtt", ".webvtt", ".key",
+    ]
+    .iter()
+    .any(|ext| path.ends_with(ext));
 
     if !is_live_hls && !is_vod_path && !is_chunked && !is_m3u8 && !is_media_segment {
         return Err("Disallowed target path".to_string());
@@ -660,7 +661,12 @@ fn urlencoding_simple(s: &str) -> String {
     out
 }
 
-fn rewrite_tag_uri_with_proxy(line: &str, base_url: &str, variant_cache: &TimedCache<String>, token: &str) -> String {
+fn rewrite_tag_uri_with_proxy(
+    line: &str,
+    base_url: &str,
+    variant_cache: &TimedCache<String>,
+    token: &str,
+) -> String {
     if !line.contains("URI=\"") {
         return line.to_string();
     }
@@ -710,13 +716,10 @@ fn rewrite_tag_uri_with_proxy(line: &str, base_url: &str, variant_cache: &TimedC
 // ── Quality check helper ──────────────────────────────────────────────────────
 
 async fn is_valid_quality(client: &Client, url: &str) -> Option<String> {
-    let resp = tokio::time::timeout(
-        Duration::from_secs(5),
-        client.get(url).send(),
-    )
-    .await
-    .ok()?
-    .ok()?;
+    let resp = tokio::time::timeout(Duration::from_secs(5), client.get(url).send())
+        .await
+        .ok()?
+        .ok()?;
 
     if !resp.status().is_success() {
         return None;
@@ -730,11 +733,8 @@ async fn is_valid_quality(client: &Client, url: &str) -> Option<String> {
 
     if text.contains(".mp4") {
         let init_url = url.replace("index-dvr.m3u8", "init-0.mp4");
-        let codec = if let Ok(Ok(init_resp)) = tokio::time::timeout(
-            Duration::from_secs(5),
-            client.get(&init_url).send(),
-        )
-        .await
+        let codec = if let Ok(Ok(init_resp)) =
+            tokio::time::timeout(Duration::from_secs(5), client.get(&init_url).send()).await
         {
             if let Ok(body) = init_resp.text().await {
                 if body.contains("hev1") {
@@ -788,16 +788,6 @@ fn resolve_variant_proxy_target(
         .ok_or_else(|| "Variant proxy target not found or expired".to_string())
 }
 
-fn make_absolute_url(url: &str, base: &str) -> String {
-    if url.starts_with("http://") || url.starts_with("https://") {
-        url.to_string()
-    } else {
-        // Combine base URL with relative
-        let base_end = base.rfind('/').unwrap_or(base.len());
-        format!("{}/{}", &base[..base_end], url.trim_start_matches('/'))
-    }
-}
-
 fn rewrite_master_with_proxy(
     master: &str,
     _host: &str,
@@ -805,6 +795,7 @@ fn rewrite_master_with_proxy(
     variant_cache: &TimedCache<String>,
     token: &str,
 ) -> String {
+    let origin = extract_origin(source_master_url);
     let mut lines: Vec<String> = master
         .split('\n')
         .map(|l| l.trim_end_matches('\r').to_string())
@@ -827,8 +818,9 @@ fn rewrite_master_with_proxy(
                     let abs_start = cursor + start + 5; // after URI="
                     if let Some(end_offset) = new_line[abs_start..].find('"') {
                         let uri = &new_line[abs_start..abs_start + end_offset];
-                        let abs_url = make_absolute_url(uri, source_master_url);
-                        let proxy_url = match register_variant_proxy_target(variant_cache, &abs_url) {
+                        let abs_url = resolve_url(uri, &origin, source_master_url);
+                        let proxy_url = match register_variant_proxy_target(variant_cache, &abs_url)
+                        {
                             Ok(pid) => format!(
                                 "/api/stream/variant.m3u8?id={}&t={}",
                                 urlencoding_simple(&pid),
@@ -849,7 +841,7 @@ fn rewrite_master_with_proxy(
                 *line_entry = result;
             }
         } else if !line.starts_with('#') {
-            let abs_url = make_absolute_url(&line, source_master_url);
+            let abs_url = resolve_url(&line, &origin, source_master_url);
             if let Ok(proxy_id) = register_variant_proxy_target(variant_cache, &abs_url) {
                 *line_entry = format!(
                     "/api/stream/variant.m3u8?id={}&t={}",
@@ -901,8 +893,11 @@ fn build_preference_profile(
 
         let watch_weight = get_watch_weight(entry);
         let age_ms = now_ms - entry.updated_at as f64;
-        let recency_penalty =
-            clamp(1.0 - age_ms / (1000.0 * 60.0 * 60.0 * 24.0 * 45.0), 0.35, 1.0);
+        let recency_penalty = clamp(
+            1.0 - age_ms / (1000.0 * 60.0 * 60.0 * 24.0 * 45.0),
+            0.35,
+            1.0,
+        );
         let weighted = watch_weight * recency_penalty;
 
         if let Some(game) = &vod.game {
@@ -1022,8 +1017,13 @@ fn score_candidate_vod(
     // by not artificially boosting already-popular ones beyond their popularity signal.
     // (Achieved implicitly: game_affinity is bounded by profile scores, not raw view counts.)
 
-    let base_score =
-        popularity + game_affinity + channel_affinity + lang_affinity + fr_boost + sub_boost + recency;
+    let base_score = popularity
+        + game_affinity
+        + channel_affinity
+        + lang_affinity
+        + fr_boost
+        + sub_boost
+        + recency;
 
     base_score * quality
 }
@@ -1060,16 +1060,17 @@ fn parse_iso8601_to_epoch(s: &str) -> Result<f64, ()> {
         return Err(());
     }
     let time_str = date_time[1].split('.').next().unwrap_or("0:0:0");
-    let time_parts: Vec<u32> = time_str
-        .split(':')
-        .filter_map(|p| p.parse().ok())
-        .collect();
+    let time_parts: Vec<u32> = time_str.split(':').filter_map(|p| p.parse().ok()).collect();
     if time_parts.len() != 3 {
         return Err(());
     }
 
     // Approximate: days from epoch using simple calculation
-    let (y, m, d) = (date_parts[0] as i64, date_parts[1] as i64, date_parts[2] as i64);
+    let (y, m, d) = (
+        date_parts[0] as i64,
+        date_parts[1] as i64,
+        date_parts[2] as i64,
+    );
     let (h, min, sec) = (
         time_parts[0] as i64,
         time_parts[1] as i64,
@@ -1091,13 +1092,25 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146097 + doe - 719468
 }
 
-fn interleave_localized_feed(candidates: Vec<ScoredVod>, foreign_ratio: f64, max_items: usize) -> Vec<Vod> {
+fn interleave_localized_feed(
+    candidates: Vec<ScoredVod>,
+    foreign_ratio: f64,
+    max_items: usize,
+) -> Vec<Vod> {
     let (mut french, mut foreign): (Vec<ScoredVod>, Vec<ScoredVod>) = candidates
         .into_iter()
         .partition(|v| normalize_language(v.vod.language.as_deref()) == "fr");
 
-    french.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-    foreign.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    french.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    foreign.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let mut feed: Vec<ScoredVod> = Vec::with_capacity(max_items);
     let mut fi = 0usize;
@@ -1363,7 +1376,11 @@ impl TwitchService {
         let cache_key = format!(
             "live_cat_{}_{}_{safe_first}",
             create_simple_hash(category_name),
-            if safe_after.is_empty() { "first" } else { &safe_after }
+            if safe_after.is_empty() {
+                "first"
+            } else {
+                &safe_after
+            }
         );
 
         if let Some(cached) = self.cache.get(&cache_key) {
@@ -1411,7 +1428,10 @@ impl TwitchService {
                     started_at: node["createdAt"].as_str().unwrap_or("").to_string(),
                     broadcaster: LiveBroadcaster {
                         id: node["broadcaster"]["id"].as_str().unwrap_or("").to_string(),
-                        login: node["broadcaster"]["login"].as_str().unwrap_or("").to_string(),
+                        login: node["broadcaster"]["login"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string(),
                         display_name: node["broadcaster"]["displayName"]
                             .as_str()
                             .unwrap_or("")
@@ -1456,11 +1476,7 @@ impl TwitchService {
     ) -> Result<LiveStreamsPage, String> {
         let safe_first = first.clamp(4, 48);
         let escaped_q = gql_escape(query);
-        let cache_key = format!(
-            "live_search_{}_{}",
-            create_simple_hash(query),
-            safe_first
-        );
+        let cache_key = format!("live_search_{}_{}", create_simple_hash(query), safe_first);
 
         if let Some(cached) = self.cache.get(&cache_key) {
             return serde_json::from_value(cached).map_err(|e| e.to_string());
@@ -1505,7 +1521,10 @@ impl TwitchService {
                         started_at: node["createdAt"].as_str().unwrap_or("").to_string(),
                         broadcaster: LiveBroadcaster {
                             id: node["broadcaster"]["id"].as_str().unwrap_or("").to_string(),
-                            login: node["broadcaster"]["login"].as_str().unwrap_or("").to_string(),
+                            login: node["broadcaster"]["login"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_string(),
                             display_name: node["broadcaster"]["displayName"]
                                 .as_str()
                                 .unwrap_or("")
@@ -1549,7 +1568,10 @@ impl TwitchService {
                     };
                     items.push(LiveStream {
                         id,
-                        title: stream["title"].as_str().unwrap_or("Live stream").to_string(),
+                        title: stream["title"]
+                            .as_str()
+                            .unwrap_or("Live stream")
+                            .to_string(),
                         preview_image_url: stream["previewImageURL"]
                             .as_str()
                             .unwrap_or("")
@@ -1633,7 +1655,11 @@ impl TwitchService {
             .unwrap_or_default();
 
         if !result.is_empty() {
-            self.cache.set(cache_key, serde_json::to_value(&result).unwrap_or_default(), 86400);
+            self.cache.set(
+                cache_key,
+                serde_json::to_value(&result).unwrap_or_default(),
+                86400,
+            );
         }
         result
     }
@@ -1670,8 +1696,11 @@ impl TwitchService {
             })
             .unwrap_or_default();
 
-        self.cache
-            .set(cache_key, serde_json::to_value(&vods).unwrap_or_default(), 600);
+        self.cache.set(
+            cache_key,
+            serde_json::to_value(&vods).unwrap_or_default(),
+            600,
+        );
         Ok(vods)
     }
 
@@ -1698,36 +1727,26 @@ impl TwitchService {
         let user = &data["data"]["user"];
 
         if user.is_null() || data["data"]["user"]["stream"].is_null() {
-            self.cache
-                .set(cache_key, serde_json::Value::Null, 25);
+            self.cache.set(cache_key, serde_json::Value::Null, 25);
             return Ok(None);
         }
 
         let stream = &user["stream"];
         let live = LiveStream {
             id: stream["id"].as_str().unwrap_or("").to_string(),
-            title: stream["title"].as_str().unwrap_or("Live stream").to_string(),
-            preview_image_url: stream["previewImageURL"]
+            title: stream["title"]
                 .as_str()
-                .unwrap_or("")
+                .unwrap_or("Live stream")
                 .to_string(),
+            preview_image_url: stream["previewImageURL"].as_str().unwrap_or("").to_string(),
             viewer_count: stream["viewersCount"].as_u64().unwrap_or(0),
             language: stream["language"].as_str().map(|s| s.to_string()),
-            started_at: stream["createdAt"]
-                .as_str()
-                .unwrap_or("")
-                .to_string(),
+            started_at: stream["createdAt"].as_str().unwrap_or("").to_string(),
             broadcaster: LiveBroadcaster {
                 id: user["id"].as_str().unwrap_or("").to_string(),
                 login: user["login"].as_str().unwrap_or(&login).to_string(),
-                display_name: user["displayName"]
-                    .as_str()
-                    .unwrap_or(&login)
-                    .to_string(),
-                profile_image_url: user["profileImageURL"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string(),
+                display_name: user["displayName"].as_str().unwrap_or(&login).to_string(),
+                profile_image_url: user["profileImageURL"].as_str().unwrap_or("").to_string(),
             },
             game: if stream["game"].is_null() {
                 None
@@ -1735,9 +1754,7 @@ impl TwitchService {
                 Some(LiveGame {
                     id: stream["game"]["id"].as_str().map(|s| s.to_string()),
                     name: stream["game"]["name"].as_str().unwrap_or("").to_string(),
-                    box_art_url: stream["game"]["boxArtURL"]
-                        .as_str()
-                        .map(|s| s.to_string()),
+                    box_art_url: stream["game"]["boxArtURL"].as_str().map(|s| s.to_string()),
                 })
             },
         };
@@ -1837,11 +1854,7 @@ impl TwitchService {
         Ok(Value::Array(combined))
     }
 
-    pub async fn fetch_video_chat(
-        &self,
-        vod_id: &str,
-        offset: f64,
-    ) -> Result<Value, String> {
+    pub async fn fetch_video_chat(&self, vod_id: &str, offset: f64) -> Result<Value, String> {
         let body = format!(
             r#"{{"query":"query {{ video(id: \"{}\") {{ comments(contentOffsetSeconds: {}) {{ edges {{ node {{ id, commenter {{ displayName, login, profileImageURL(width: 50) }}, message {{ fragments {{ text, emote {{ id, setID }} }} }}, contentOffsetSeconds, createdAt }} }}, pageInfo {{ hasNextPage }} }} }} }}"}}"#,
             gql_escape(vod_id),
@@ -1888,7 +1901,11 @@ impl TwitchService {
         let safe_after = after.unwrap_or("").trim().to_string();
         let cache_key = format!(
             "live_streams_{safe_first}_{}",
-            if safe_after.is_empty() { "first" } else { &safe_after }
+            if safe_after.is_empty() {
+                "first"
+            } else {
+                &safe_after
+            }
         );
 
         if let Some(cached) = self.cache.get(&cache_key) {
@@ -1932,24 +1949,22 @@ impl TwitchService {
                     Some(LiveGame {
                         id: node["game"]["id"].as_str().map(|s| s.to_string()),
                         name: node["game"]["name"].as_str().unwrap_or("").to_string(),
-                        box_art_url: node["game"]["boxArtURL"]
-                            .as_str()
-                            .map(|s| s.to_string()),
+                        box_art_url: node["game"]["boxArtURL"].as_str().map(|s| s.to_string()),
                     })
                 };
                 Some(LiveStream {
                     id: node["id"].as_str().unwrap_or("").to_string(),
                     title: node["title"].as_str().unwrap_or("Live stream").to_string(),
-                    preview_image_url: node["previewImageURL"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string(),
+                    preview_image_url: node["previewImageURL"].as_str().unwrap_or("").to_string(),
                     viewer_count: node["viewersCount"].as_u64().unwrap_or(0),
                     language: node["language"].as_str().map(|s| s.to_string()),
                     started_at: node["createdAt"].as_str().unwrap_or("").to_string(),
                     broadcaster: LiveBroadcaster {
                         id: node["broadcaster"]["id"].as_str().unwrap_or("").to_string(),
-                        login: node["broadcaster"]["login"].as_str().unwrap_or("").to_string(),
+                        login: node["broadcaster"]["login"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string(),
                         display_name: node["broadcaster"]["displayName"]
                             .as_str()
                             .unwrap_or("")
@@ -2021,8 +2036,7 @@ impl TwitchService {
         let watched_ids: Vec<String> = history_by_time.iter().map(|e| e.vod_id.clone()).collect();
         let watched_vods = self.fetch_watched_vod_metadata(&watched_ids).await;
         let profile = build_preference_profile(history, &watched_vods, subs);
-        let subs_set: HashSet<String> =
-            subs.iter().map(|s| s.login.to_lowercase()).collect();
+        let subs_set: HashSet<String> = subs.iter().map(|s| s.login.to_lowercase()).collect();
 
         // ── Step 1: Expand source candidates ──
 
@@ -2097,12 +2111,7 @@ impl TwitchService {
         let all_candidates: Vec<Vod> = game_results
             .into_iter()
             .flatten()
-            .chain(
-                channel_results
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-            )
+            .chain(channel_results.into_iter().flatten().flatten())
             .collect();
 
         let mut deduped: HashMap<String, Vod> = HashMap::new();
@@ -2121,7 +2130,11 @@ impl TwitchService {
                 ScoredVod { vod, score }
             })
             .collect();
-        scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         // Increase truncation limit to allow more candidates to survive for the diversity pass
         scored.truncate(400);
 
@@ -2135,9 +2148,9 @@ impl TwitchService {
                     .as_ref()
                     .map(|o| o.login.to_lowercase())
                     .unwrap_or_default();
-                
-                let is_favorite = subs_set.contains(&login) 
-                    || profile.channel_scores.contains_key(&login);
+
+                let is_favorite =
+                    subs_set.contains(&login) || profile.channel_scores.contains_key(&login);
                 let is_related = related_channels_set.contains(&login);
 
                 // Subs/favorites get 4 slots; related channels 3; others 2
@@ -2286,7 +2299,9 @@ impl TwitchService {
         settings: &ExperienceSettings,
         server_token: &str,
     ) -> Result<String, String> {
-        let token = self.fetch_live_playback_token(channel_login, settings).await?;
+        let token = self
+            .fetch_live_playback_token(channel_login, settings)
+            .await?;
         let random_p = rand_u32() % 1_000_000;
 
         let params = format!(
@@ -2302,41 +2317,10 @@ impl TwitchService {
 
         let client = self.get_client(settings).await;
 
-        // Try via proxy first; if it fails (proxy error or Twitch rejection) fall
-        // back to the direct client so playback is never broken by a bad proxy.
-        let master = match client.get(&source_url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                resp.text().await.map_err(|e| e.to_string())?
-            }
-            Ok(resp) => {
-                // Proxy forwarded the request but Twitch rejected it — retry direct
-                eprintln!("[adblock] proxy returned HTTP {} for live master, retrying direct", resp.status());
-                let direct = self.client.clone();
-                let resp2 = direct
-                    .get(&source_url)
-                    .send()
-                    .await
-                    .map_err(|e| e.to_string())?;
-                if !resp2.status().is_success() {
-                    return Err(format!("Twitch returned HTTP {} (direct fallback)", resp2.status()));
-                }
-                resp2.text().await.map_err(|e| e.to_string())?
-            }
-            Err(e) => {
-                // Network-level error (proxy unreachable) — retry direct
-                eprintln!("[adblock] proxy request failed ({e}), retrying direct");
-                let direct = self.client.clone();
-                let resp2 = direct
-                    .get(&source_url)
-                    .send()
-                    .await
-                    .map_err(|e| e.to_string())?;
-                if !resp2.status().is_success() {
-                    return Err(format!("Twitch returned HTTP {} (direct fallback)", resp2.status()));
-                }
-                resp2.text().await.map_err(|e| e.to_string())?
-            }
-        };
+        // Try via proxy first; if it fails, retry direct to avoid playback breakage.
+        let master =
+            get_text_with_direct_fallback(&client, &self.client, &source_url, "live master")
+                .await?;
 
         Ok(rewrite_master_with_proxy(
             &master,
@@ -2413,8 +2397,9 @@ impl TwitchService {
                     "query": "query PlaybackAccessToken_Template($login: String!) { streamPlaybackAccessToken(channelName: $login, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: \"site\"}) { value signature } }",
                     "variables": { "login": channel_login }
                 });
-                
-                let resp = self.client
+
+                let resp = self
+                    .client
                     .post("https://gql.twitch.tv/gql")
                     .header("Client-Id", "kimne78kx3ncx6brgo4mv6wki5h1ko")
                     .header("X-Device-Id", &device_id)
@@ -2435,22 +2420,22 @@ impl TwitchService {
         };
 
         let token = &data["data"]["streamPlaybackAccessToken"];
-        
+
         if token.is_null() {
             return Err("Missing streamPlaybackAccessToken in response".to_string());
         }
 
         // Sometimes the 'value' itself is an object (or string depending on endpoints), make sure we handle it robustly
         let value = if token["value"].is_string() {
-             token["value"].as_str().unwrap().to_string()
+            token["value"].as_str().unwrap().to_string()
         } else {
-             token["value"].to_string()
+            token["value"].to_string()
         };
 
         let sig = if token["signature"].is_string() {
-             token["signature"].as_str().unwrap().to_string()
+            token["signature"].as_str().unwrap().to_string()
         } else {
-             token["signature"].to_string()
+            token["signature"].to_string()
         };
 
         if value.is_empty() || value == "null" || sig.is_empty() || sig == "null" {
@@ -2470,28 +2455,9 @@ impl TwitchService {
 
         let client = self.get_client(settings).await;
 
-        // Same resilience pattern as live master: fall back to direct on any proxy error
-        let mut body = match client.get(&target_url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                resp.text().await.map_err(|e| e.to_string())?
-            }
-            Ok(resp) => {
-                eprintln!("[adblock] proxy returned HTTP {} for variant, retrying direct", resp.status());
-                let resp2 = self.client.get(&target_url).send().await.map_err(|e| e.to_string())?;
-                if !resp2.status().is_success() {
-                    return Err(format!("Upstream HTTP {} (direct fallback)", resp2.status()));
-                }
-                resp2.text().await.map_err(|e| e.to_string())?
-            }
-            Err(e) => {
-                eprintln!("[adblock] proxy error for variant ({e}), retrying direct");
-                let resp2 = self.client.get(&target_url).send().await.map_err(|e| e.to_string())?;
-                if !resp2.status().is_success() {
-                    return Err(format!("Upstream HTTP {} (direct fallback)", resp2.status()));
-                }
-                resp2.text().await.map_err(|e| e.to_string())?
-            }
-        };
+        // Same resilience pattern as live master: fallback to direct on proxy errors.
+        let mut body =
+            get_text_with_direct_fallback(&client, &self.client, &target_url, "variant").await?;
 
         // Always apply local filtering as a fallback protection even if proxy disabled
         body = filter_live_playlist(&body);
@@ -2529,7 +2495,11 @@ impl TwitchService {
 
                 // Register segment for proxying to ensure continuity of requests through the system
                 if let Ok(proxy_id) = register_variant_proxy_target(&self.variant_cache, &abs_url) {
-                    return format!("/api/stream/variant.ts?id={}&t={}", urlencoding_simple(&proxy_id), token);
+                    return format!(
+                        "/api/stream/variant.ts?id={}&t={}",
+                        urlencoding_simple(&proxy_id),
+                        token
+                    );
                 }
 
                 abs_url
@@ -2560,12 +2530,12 @@ fn filter_live_playlist(body: &str) -> String {
 
     for line in lines {
         let l = line.trim();
-        
+
         // Comprehensive ad tag detection
-        if l.starts_with("#EXT-X-TWITCH-AD") 
-           || l.starts_with("#EXT-X-AD") 
-           || l.starts_with("#EXT-X-TWITCH-CONTENT-TYPE:ad")
-           || l.contains("AD-DURATION")
+        if l.starts_with("#EXT-X-TWITCH-AD")
+            || l.starts_with("#EXT-X-AD")
+            || l.starts_with("#EXT-X-TWITCH-CONTENT-TYPE:ad")
+            || l.contains("AD-DURATION")
         {
             skipping_ad = true;
             continue;
@@ -2592,8 +2562,8 @@ fn filter_live_playlist(body: &str) -> String {
 
         // Remove other tracking tags
         if l.starts_with("#EXT-X-TWITCH-TOTAL-AD-DURATION")
-           || l.starts_with("#EXT-X-TWITCH-ELAPSED-SECS")
-           || l.starts_with("#EXT-X-TWITCH-ROUTING-ID")
+            || l.starts_with("#EXT-X-TWITCH-ELAPSED-SECS")
+            || l.starts_with("#EXT-X-TWITCH-ROUTING-ID")
         {
             continue;
         }
@@ -2648,7 +2618,10 @@ impl TwitchServiceHandle {
         let stream = &user["stream"];
         let live = LiveStream {
             id: stream["id"].as_str().unwrap_or("").to_string(),
-            title: stream["title"].as_str().unwrap_or("Live stream").to_string(),
+            title: stream["title"]
+                .as_str()
+                .unwrap_or("Live stream")
+                .to_string(),
             preview_image_url: stream["previewImageURL"].as_str().unwrap_or("").to_string(),
             viewer_count: stream["viewersCount"].as_u64().unwrap_or(0),
             language: stream["language"].as_str().map(|s| s.to_string()),

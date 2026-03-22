@@ -8,6 +8,9 @@ use serde::Serialize;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
 
+use super::http_utils::{get_bytes_checked, get_text_checked};
+use super::url_utils::{extract_origin, resolve_url};
+
 // ── Public types ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
@@ -90,7 +93,7 @@ impl DownloadManager {
             let origin = extract_origin(&m3u8_url);
 
             // ── Step 1: master playlist → best variant URL ────────────────────
-            let master_text = match http_get_text(&client, &m3u8_url).await {
+            let master_text = match get_text_checked(&client, &m3u8_url).await {
                 Ok(t) => t,
                 Err(e) => {
                     set_error(&active_downloads, &vod_id, e).await;
@@ -112,7 +115,7 @@ impl DownloadManager {
             };
 
             // ── Step 2: variant playlist → segment list ───────────────────────
-            let variant_text = match http_get_text(&client, &variant_url).await {
+            let variant_text = match get_text_checked(&client, &variant_url).await {
                 Ok(t) => t,
                 Err(e) => {
                     set_error(&active_downloads, &vod_id, e).await;
@@ -183,15 +186,14 @@ impl DownloadManager {
 
                 // Pre-collect owned URLs to avoid HRTB lifetime issues with the stream closure.
                 let batch_urls: Vec<String> = batch.iter().map(|s| s.url.clone()).collect();
-                let results: Vec<Result<bytes::Bytes, String>> = stream::iter(
-                    batch_urls.into_iter().map(|url| {
+                let results: Vec<Result<bytes::Bytes, String>> =
+                    stream::iter(batch_urls.into_iter().map(|url| {
                         let client = client.clone();
-                        async move { http_get_bytes(&client, &url).await }
-                    }),
-                )
-                .buffered(CONCURRENCY)
-                .collect()
-                .await;
+                        async move { get_bytes_checked(&client, &url).await }
+                    }))
+                    .buffered(CONCURRENCY)
+                    .collect()
+                    .await;
 
                 for (seg, result) in batch.iter().zip(results) {
                     match result {
@@ -207,12 +209,8 @@ impl DownloadManager {
                         }
                         Ok(data) => {
                             if let Err(e) = file.write_all(&data).await {
-                                set_error(
-                                    &active_downloads,
-                                    &vod_id,
-                                    format!("Write error: {e}"),
-                                )
-                                .await;
+                                set_error(&active_downloads, &vod_id, format!("Write error: {e}"))
+                                    .await;
                                 let _ = tokio::fs::remove_file(&output_path).await;
                                 break 'outer;
                             }
@@ -281,33 +279,6 @@ struct Segment {
 }
 
 // ── M3U8 parsing ─────────────────────────────────────────────────────────────
-
-/// Extract "scheme://host:port" from a full URL.
-fn extract_origin(url: &str) -> String {
-    if let Some(sep) = url.find("://") {
-        let after = &url[sep + 3..];
-        let end = after.find('/').unwrap_or(after.len());
-        return format!("{}://{}", &url[..sep], &after[..end]);
-    }
-    url.to_string()
-}
-
-/// Resolve a potentially-relative URL against a base URL.
-fn resolve_url(raw: &str, origin: &str, base_url: &str) -> String {
-    let raw = raw.trim();
-    if raw.starts_with("http://") || raw.starts_with("https://") {
-        return raw.to_string();
-    }
-    if raw.starts_with('/') {
-        return format!("{origin}{raw}");
-    }
-    // Relative to the directory containing base_url
-    let base_dir = base_url
-        .rfind('/')
-        .map(|i| &base_url[..=i])
-        .unwrap_or(base_url);
-    format!("{base_dir}{raw}")
-}
 
 /// Return the absolute URL of the highest-bandwidth variant stream.
 fn best_variant_url(master: &str, origin: &str, master_url: &str) -> Option<String> {
@@ -410,36 +381,6 @@ fn filter_segments_by_time(
         }
     }
     result
-}
-
-// ── HTTP helpers ──────────────────────────────────────────────────────────────
-
-async fn http_get_text(client: &Client, url: &str) -> Result<String, String> {
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| format!("GET {url}: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {} for {url}", resp.status().as_u16()));
-    }
-    resp.text()
-        .await
-        .map_err(|e| format!("Reading response from {url}: {e}"))
-}
-
-async fn http_get_bytes(client: &Client, url: &str) -> Result<bytes::Bytes, String> {
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| format!("GET {url}: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {} for {url}", resp.status().as_u16()));
-    }
-    resp.bytes()
-        .await
-        .map_err(|e| format!("Reading bytes from {url}: {e}"))
 }
 
 // ── Error helper ──────────────────────────────────────────────────────────────

@@ -43,7 +43,7 @@ async fn handle_socket(socket: WebSocket, login: String) {
                             "version": badge.version,
                         }));
                     }
-                    
+
                     let mut emotes_list = Vec::new();
                     for emote in msg.emotes {
                         emotes_list.push(serde_json::json!({
@@ -68,22 +68,18 @@ async fn handle_socket(socket: WebSocket, login: String) {
                         "timestamp": msg.server_timestamp.timestamp_millis(),
                     });
 
-                    if sender
-                        .send(Message::Text(out.to_string()))
-                        .await
-                        .is_err()
-                    {
+                    if sender.send(Message::Text(out.to_string())).await.is_err() {
                         break;
                     }
                 }
                 ServerMessage::ClearChat(_msg) => {
-                     let out = serde_json::json!({
+                    let out = serde_json::json!({
                         "type": "clear_chat",
                     });
                     let _ = sender.send(Message::Text(out.to_string())).await;
                 }
                 ServerMessage::ClearMsg(msg) => {
-                     let out = serde_json::json!({
+                    let out = serde_json::json!({
                         "type": "clear_msg",
                         "id": msg.message_id,
                     });

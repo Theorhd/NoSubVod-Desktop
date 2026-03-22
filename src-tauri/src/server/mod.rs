@@ -1,11 +1,14 @@
 pub mod auth;
 pub mod chat;
 pub mod download;
+pub mod download_paths;
 pub mod history;
+pub mod http_utils;
 pub mod routes;
 pub mod screenshare;
 pub mod twitch;
 pub mod types;
+pub mod url_utils;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -207,11 +210,7 @@ fn ensure_or_create_tls_files(app: &AppHandle, ip: &str) -> Result<(PathBuf, Pat
 }
 
 #[cfg(not(debug_assertions))]
-async fn start_https_server(
-    router: axum::Router,
-    cert_path: PathBuf,
-    key_path: PathBuf,
-) {
+async fn start_https_server(router: axum::Router, cert_path: PathBuf, key_path: PathBuf) {
     let https_addr = std::net::SocketAddr::from(([0, 0, 0, 0], SERVER_HTTPS_PORT));
 
     let cert_path_for_log = cert_path.clone();

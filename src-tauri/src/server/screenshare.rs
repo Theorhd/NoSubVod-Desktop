@@ -11,20 +11,20 @@ use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 
 #[cfg(target_os = "windows")]
+use windows::core::PCWSTR;
+#[cfg(target_os = "windows")]
 use windows::Win32::Foundation::{HWND, RECT};
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP,
-    MOUSE_EVENT_FLAGS, VIRTUAL_KEY,
     MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
-    MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT,
+    MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT, MOUSE_EVENT_FLAGS,
+    VIRTUAL_KEY,
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, GetForegroundWindow, GetWindowRect, SetCursorPos,
 };
-#[cfg(target_os = "windows")]
-use windows::core::PCWSTR;
 
 const DEFAULT_BROWSER_URL: &str = "https://google.com";
 const SCREEN_SHARE_BROWSER_LABEL: &str = "screen-share-browser";
@@ -114,7 +114,8 @@ impl ScreenShareService {
         match request.source_type {
             ScreenShareSourceType::Browser => {
                 let app = app_handle.ok_or_else(|| "Tauri app handle unavailable".to_string())?;
-                self.open_browser_window(app, request.url.as_deref()).await?;
+                self.open_browser_window(app, request.url.as_deref())
+                    .await?;
 
                 let mut session = self.session.write().await;
                 session.active = true;
@@ -749,7 +750,11 @@ fn emit_key(vk: u16, key_up: bool) -> Result<(), String> {
             ki: KEYBDINPUT {
                 wVk: VIRTUAL_KEY(vk),
                 wScan: 0,
-                dwFlags: if key_up { KEYEVENTF_KEYUP } else { Default::default() },
+                dwFlags: if key_up {
+                    KEYEVENTF_KEYUP
+                } else {
+                    Default::default()
+                },
                 time: 0,
                 dwExtraInfo: 0,
             },
