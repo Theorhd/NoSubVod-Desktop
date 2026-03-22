@@ -108,10 +108,8 @@ impl ProxyManager {
             }
         }
 
-        // Pick best ping
-        let mut sorted = proxies.clone();
-        sorted.sort_by_key(|p| p.ping);
-        let best = sorted[0].clone();
+        // Pick best ping (list is already sorted by refresh_proxies)
+        let best = proxies[0].clone();
         {
             let mut curr = self.current_proxy.write().await;
             *curr = Some(best.clone());
