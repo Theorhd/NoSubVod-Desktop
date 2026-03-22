@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
 use once_cell::sync::Lazy;
@@ -41,10 +42,15 @@ const SCOPES: &str = "user:read:follows user:write:chat";
 
 // ── In-memory OAuth pending state ──────────────────────────────────────────────
 
+pub struct PendingOAuth {
+    pub code_verifier: String,
+    pub created_at: u64,
+}
+
 #[derive(Clone)]
 pub struct OAuthStateStore {
-    /// Maps state token → code_verifier for in-flight OAuth requests.
-    pub pending: Arc<RwLock<HashMap<String, String>>>,
+    /// Maps state token → PendingOAuth for in-flight OAuth requests.
+    pub pending: Arc<RwLock<HashMap<String, PendingOAuth>>>,
 }
 
 impl Default for OAuthStateStore {
@@ -58,6 +64,17 @@ impl OAuthStateStore {
         Self {
             pending: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Remove entries older than 10 minutes.
+    pub async fn cleanup_expired(&self) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let mut pending = self.pending.write().await;
+        // Keep only those created within the last 600 seconds (10 mins)
+        pending.retain(|_, v| now.saturating_sub(v.created_at) < 600);
     }
 }
 
@@ -128,16 +145,30 @@ pub async fn handle_auth_start(State(state): State<ApiState>) -> Response {
         return client_not_configured();
     }
 
+    // Proactive cleanup
+    state.oauth.cleanup_expired().await;
+
     let state_token = random_string(32);
     let code_verifier = random_string(64);
     let challenge = pkce_challenge(&code_verifier);
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
 
     state
         .oauth
         .pending
         .write()
         .await
-        .insert(state_token.clone(), code_verifier);
+        .insert(
+            state_token.clone(),
+            PendingOAuth {
+                code_verifier,
+                created_at: now,
+            },
+        );
 
     let auth_url = format!(
         "https://id.twitch.tv/oauth2/authorize\
@@ -175,6 +206,10 @@ pub async fn handle_auth_callback(
     State(state): State<ApiState>,
 ) -> Response {
     info!("Received Twitch OAuth callback");
+    
+    // Proactive cleanup
+    state.oauth.cleanup_expired().await;
+
     if let Some(err) = q.error {
         let desc = q.error_description.unwrap_or_default();
         return close_tab_html(
@@ -192,7 +227,7 @@ pub async fn handle_auth_callback(
     let code_verifier = {
         let mut pending = state.oauth.pending.write().await;
         match pending.remove(&state_token) {
-            Some(v) => v,
+            Some(p) => p.code_verifier,
             None => {
                 return close_tab_html(
                     "État OAuth invalide ou expiré. Reconnecte-toi depuis les Settings.",
