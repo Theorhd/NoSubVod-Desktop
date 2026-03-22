@@ -5,7 +5,7 @@ use std::time::Duration;
 use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use serde::Serialize;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::RwLock;
 use tracing::{info, instrument};
 
@@ -35,7 +35,8 @@ pub struct DownloadProgress {
 // ── Manager ───────────────────────────────────────────────────────────────────
 
 pub struct DownloadManager {
-    pub active_downloads: Arc<RwLock<HashMap<String, DownloadProgress>>>,
+    /// Granular locking: the map itself is RwLocked, and each progress entry is also RwLocked.
+    pub active_downloads: Arc<RwLock<HashMap<String, Arc<RwLock<DownloadProgress>>>>>,
 }
 
 impl Default for DownloadManager {
@@ -82,10 +83,12 @@ impl DownloadManager {
             current_time: "00:00:00".to_string(),
             total_duration,
         };
+        let progress_arc = Arc::new(RwLock::new(progress));
+
         self.active_downloads
             .write()
             .await
-            .insert(vod_id.clone(), progress);
+            .insert(vod_id.clone(), progress_arc.clone());
 
         let active_downloads = self.active_downloads.clone();
 
@@ -166,7 +169,7 @@ impl DownloadManager {
             }
 
             // ── Step 4: create output file ────────────────────────────────────
-            let mut file = match tokio::fs::File::create(&output_path).await {
+            let raw_file = match tokio::fs::File::create(&output_path).await {
                 Ok(f) => f,
                 Err(e) => {
                     set_error(
@@ -178,18 +181,18 @@ impl DownloadManager {
                     return;
                 }
             };
+            let mut file = BufWriter::new(raw_file);
 
             {
-                let mut lock = active_downloads.write().await;
-                if let Some(p) = lock.get_mut(&vod_id) {
-                    p.status = DownloadStatus::Downloading;
-                }
+                let mut lock = progress_arc.write().await;
+                lock.status = DownloadStatus::Downloading;
             }
 
             // ── Step 5: download segments (up to 4 in parallel, in order) ─────
             const CONCURRENCY: usize = 4;
             let mut elapsed_secs: f64 = 0.0;
             let mut segments_done: usize = 0;
+            let mut last_reported_prog: f64 = 0.0;
 
             let mut seg_iter = segments.into_iter().peekable();
 
@@ -232,16 +235,21 @@ impl DownloadManager {
 
                             let prog =
                                 (segments_done as f64 / total_segments as f64 * 100.0).min(100.0);
-                            let content_secs =
-                                (start_time.unwrap_or(0.0) + elapsed_secs).min(clip_duration);
-                            let h = (content_secs / 3600.0) as u32;
-                            let m = ((content_secs % 3600.0) / 60.0) as u32;
-                            let s = (content_secs % 60.0) as u32;
 
-                            let mut lock = active_downloads.write().await;
-                            if let Some(p) = lock.get_mut(&vod_id) {
-                                p.progress = prog;
-                                p.current_time = format!("{h:02}:{m:02}:{s:02}");
+                            // Throttle progress updates to reduce lock contention: update every 1% or at the end.
+                            if (prog - last_reported_prog).abs() >= 1.0
+                                || segments_done == total_segments
+                            {
+                                last_reported_prog = prog;
+                                let content_secs =
+                                    (start_time.unwrap_or(0.0) + elapsed_secs).min(clip_duration);
+                                let h = (content_secs / 3600.0) as u32;
+                                let m = ((content_secs % 3600.0) / 60.0) as u32;
+                                let s = (content_secs % 60.0) as u32;
+
+                                let mut lock = progress_arc.write().await;
+                                lock.progress = prog;
+                                lock.current_time = format!("{h:02}:{m:02}:{s:02}");
                             }
                         }
                     }
@@ -251,11 +259,9 @@ impl DownloadManager {
             // Only mark Finished if we actually completed all segments.
             if segments_done == total_segments {
                 let _ = file.flush().await;
-                let mut lock = active_downloads.write().await;
-                if let Some(p) = lock.get_mut(&vod_id) {
-                    p.status = DownloadStatus::Finished;
-                    p.progress = 100.0;
-                }
+                let mut lock = progress_arc.write().await;
+                lock.status = DownloadStatus::Finished;
+                lock.progress = 100.0;
             }
         });
 
@@ -263,22 +269,31 @@ impl DownloadManager {
     }
 
     pub async fn get_all_downloads(&self) -> Vec<DownloadProgress> {
-        self.active_downloads
-            .read()
-            .await
-            .values()
-            .cloned()
-            .collect()
+        let lock = self.active_downloads.read().await;
+        let mut results = Vec::with_capacity(lock.len());
+        for p_arc in lock.values() {
+            results.push(p_arc.read().await.clone());
+        }
+        results
     }
 
     pub async fn clear_finished(&self) {
         let mut lock = self.active_downloads.write().await;
-        lock.retain(|_, p| {
-            !matches!(
+        let mut to_remove = Vec::new();
+
+        for (id, p_arc) in lock.iter() {
+            let p = p_arc.read().await;
+            if matches!(
                 p.status,
                 DownloadStatus::Finished | DownloadStatus::Error(_)
-            )
-        });
+            ) {
+                to_remove.push(id.clone());
+            }
+        }
+
+        for id in to_remove {
+            lock.remove(&id);
+        }
     }
 }
 
@@ -398,13 +413,14 @@ fn filter_segments_by_time(
 // ── Error helper ──────────────────────────────────────────────────────────────
 
 async fn set_error(
-    downloads: &Arc<RwLock<HashMap<String, DownloadProgress>>>,
+    downloads: &Arc<RwLock<HashMap<String, Arc<RwLock<DownloadProgress>>>>>,
     vod_id: &str,
     msg: String,
 ) {
     eprintln!("[download] error for {vod_id}: {msg}");
-    let mut lock = downloads.write().await;
-    if let Some(p) = lock.get_mut(vod_id) {
+    let lock = downloads.read().await;
+    if let Some(p_arc) = lock.get(vod_id) {
+        let mut p = p_arc.write().await;
         p.status = DownloadStatus::Error(msg);
     }
 }

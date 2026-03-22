@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::{Notify, RwLock};
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
@@ -80,6 +81,10 @@ pub struct HistoryStore {
     file_path: PathBuf,
     /// Encryption key derived from the data dir path
     token_key: Vec<u8>,
+    /// Whether the data has changed since the last save
+    dirty: Arc<AtomicBool>,
+    /// Notifier to wake up the background saver task
+    save_notifier: Arc<Notify>,
 }
 
 impl HistoryStore {
@@ -98,26 +103,68 @@ impl HistoryStore {
             data.twitch_token = decrypt_token(encrypted, &token_key);
         }
 
-        Ok(Self {
+        let store = Self {
             data: Arc::new(RwLock::new(data)),
             file_path,
             token_key,
-        })
+            dirty: Arc::new(AtomicBool::new(false)),
+            save_notifier: Arc::new(Notify::new()),
+        };
+
+        store.spawn_background_saver();
+
+        Ok(store)
     }
 
-    async fn save(&self) -> AppResult<()> {
-        let data = self.data.read().await;
+    fn spawn_background_saver(&self) {
+        let data = self.data.clone();
+        let file_path = self.file_path.clone();
+        let token_key = self.token_key.clone();
+        let dirty = self.dirty.clone();
+        let notifier = self.save_notifier.clone();
+
+        tokio::spawn(async move {
+            loop {
+                // Wait for a change
+                notifier.notified().await;
+
+                // Debounce: wait a bit before actually saving
+                tokio::time::sleep(Duration::from_secs(3)).await;
+
+                // Check if still dirty and save
+                if dirty.swap(false, Ordering::SeqCst) {
+                    if let Err(e) = Self::perform_save(&data, &file_path, &token_key).await {
+                        eprintln!("[history] Failed to background save: {:?}", e);
+                        // If save failed, put back the dirty flag so we try again later
+                        dirty.store(true, Ordering::SeqCst);
+                    }
+                }
+            }
+        });
+    }
+
+    async fn perform_save(
+        data_lock: &RwLock<PersistedData>,
+        file_path: &PathBuf,
+        token_key: &[u8],
+    ) -> AppResult<()> {
+        let data = data_lock.read().await;
         // Create a copy with the token encrypted for on-disk storage
         let mut disk_data = data.clone();
         if let Some(ref plaintext) = disk_data.twitch_token {
-            disk_data.twitch_token = Some(encrypt_token(plaintext, &self.token_key)?);
+            disk_data.twitch_token = Some(encrypt_token(plaintext, token_key)?);
         }
         let json = serde_json::to_string_pretty(&disk_data)?;
-        if let Some(parent) = self.file_path.parent() {
+        if let Some(parent) = file_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        tokio::fs::write(&self.file_path, json).await?;
+        tokio::fs::write(file_path, json).await?;
         Ok(())
+    }
+
+    fn schedule_save(&self) {
+        self.dirty.store(true, Ordering::SeqCst);
+        self.save_notifier.notify_one();
     }
 
     // ── History ──────────────────────────────────────────────────────────────
@@ -154,7 +201,7 @@ impl HistoryStore {
             data.history.insert(vod_id.to_string(), entry.clone());
         }
 
-        self.save().await?;
+        self.schedule_save();
         Ok(entry)
     }
 
@@ -181,7 +228,7 @@ impl HistoryStore {
             }
         }
         if should_save {
-            self.save().await?;
+            self.schedule_save();
         }
         Ok(self.data.read().await.watchlist.clone())
     }
@@ -191,7 +238,7 @@ impl HistoryStore {
             let mut data = self.data.write().await;
             data.watchlist.retain(|w| w.vod_id != vod_id);
         }
-        self.save().await?;
+        self.schedule_save();
         Ok(self.data.read().await.watchlist.clone())
     }
 
@@ -244,7 +291,7 @@ impl HistoryStore {
                 data.settings.launch_at_login = v;
             }
         }
-        self.save().await?;
+        self.schedule_save();
         Ok(self.data.read().await.settings.clone())
     }
 
@@ -273,7 +320,7 @@ impl HistoryStore {
             }
         }
         if should_save {
-            self.save().await?;
+            self.schedule_save();
         }
         Ok(self.data.read().await.subs.clone())
     }
@@ -284,7 +331,7 @@ impl HistoryStore {
             let mut data = self.data.write().await;
             data.subs.retain(|s| s.login != login);
         }
-        self.save().await?;
+        self.schedule_save();
         Ok(self.data.read().await.subs.clone())
     }
 
@@ -299,7 +346,7 @@ impl HistoryStore {
             let mut data = self.data.write().await;
             data.twitch_token = token;
         }
-        self.save().await?;
+        self.schedule_save();
         Ok(())
     }
 
@@ -319,7 +366,7 @@ impl HistoryStore {
             data.settings.twitch_user_display_name = Some(user_display_name);
             data.settings.twitch_user_avatar = Some(user_avatar);
         }
-        self.save().await?;
+        self.schedule_save();
         Ok(())
     }
 
@@ -331,7 +378,7 @@ impl HistoryStore {
             data.settings.twitch_user_display_name = None;
             data.settings.twitch_user_avatar = None;
         }
-        self.save().await?;
+        self.schedule_save();
         Ok(())
     }
 
@@ -340,7 +387,7 @@ impl HistoryStore {
             let mut data = self.data.write().await;
             data.settings.twitch_import_follows = value;
         }
-        self.save().await?;
+        self.schedule_save();
         Ok(())
     }
 
@@ -392,7 +439,7 @@ impl HistoryStore {
         }
 
         if should_save {
-            self.save().await?;
+            self.schedule_save();
         }
         Ok(())
     }
@@ -439,7 +486,7 @@ impl HistoryStore {
         }
 
         if updated.is_some() {
-            self.save().await?;
+            self.schedule_save();
         }
 
         Ok(updated)
