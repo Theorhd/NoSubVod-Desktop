@@ -1,14 +1,14 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::{collections::HashMap, collections::HashSet};
+use std::collections::HashMap;
 
-use axum::extract::ws::{Message, WebSocket};
+use ax_ws::{Message, WebSocket};
+use axum::extract::ws as ax_ws;
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
-use tokio::sync::mpsc;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, mpsc, RwLock};
 
 #[cfg(target_os = "windows")]
 use windows::core::PCWSTR;
@@ -76,30 +76,46 @@ pub struct StartScreenShareRequest {
     pub source_label: Option<String>,
 }
 
+// ── Consolidated Internal State ──────────────────────────────────────────────
+
+struct ScreenShareClient {
+    role: String,
+    /// Targeted sender for this specific client (signaling)
+    sender: mpsc::UnboundedSender<Arc<str>>,
+}
+
+struct SessionInternal {
+    state: ScreenShareSessionState,
+    clients: HashMap<String, ScreenShareClient>,
+    host_client_id: Option<String>,
+    input_rate_limit: HashMap<String, u64>,
+}
+
 #[derive(Clone)]
 pub struct ScreenShareService {
-    session: Arc<RwLock<ScreenShareSessionState>>,
-    clients: Arc<RwLock<HashMap<String, mpsc::UnboundedSender<String>>>>,
-    client_roles: Arc<RwLock<HashMap<String, String>>>,
-    host_client_id: Arc<RwLock<Option<String>>>,
-    input_rate_limit: Arc<RwLock<HashMap<String, u64>>>,
+    internal: Arc<RwLock<SessionInternal>>,
+    /// Global broadcast channel for system events and state updates
+    broadcast_tx: broadcast::Sender<Arc<str>>,
 }
 
 use super::error::{AppError, AppResult};
 
 impl ScreenShareService {
     pub fn new() -> Self {
+        let (broadcast_tx, _) = broadcast::channel(32);
         Self {
-            session: Arc::new(RwLock::new(ScreenShareSessionState::default())),
-            clients: Arc::new(RwLock::new(HashMap::new())),
-            client_roles: Arc::new(RwLock::new(HashMap::new())),
-            host_client_id: Arc::new(RwLock::new(None)),
-            input_rate_limit: Arc::new(RwLock::new(HashMap::new())),
+            internal: Arc::new(RwLock::new(SessionInternal {
+                state: ScreenShareSessionState::default(),
+                clients: HashMap::new(),
+                host_client_id: None,
+                input_rate_limit: HashMap::new(),
+            })),
+            broadcast_tx,
         }
     }
 
     pub async fn get_state(&self) -> ScreenShareSessionState {
-        self.session.read().await.clone()
+        self.internal.read().await.state.clone()
     }
 
     pub async fn start(
@@ -113,6 +129,8 @@ impl ScreenShareService {
             .map_err(|e| AppError::Internal(e.to_string()))?
             .as_millis() as u64;
 
+        let mut internal = self.internal.write().await;
+        
         match request.source_type {
             ScreenShareSourceType::Browser => {
                 let app = app_handle.ok_or_else(|| {
@@ -121,66 +139,48 @@ impl ScreenShareService {
                 self.open_browser_window(app, request.url.as_deref())
                     .await?;
 
-                let mut session = self.session.write().await;
-                session.active = true;
-                session.session_id = Some(session_id);
-                session.source_type = Some(ScreenShareSourceType::Browser);
-                session.source_label = Some("Tauri Browser Window".to_string());
-                session.started_at = Some(now);
-                session.interactive = true;
-                session.max_viewers = 5;
-                session.current_viewers = 0;
-                session.stream_ready = false;
-                session.stream_message = Some(
+                internal.state.active = true;
+                internal.state.session_id = Some(session_id);
+                internal.state.source_type = Some(ScreenShareSourceType::Browser);
+                internal.state.source_label = Some("Tauri Browser Window".to_string());
+                internal.state.started_at = Some(now);
+                internal.state.interactive = true;
+                internal.state.max_viewers = 5;
+                internal.state.current_viewers = 0;
+                internal.state.stream_ready = false;
+                internal.state.stream_message = Some(
                     "Browser window launched. WebRTC capture pipeline will attach in next step."
                         .to_string(),
                 );
-                let snapshot = session.clone();
-                drop(session);
-                self.broadcast_session_state(snapshot.clone()).await;
-                self.broadcast_json(
-                    serde_json::json!({
-                        "type": "system",
-                        "message": "Screen share browser source is ready for signaling."
-                    }),
-                    None,
-                )
-                .await;
-                Ok(snapshot)
             }
             ScreenShareSourceType::Application => {
-                let mut session = self.session.write().await;
-                session.active = true;
-                session.session_id = Some(session_id);
-                session.source_type = Some(ScreenShareSourceType::Application);
-                session.source_label = Some(
+                internal.state.active = true;
+                internal.state.session_id = Some(session_id);
+                internal.state.source_type = Some(ScreenShareSourceType::Application);
+                internal.state.source_label = Some(
                     request
                         .source_label
                         .unwrap_or_else(|| "Local application".to_string()),
                 );
-                session.started_at = Some(now);
-                session.interactive = true;
-                session.max_viewers = 5;
-                session.current_viewers = 0;
-                session.stream_ready = false;
-                session.stream_message = Some(
+                internal.state.started_at = Some(now);
+                internal.state.interactive = true;
+                internal.state.max_viewers = 5;
+                internal.state.current_viewers = 0;
+                internal.state.stream_ready = false;
+                internal.state.stream_message = Some(
                     "Application source reserved. Capture picker will be connected in next step."
                         .to_string(),
                 );
-                let snapshot = session.clone();
-                drop(session);
-                self.broadcast_session_state(snapshot.clone()).await;
-                self.broadcast_json(
-                    serde_json::json!({
-                        "type": "system",
-                        "message": "Application source selected. Waiting for capture attachment."
-                    }),
-                    None,
-                )
-                .await;
-                Ok(snapshot)
             }
         }
+
+        let snapshot = internal.state.clone();
+        drop(internal);
+
+        self.broadcast_state(&snapshot).await;
+        self.broadcast_system_message("Screen share source is ready for signaling.").await;
+        
+        Ok(snapshot)
     }
 
     pub async fn stop(
@@ -193,81 +193,76 @@ impl ScreenShareService {
             }
         }
 
-        let mut session = self.session.write().await;
-        *session = ScreenShareSessionState::default();
-        let snapshot = session.clone();
-        drop(session);
+        let mut internal = self.internal.write().await;
+        internal.state = ScreenShareSessionState::default();
+        internal.host_client_id = None;
+        internal.input_rate_limit.clear();
+        // We keep clients connected but they will see session is inactive
+        
+        let snapshot = internal.state.clone();
+        drop(internal);
 
-        {
-            let mut host = self.host_client_id.write().await;
-            *host = None;
-        }
-        {
-            let mut roles = self.client_roles.write().await;
-            roles.clear();
-        }
-        {
-            let mut limiter = self.input_rate_limit.write().await;
-            limiter.clear();
-        }
-
-        self.broadcast_session_state(snapshot.clone()).await;
-        self.broadcast_json(
-            serde_json::json!({
-                "type": "system",
-                "message": "Screen share session stopped by host."
-            }),
-            None,
-        )
-        .await;
+        self.broadcast_state(&snapshot).await;
+        self.broadcast_system_message("Screen share session stopped by host.").await;
 
         Ok(snapshot)
     }
 
     pub async fn handle_socket(&self, socket: WebSocket) {
         let client_id = uuid::Uuid::new_v4().to_string();
-        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let (tx, mut rx) = mpsc::unbounded_channel::<Arc<str>>();
+        let mut broadcast_rx = self.broadcast_tx.subscribe();
 
         {
-            let mut clients = self.clients.write().await;
-            clients.insert(client_id.clone(), tx);
+            let mut internal = self.internal.write().await;
+            internal.clients.insert(client_id.clone(), ScreenShareClient {
+                role: "pending".to_string(),
+                sender: tx,
+            });
         }
 
-        let (mut sender, mut receiver) = socket.split();
+        let (mut ws_sender, mut ws_receiver) = socket.split();
         let writer_client_id = client_id.clone();
+
+        // Send welcome message before moving ws_sender
+        let initial_data = {
+            let internal = self.internal.read().await;
+            serde_json::json!({
+                "type": "welcome",
+                "clientId": client_id,
+                "state": internal.state,
+                "hostClientId": internal.host_client_id,
+            }).to_string()
+        };
+        let _ = ws_sender.send(Message::Text(initial_data)).await;
+
+        // Combined write task: handles both targeted signaling and global broadcasts
         let write_task = tokio::spawn(async move {
-            while let Some(payload) = rx.recv().await {
-                if sender.send(Message::Text(payload)).await.is_err() {
-                    break;
+            loop {
+                tokio::select! {
+                    // Global broadcast (state updates, system messages)
+                    Ok(payload) = broadcast_rx.recv() => {
+                        if ws_sender.send(Message::Text(payload.to_string())).await.is_err() {
+                            break;
+                        }
+                    }
+                    // Targeted signaling
+                    Some(payload) = rx.recv() => {
+                        if ws_sender.send(Message::Text(payload.to_string())).await.is_err() {
+                            break;
+                        }
+                    }
+                    else => break,
                 }
             }
         });
 
-        let state_snapshot = self.get_state().await;
-        let host_client_id = self.host_client_id.read().await.clone();
-        self.send_to_client(
-            &client_id,
-            serde_json::json!({
-                "type": "welcome",
-                "clientId": client_id,
-                "state": state_snapshot,
-                "hostClientId": host_client_id,
-            }),
-        )
-        .await;
-
-        while let Some(result) = receiver.next().await {
-            let Ok(message) = result else {
+        while let Some(result) = ws_receiver.next().await {
+            let Ok(message) = result else { break; };
+            if let Message::Text(text) = message {
+                self.handle_client_message(&writer_client_id, text.to_string()).await;
+            } else if let Message::Close(_) = message {
                 break;
-            };
-
-            match message {
-                Message::Text(text) => {
-                    self.handle_client_message(&writer_client_id, text.to_string())
-                        .await;
-                }
-                Message::Close(_) => break,
-                _ => {}
             }
         }
 
@@ -276,353 +271,182 @@ impl ScreenShareService {
     }
 
     async fn handle_client_message(&self, client_id: &str, payload: String) {
-        let parsed = serde_json::from_str::<ClientMessage>(&payload);
-        let Ok(message) = parsed else {
-            self.send_to_client(
-                client_id,
-                serde_json::json!({
-                    "type": "error",
-                    "message": "Invalid signaling payload",
-                }),
-            )
-            .await;
+        let Ok(message) = serde_json::from_str::<ClientMessage>(&payload) else {
+            self.send_error(client_id, "Invalid signaling payload").await;
             return;
         };
 
         match message.kind.as_str() {
-            "join" => {
-                let Some(role) = message.role else {
-                    self.send_to_client(
-                        client_id,
-                        serde_json::json!({
-                            "type": "error",
-                            "message": "Missing role in join message",
-                        }),
-                    )
-                    .await;
-                    return;
-                };
-
-                if role == "host" {
-                    let mut host = self.host_client_id.write().await;
-                    if let Some(existing_host) = host.as_ref() {
-                        if existing_host != client_id {
-                            self.send_to_client(
-                                client_id,
-                                serde_json::json!({
-                                    "type": "error",
-                                    "message": "A host is already connected",
-                                }),
-                            )
-                            .await;
-                            return;
-                        }
-                    } else {
-                        *host = Some(client_id.to_string());
-                    }
-                }
-
-                if role == "viewer" {
-                    let session = self.session.read().await;
-                    let max_viewers = session.max_viewers as usize;
-                    drop(session);
-
-                    let current_viewers = {
-                        let roles = self.client_roles.read().await;
-                        roles.values().filter(|r| r.as_str() == "viewer").count()
-                    };
-
-                    if current_viewers >= max_viewers {
-                        self.send_to_client(
-                            client_id,
-                            serde_json::json!({
-                                "type": "error",
-                                "message": "Viewer limit reached for this session",
-                            }),
-                        )
-                        .await;
-                        return;
-                    }
-                }
-
-                {
-                    let mut roles = self.client_roles.write().await;
-                    roles.insert(client_id.to_string(), role.clone());
-                }
-
-                let peers = {
-                    let roles = self.client_roles.read().await;
-                    roles
-                        .iter()
-                        .filter(|(id, _)| id.as_str() != client_id)
-                        .map(|(id, role)| {
-                            serde_json::json!({
-                                "clientId": id,
-                                "role": role,
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                };
-
-                self.send_to_client(
-                    client_id,
-                    serde_json::json!({
-                        "type": "peers",
-                        "peers": peers,
-                    }),
-                )
-                .await;
-
-                self.recompute_viewers().await;
-                self.broadcast_json(
-                    serde_json::json!({
-                        "type": "peer-joined",
-                        "clientId": client_id,
-                        "role": role,
-                    }),
-                    Some(client_id),
-                )
-                .await;
-                self.send_to_client(
-                    client_id,
-                    serde_json::json!({
-                        "type": "joined",
-                        "clientId": client_id,
-                    }),
-                )
-                .await;
-            }
-            "signal" => {
-                let target = message.target;
-                let payload = serde_json::json!({
-                    "type": "signal",
-                    "from": client_id,
-                    "target": target,
-                    "payload": message.payload.unwrap_or(Value::Null),
-                });
-
-                if let Some(target_client_id) = target {
-                    self.send_to_client(&target_client_id, payload).await;
-                } else {
-                    self.broadcast_json(payload, Some(client_id)).await;
-                }
-            }
-            "input" => {
-                let role = {
-                    let roles = self.client_roles.read().await;
-                    roles.get(client_id).cloned()
-                };
-
-                if role.as_deref() != Some("viewer") {
-                    self.send_to_client(
-                        client_id,
-                        serde_json::json!({
-                            "type": "error",
-                            "message": "Only viewers can send remote inputs",
-                        }),
-                    )
-                    .await;
-                    return;
-                }
-
-                let is_session_active = self.session.read().await.active;
-                if !is_session_active {
-                    return;
-                }
-
-                let host_connected = self.host_client_id.read().await.is_some();
-                if !host_connected {
-                    self.send_to_client(
-                        client_id,
-                        serde_json::json!({
-                            "type": "error",
-                            "message": "Input blocked: no active host controller",
-                        }),
-                    )
-                    .await;
-                    return;
-                }
-
-                let Some(raw_payload) = message.payload else {
-                    return;
-                };
-
-                let parsed = serde_json::from_value::<RemoteInputPayload>(raw_payload);
-                let Ok(input_payload) = parsed else {
-                    self.send_to_client(
-                        client_id,
-                        serde_json::json!({
-                            "type": "error",
-                            "message": "Invalid input payload",
-                        }),
-                    )
-                    .await;
-                    return;
-                };
-
-                if input_payload.kind == "pointer"
-                    && input_payload.action.as_deref() == Some("move")
-                    && !self.allow_input_tick(client_id, 8).await
-                {
-                    return;
-                }
-
-                match self.inject_remote_input(&input_payload).await {
-                    Ok(_) => {}
-                    Err(err) => {
-                        self.send_to_client(
-                            client_id,
-                            serde_json::json!({
-                                "type": "error",
-                                "message": err.to_string(),
-                            }),
-                        )
-                        .await;
-                    }
-                }
-            }
-            "ping" => {
-                self.send_to_client(
-                    client_id,
-                    serde_json::json!({
-                        "type": "pong",
-                        "ts": SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis() as u64,
-                    }),
-                )
-                .await;
-            }
-            _ => {
-                self.send_to_client(
-                    client_id,
-                    serde_json::json!({
-                        "type": "error",
-                        "message": "Unknown signaling message type",
-                    }),
-                )
-                .await;
-            }
+            "join" => self.handle_join(client_id, message).await,
+            "signal" => self.handle_signal(client_id, message).await,
+            "input" => self.handle_input(client_id, message).await,
+            "ping" => self.handle_ping(client_id).await,
+            _ => self.send_error(client_id, "Unknown signaling message type").await,
         }
     }
 
-    async fn unregister_client(&self, client_id: &str) {
-        {
-            let mut clients = self.clients.write().await;
-            clients.remove(client_id);
-        }
-
-        let removed_role = {
-            let mut roles = self.client_roles.write().await;
-            roles.remove(client_id)
+    async fn handle_join(&self, client_id: &str, message: ClientMessage) {
+        let Some(role) = message.role else {
+            self.send_error(client_id, "Missing role in join message").await;
+            return;
         };
 
-        {
-            let mut host = self.host_client_id.write().await;
-            if host.as_deref() == Some(client_id) {
-                *host = None;
+        let mut internal = self.internal.write().await;
+        
+        if role == "host" {
+            if let Some(existing_host) = internal.host_client_id.as_ref() {
+                if existing_host != client_id {
+                    drop(internal);
+                    self.send_error(client_id, "A host is already connected").await;
+                    return;
+                }
+            } else {
+                internal.host_client_id = Some(client_id.to_string());
             }
-        }
-        {
-            let mut limiter = self.input_rate_limit.write().await;
-            limiter.remove(client_id);
-        }
-
-        self.recompute_viewers().await;
-
-        if let Some(role) = removed_role {
-            self.broadcast_json(
-                serde_json::json!({
-                    "type": "peer-left",
-                    "clientId": client_id,
-                    "role": role,
-                }),
-                None,
-            )
-            .await;
-        }
-    }
-
-    async fn recompute_viewers(&self) {
-        let roles = self.client_roles.read().await;
-        let mut unique_viewers = HashSet::new();
-        for (client_id, role) in roles.iter() {
-            if role == "viewer" {
-                unique_viewers.insert(client_id.clone());
-            }
-        }
-        drop(roles);
-
-        let mut session = self.session.write().await;
-        session.current_viewers = unique_viewers.len().min(u8::MAX as usize) as u8;
-        let snapshot = session.clone();
-        drop(session);
-        self.broadcast_session_state(snapshot).await;
-    }
-
-    async fn broadcast_session_state(&self, state: ScreenShareSessionState) {
-        self.broadcast_json(
-            serde_json::json!({
-                "type": "session-state",
-                "state": state,
-            }),
-            None,
-        )
-        .await;
-    }
-
-    async fn send_to_client(&self, client_id: &str, payload: Value) {
-        let serialized = payload.to_string();
-        let sender = {
-            let clients = self.clients.read().await;
-            clients.get(client_id).cloned()
-        };
-
-        if let Some(tx) = sender {
-            let _ = tx.send(serialized);
-        }
-    }
-
-    async fn broadcast_json(&self, payload: Value, skip_client_id: Option<&str>) {
-        let serialized = payload.to_string();
-        let targets = {
-            let clients = self.clients.read().await;
-            clients
-                .iter()
-                .filter_map(|(client_id, tx)| {
-                    if skip_client_id == Some(client_id.as_str()) {
-                        None
-                    } else {
-                        Some((client_id.clone(), tx.clone()))
-                    }
-                })
-                .collect::<Vec<_>>()
-        };
-
-        let mut disconnected = Vec::new();
-        for (client_id, tx) in targets {
-            if tx.send(serialized.clone()).is_err() {
-                disconnected.push(client_id);
+        } else if role == "viewer" {
+            let current_viewers = internal.clients.values().filter(|c| c.role == "viewer").count();
+            if current_viewers >= internal.state.max_viewers as usize {
+                drop(internal);
+                self.send_error(client_id, "Viewer limit reached for this session").await;
+                return;
             }
         }
 
-        if disconnected.is_empty() {
+        if let Some(client) = internal.clients.get_mut(client_id) {
+            client.role = role.clone();
+        }
+
+        let peers: Vec<_> = internal.clients.iter()
+            .filter(|(id, _)| id.as_str() != client_id)
+            .map(|(id, c)| serde_json::json!({ "clientId": id, "role": c.role }))
+            .collect();
+
+        // Update current viewers in state
+        let viewer_count = internal.clients.values().filter(|c| c.role == "viewer").count();
+        internal.state.current_viewers = viewer_count as u8;
+        let state_snapshot = internal.state.clone();
+
+        // 1. Send peer list to new client
+        let peers_msg: Arc<str> = serde_json::json!({ "type": "peers", "peers": peers }).to_string().into();
+        if let Some(c) = internal.clients.get(client_id) {
+            let _ = c.sender.send(peers_msg);
+        }
+
+        // 2. Notify others and broadcast updated state
+        let joined_msg: Arc<str> = serde_json::json!({
+            "type": "peer-joined",
+            "clientId": client_id,
+            "role": role
+        }).to_string().into();
+        
+        drop(internal);
+
+        let _ = self.broadcast_tx.send(joined_msg);
+        self.broadcast_state(&state_snapshot).await;
+        
+        self.send_json(client_id, serde_json::json!({ "type": "joined", "clientId": client_id })).await;
+    }
+
+    async fn handle_signal(&self, client_id: &str, message: ClientMessage) {
+        let target = message.target;
+        let payload: Arc<str> = serde_json::json!({
+            "type": "signal",
+            "from": client_id,
+            "target": target,
+            "payload": message.payload.unwrap_or(Value::Null),
+        }).to_string().into();
+
+        let internal = self.internal.read().await;
+        if let Some(target_id) = target {
+            if let Some(client) = internal.clients.get(&target_id) {
+                let _ = client.sender.send(payload);
+            }
+        } else {
+            // Signal broadcast (rare, but supported)
+            let _ = self.broadcast_tx.send(payload);
+        }
+    }
+
+    async fn handle_input(&self, client_id: &str, message: ClientMessage) {
+        let internal = self.internal.read().await;
+        let Some(client) = internal.clients.get(client_id) else { return; };
+        
+        if client.role != "viewer" {
+            drop(internal);
+            self.send_error(client_id, "Only viewers can send remote inputs").await;
             return;
         }
 
-        {
-            let mut clients = self.clients.write().await;
-            for client_id in &disconnected {
-                clients.remove(client_id);
-            }
+        if !internal.state.active || internal.host_client_id.is_none() {
+            return;
         }
-        {
-            let mut roles = self.client_roles.write().await;
-            for client_id in &disconnected {
-                roles.remove(client_id);
-            }
+        drop(internal);
+
+        let Some(raw_payload) = message.payload else { return; };
+        let Ok(input_payload) = serde_json::from_value::<RemoteInputPayload>(raw_payload) else {
+            self.send_error(client_id, "Invalid input payload").await;
+            return;
+        };
+
+        if input_payload.kind == "pointer" && input_payload.action.as_deref() == Some("move") {
+            if !self.allow_input_tick(client_id, 8).await { return; }
         }
+
+        if let Err(err) = self.inject_remote_input(&input_payload).await {
+            self.send_error(client_id, &err.to_string()).await;
+        }
+    }
+
+    async fn handle_ping(&self, client_id: &str) {
+        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+        self.send_json(client_id, serde_json::json!({ "type": "pong", "ts": ts })).await;
+    }
+
+    async fn unregister_client(&self, client_id: &str) {
+        let mut internal = self.internal.write().await;
+        let removed = internal.clients.remove(client_id);
+        if internal.host_client_id.as_deref() == Some(client_id) {
+            internal.host_client_id = None;
+        }
+        internal.input_rate_limit.remove(client_id);
+
+        let viewer_count = internal.clients.values().filter(|c| c.role == "viewer").count();
+        internal.state.current_viewers = viewer_count as u8;
+        let state_snapshot = internal.state.clone();
+        drop(internal);
+
+        self.broadcast_state(&state_snapshot).await;
+
+        if let Some(client) = removed {
+            let left_msg: Arc<str> = serde_json::json!({
+                "type": "peer-left",
+                "clientId": client_id,
+                "role": client.role,
+            }).to_string().into();
+            let _ = self.broadcast_tx.send(left_msg);
+        }
+    }
+
+    async fn broadcast_state(&self, state: &ScreenShareSessionState) {
+        let msg: Arc<str> = serde_json::json!({ "type": "session-state", "state": state }).to_string().into();
+        let _ = self.broadcast_tx.send(msg);
+    }
+
+    async fn broadcast_system_message(&self, message: &str) {
+        let msg: Arc<str> = serde_json::json!({ "type": "system", "message": message }).to_string().into();
+        let _ = self.broadcast_tx.send(msg);
+    }
+
+    async fn send_json(&self, client_id: &str, payload: Value) {
+        let msg: Arc<str> = payload.to_string().into();
+        let internal = self.internal.read().await;
+        if let Some(client) = internal.clients.get(client_id) {
+            let _ = client.sender.send(msg);
+        }
+    }
+
+    async fn send_error(&self, client_id: &str, message: &str) {
+        self.send_json(client_id, serde_json::json!({ "type": "error", "message": message })).await;
     }
 
     async fn open_browser_window(
@@ -665,13 +489,13 @@ impl ScreenShareService {
             .unwrap_or_default()
             .as_millis() as u64;
 
-        let mut map = self.input_rate_limit.write().await;
-        if let Some(last) = map.get(client_id) {
+        let mut internal = self.internal.write().await;
+        if let Some(last) = internal.input_rate_limit.get(client_id) {
             if now.saturating_sub(*last) < min_delta_ms {
                 return false;
             }
         }
-        map.insert(client_id.to_string(), now);
+        internal.input_rate_limit.insert(client_id.to_string(), now);
         true
     }
 
