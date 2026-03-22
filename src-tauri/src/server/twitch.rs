@@ -7,6 +7,7 @@ use once_cell::sync::Lazy;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tauri::async_runtime;
 use tokio::sync::RwLock;
 use tracing::{debug, error, instrument};
 use uuid::Uuid;
@@ -416,7 +417,7 @@ impl TwitchService {
         // when the Settings page polls every 5 s.
         if let Ok(_lock) = self.proxy_manager.refresh_lock.try_lock() {
             let proxy_manager = self.proxy_manager.clone();
-            tokio::spawn(async move {
+            async_runtime::spawn(async move {
                 let _ = proxy_manager.get_proxy("auto", None).await;
             });
         }

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tauri::async_runtime;
 use tokio::sync::{Notify, RwLock};
 
 use aes_gcm::aead::{Aead, KeyInit};
@@ -127,7 +128,7 @@ impl HistoryStore {
         let dirty = self.dirty.clone();
         let notifier = self.save_notifier.clone();
 
-        tokio::spawn(async move {
+        async_runtime::spawn(async move {
             loop {
                 // Wait for a change
                 notifier.notified().await;
