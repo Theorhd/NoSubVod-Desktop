@@ -2545,6 +2545,7 @@ dependencies = [
  "tauri-plugin-autostart",
  "tauri-plugin-dialog",
  "tauri-plugin-shell",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tower 0.4.13",

@@ -14,6 +14,8 @@ use super::types::{
 };
 use super::url_utils::{extract_origin, resolve_url};
 
+use super::error::{AppError, AppResult};
+
 // ── Simple in-process TTL cache ────────────────────────────────────────────────
 
 struct Entry<V> {
@@ -39,7 +41,7 @@ impl<V: Clone + Send + Sync + 'static> TimedCache<V> {
     }
 
     pub fn get(&self, key: &str) -> Option<V> {
-        let inner = self.inner.read().unwrap();
+        let inner = self.inner.read().ok()?;
         if let Some(e) = inner.get(key) {
             if e.expires > Instant::now() {
                 return Some(e.value.clone());
@@ -49,14 +51,15 @@ impl<V: Clone + Send + Sync + 'static> TimedCache<V> {
     }
 
     pub fn set(&self, key: impl Into<String>, value: V, ttl_secs: u64) {
-        let mut inner = self.inner.write().unwrap();
-        inner.insert(
-            key.into(),
-            Entry {
-                value,
-                expires: Instant::now() + Duration::from_secs(ttl_secs),
-            },
-        );
+        if let Ok(mut inner) = self.inner.write() {
+            inner.insert(
+                key.into(),
+                Entry {
+                    value,
+                    expires: Instant::now() + Duration::from_secs(ttl_secs),
+                },
+            );
+        }
     }
 }
 
@@ -86,12 +89,14 @@ impl Default for ProxyManager {
 
 impl ProxyManager {
     pub fn new() -> Self {
+        let client = Client::builder()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
         Self {
-            client: Client::builder()
-                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-                .timeout(Duration::from_secs(10))
-                .build()
-                .unwrap(),
+            client,
             proxies: Arc::new(RwLock::new(Vec::new())),
             last_refresh: Arc::new(RwLock::new(None)),
             current_proxy: Arc::new(RwLock::new(None)),
@@ -100,11 +105,11 @@ impl ProxyManager {
     }
 
     pub fn get_all_proxies(&self) -> Vec<ProxyInfo> {
-        self.proxies.read().unwrap().clone()
+        self.proxies.read().map(|p| p.clone()).unwrap_or_default()
     }
 
     pub fn get_current_proxy(&self) -> Option<ProxyInfo> {
-        self.current_proxy.read().unwrap().clone()
+        self.current_proxy.read().ok().and_then(|p| p.clone())
     }
 
     pub async fn get_proxy(&self, mode: &str, manual_url: Option<&str>) -> Option<String> {
@@ -113,7 +118,7 @@ impl ProxyManager {
         }
 
         let should_refresh = {
-            let last = self.last_refresh.read().unwrap();
+            let last = self.last_refresh.read().ok()?;
             last.is_none() || last.unwrap().elapsed() > Duration::from_secs(3600)
         };
 
@@ -123,7 +128,7 @@ impl ProxyManager {
             let _guard = self.refresh_lock.lock().await;
             // Re-check after acquiring — another task may have refreshed while we waited
             let still_needed = {
-                let last = self.last_refresh.read().unwrap();
+                let last = self.last_refresh.read().ok()?;
                 last.is_none() || last.unwrap().elapsed() > Duration::from_secs(3600)
             };
             if still_needed {
@@ -131,14 +136,14 @@ impl ProxyManager {
             }
         }
 
-        let proxies = self.proxies.read().unwrap();
+        let proxies = self.proxies.read().ok()?;
         if proxies.is_empty() {
             return None;
         }
 
         // Return existing current proxy if still in valid list
         {
-            let curr = self.current_proxy.read().unwrap();
+            let curr = self.current_proxy.read().ok()?;
             if let Some(ref p) = *curr {
                 if proxies.iter().any(|x| x.url == p.url) {
                     return Some(p.url.clone());
@@ -151,15 +156,16 @@ impl ProxyManager {
         sorted.sort_by_key(|p| p.ping);
         let best = sorted[0].clone();
         {
-            let mut curr = self.current_proxy.write().unwrap();
-            *curr = Some(best.clone());
+            if let Ok(mut curr) = self.current_proxy.write() {
+                *curr = Some(best.clone());
+            }
         }
         Some(best.url)
     }
 
     // ── Refresh: collect ALL sources in parallel, merge, probe concurrently, sort by latency ──
 
-    async fn refresh_proxies(&self) -> Result<(), String> {
+    async fn refresh_proxies(&self) -> AppResult<()> {
         // Launch all sources concurrently — proxyscrape + 3 GitHub lists in parallel
         let (scrape_api, scrape_gh) =
             tokio::join!(self.scrape_proxyscrape(), self.scrape_github_proxy_lists(),);
@@ -185,7 +191,9 @@ impl ProxyManager {
 
         // Extra fallback only if both returned nothing
         if candidates.is_empty() {
-            return Err("No proxy candidates found from any source".to_string());
+            return Err(AppError::Internal(
+                "No proxy candidates found from any source".to_string(),
+            ));
         }
 
         // Deduplicate, keeping first occurrence (which preserves country tag)
@@ -195,7 +203,9 @@ impl ProxyManager {
         eprintln!("[adblock] {} unique candidates to probe", candidates.len());
 
         if candidates.is_empty() {
-            return Err("No proxy candidates found from any source".to_string());
+            return Err(AppError::Internal(
+                "No proxy candidates found from any source".to_string(),
+            ));
         }
 
         // Probe ALL candidates concurrently — no sequential bottleneck
@@ -223,16 +233,20 @@ impl ProxyManager {
         );
 
         if working.is_empty() {
-            return Err("No working proxies after probing".to_string());
+            return Err(AppError::Internal(
+                "No working proxies after probing".to_string(),
+            ));
         }
 
         // Sort by ascending latency so the selector always shows best proxy first
         working.sort_by_key(|p| p.ping);
         {
-            let mut p = self.proxies.write().unwrap();
-            *p = working;
-            let mut last = self.last_refresh.write().unwrap();
-            *last = Some(Instant::now());
+            if let Ok(mut p) = self.proxies.write() {
+                *p = working;
+            }
+            if let Ok(mut last) = self.last_refresh.write() {
+                *last = Some(Instant::now());
+            }
         }
 
         Ok(())
@@ -374,12 +388,14 @@ const ANDROID_TV_CLIENT_ID: &str = "ue6666qo983tsx6so1t0vnawi233wa";
 
 impl TwitchService {
     pub fn new() -> Self {
+        let client = Client::builder()
+            .user_agent(ANDROID_TV_UA)
+            .timeout(Duration::from_secs(15))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
         Self {
-            client: Client::builder()
-                .user_agent(ANDROID_TV_UA)
-                .timeout(Duration::from_secs(15))
-                .build()
-                .expect("Failed to build HTTP client"),
+            client,
             proxy_manager: Arc::new(ProxyManager::new()),
             proxy_clients: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             cache: Arc::new(TimedCache::new()),
@@ -432,12 +448,17 @@ impl TwitchService {
             return c.clone();
         }
 
-        let new_client = Client::builder()
+        let new_client = match Client::builder()
             .user_agent(ANDROID_TV_UA)
             .timeout(Duration::from_secs(15))
-            .proxy(reqwest::Proxy::all(&proxy).expect("Invalid proxy URL"))
+            .proxy(
+                reqwest::Proxy::all(&proxy).unwrap_or_else(|_| reqwest::Proxy::http("").unwrap()),
+            ) // Fallback if proxy url is invalid
             .build()
-            .unwrap_or_else(|_| self.client.clone());
+        {
+            Ok(c) => c,
+            Err(_) => self.client.clone(),
+        };
 
         clients.insert(proxy, new_client.clone());
         new_client
@@ -447,21 +468,17 @@ impl TwitchService {
         &self,
         proxy_id: &str,
         settings: &ExperienceSettings,
-    ) -> Result<reqwest::Response, String> {
+    ) -> AppResult<reqwest::Response> {
         let target_url = resolve_variant_proxy_target(&self.variant_cache, proxy_id)?;
 
         let client = self.get_client(settings).await;
 
-        client
-            .get(&target_url)
-            .send()
-            .await
-            .map_err(|e| e.to_string())
+        client.get(&target_url).send().await.map_err(AppError::from)
     }
 
     // ── GQL helpers ──────────────────────────────────────────────────────────
 
-    async fn gql_post(&self, body: &str) -> Result<Value, String> {
+    async fn gql_post(&self, body: &str) -> AppResult<Value> {
         let resp = self
             .client
             .post("https://gql.twitch.tv/gql")
@@ -470,16 +487,16 @@ impl TwitchService {
             .header("Content-Type", "application/json")
             .body(body.to_string())
             .send()
-            .await
-            .map_err(|e| format!("request failed: {e}"))?;
+            .await?;
 
         if !resp.status().is_success() {
-            return Err(format!("Twitch API HTTP {}", resp.status()));
+            return Err(AppError::TwitchApi(format!(
+                "Twitch API HTTP {}",
+                resp.status()
+            )));
         }
 
-        resp.json::<Value>()
-            .await
-            .map_err(|e| format!("JSON parse error: {e}"))
+        resp.json::<Value>().await.map_err(AppError::from)
     }
 }
 
@@ -525,15 +542,15 @@ fn get_watch_weight(entry: &HistoryEntry) -> f64 {
     clamp(entry.timecode / entry.duration, 0.05, 1.0)
 }
 
-fn parse_vod_url_info(seek_previews_url: &str) -> Result<(String, String), String> {
+fn parse_vod_url_info(seek_previews_url: &str) -> AppResult<(String, String)> {
     let after_scheme = seek_previews_url
         .find("//")
         .map(|i| &seek_previews_url[i + 2..])
-        .ok_or_else(|| "No '//' found in URL".to_string())?;
+        .ok_or_else(|| AppError::BadRequest("No '//' found in URL".to_string()))?;
 
     let domain_end = after_scheme
         .find('/')
-        .ok_or_else(|| "No path separator found".to_string())?;
+        .ok_or_else(|| AppError::BadRequest("No path separator found".to_string()))?;
     let domain = after_scheme[..domain_end].to_string();
     let path = &after_scheme[domain_end..];
 
@@ -541,15 +558,15 @@ fn parse_vod_url_info(seek_previews_url: &str) -> Result<(String, String), Strin
     let storyboard_idx = parts
         .iter()
         .position(|p| p.contains("storyboards"))
-        .ok_or_else(|| "Cannot find storyboards in URL".to_string())?;
+        .ok_or_else(|| AppError::BadRequest("Cannot find storyboards in URL".to_string()))?;
 
     if storyboard_idx == 0 {
-        return Err("storyboards at root".to_string());
+        return Err(AppError::BadRequest("storyboards at root".to_string()));
     }
 
     let vod_special_id = parts[storyboard_idx - 1].to_string();
     if vod_special_id.is_empty() {
-        return Err("Empty vodSpecialID".to_string());
+        return Err(AppError::BadRequest("Empty vodSpecialID".to_string()));
     }
 
     Ok((domain, vod_special_id))
@@ -577,11 +594,14 @@ fn build_stream_url(
 
 // ── Variant proxy validation ──────────────────────────────────────────────────
 
-fn validate_variant_target_url(url: &str) -> Result<String, String> {
-    let parsed = reqwest::Url::parse(url).map_err(|_| "Invalid URL".to_string())?;
+fn validate_variant_target_url(url: &str) -> AppResult<String> {
+    let parsed =
+        reqwest::Url::parse(url).map_err(|_| AppError::BadRequest("Invalid URL".to_string()))?;
 
     if parsed.scheme() != "https" {
-        return Err("Only HTTPS URLs are allowed".to_string());
+        return Err(AppError::BadRequest(
+            "Only HTTPS URLs are allowed".to_string(),
+        ));
     }
 
     let hostname = parsed.host_str().unwrap_or("").to_lowercase();
@@ -593,7 +613,7 @@ fn validate_variant_target_url(url: &str) -> Result<String, String> {
         || allowed_suffixes.iter().any(|s| hostname.ends_with(s));
 
     if !is_allowed {
-        return Err(format!("Disallowed host: {hostname}"));
+        return Err(AppError::BadRequest(format!("Disallowed host: {hostname}")));
     }
 
     let path = parsed.path().to_lowercase();
@@ -609,7 +629,7 @@ fn validate_variant_target_url(url: &str) -> Result<String, String> {
     .any(|ext| path.ends_with(ext));
 
     if !is_live_hls && !is_vod_path && !is_chunked && !is_m3u8 && !is_media_segment {
-        return Err("Disallowed target path".to_string());
+        return Err(AppError::BadRequest("Disallowed target path".to_string()));
     }
 
     let allowed_params: std::collections::HashSet<&str> = [
@@ -759,7 +779,7 @@ async fn is_valid_quality(client: &Client, url: &str) -> Option<String> {
 fn register_variant_proxy_target(
     variant_cache: &TimedCache<String>,
     target_url: &str,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let sanitized = validate_variant_target_url(target_url)?;
     let proxy_id = Uuid::new_v4().to_string();
     variant_cache.set(
@@ -773,19 +793,19 @@ fn register_variant_proxy_target(
 fn resolve_variant_proxy_target(
     variant_cache: &TimedCache<String>,
     proxy_id: &str,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let normalized = proxy_id.trim();
     let uuid_re = regex::Regex::new(
         r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     )
     .unwrap();
     if !uuid_re.is_match(normalized) {
-        return Err("Invalid variant proxy id".to_string());
+        return Err(AppError::BadRequest("Invalid variant proxy id".to_string()));
     }
 
     variant_cache
         .get(&format!("variant_proxy_{normalized}"))
-        .ok_or_else(|| "Variant proxy target not found or expired".to_string())
+        .ok_or_else(|| AppError::NotFound("Variant proxy target not found or expired".to_string()))
 }
 
 fn rewrite_master_with_proxy(
@@ -1331,10 +1351,10 @@ impl TwitchService {
         self.fetch_watched_vod_metadata(&vod_ids).await
     }
 
-    pub async fn fetch_top_live_categories(&self) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn fetch_top_live_categories(&self) -> AppResult<Vec<serde_json::Value>> {
         let cache_key = "top_live_categories".to_string();
         if let Some(cached) = self.cache.get(&cache_key) {
-            return serde_json::from_value(cached).map_err(|e| e.to_string());
+            return serde_json::from_value(cached).map_err(AppError::from);
         }
 
         let body = r#"{"query":"query { topGames(first: 5) { edges { node { id name boxArtURL(width: 80, height: 107) } } } }"}"#.to_string();
@@ -1369,7 +1389,7 @@ impl TwitchService {
         category_name: &str,
         first: usize,
         after: Option<&str>,
-    ) -> Result<LiveStreamsPage, String> {
+    ) -> AppResult<LiveStreamsPage> {
         let safe_first = first.clamp(4, 48);
         let safe_after = after.unwrap_or("").trim().to_string();
         let escaped_name = gql_escape(category_name);
@@ -1384,7 +1404,7 @@ impl TwitchService {
         );
 
         if let Some(cached) = self.cache.get(&cache_key) {
-            return serde_json::from_value(cached).map_err(|e| e.to_string());
+            return serde_json::from_value(cached).map_err(AppError::from);
         }
 
         let pagination = if safe_after.is_empty() {
@@ -1473,13 +1493,13 @@ impl TwitchService {
         &self,
         query: &str,
         first: usize,
-    ) -> Result<LiveStreamsPage, String> {
+    ) -> AppResult<LiveStreamsPage> {
         let safe_first = first.clamp(4, 48);
         let escaped_q = gql_escape(query);
         let cache_key = format!("live_search_{}_{}", create_simple_hash(query), safe_first);
 
         if let Some(cached) = self.cache.get(&cache_key) {
-            return serde_json::from_value(cached).map_err(|e| e.to_string());
+            return serde_json::from_value(cached).map_err(AppError::from);
         }
 
         // Search by category name (game streams) + channel name search in parallel
@@ -1606,10 +1626,10 @@ impl TwitchService {
         Ok(page)
     }
 
-    pub async fn fetch_user_info(&self, username: &str) -> Result<UserInfo, String> {
+    pub async fn fetch_user_info(&self, username: &str) -> AppResult<UserInfo> {
         let cache_key = format!("user_{username}");
         if let Some(cached) = self.cache.get(&cache_key) {
-            return serde_json::from_value(cached).map_err(|e| e.to_string());
+            return serde_json::from_value(cached).map_err(AppError::from);
         }
 
         let body = format!(
@@ -1620,11 +1640,11 @@ impl TwitchService {
         let data = self.gql_post(&body).await?;
         let user = data["data"]["user"].clone();
         if user.is_null() {
-            return Err("User not found".to_string());
+            return Err(AppError::NotFound("User not found".to_string()));
         }
 
         self.cache.set(cache_key, user.clone(), 3600);
-        serde_json::from_value(user).map_err(|e| e.to_string())
+        serde_json::from_value(user).map_err(AppError::from)
     }
 
     pub async fn fetch_related_channels(&self, login: &str, first: usize) -> Vec<String> {
@@ -1664,10 +1684,10 @@ impl TwitchService {
         result
     }
 
-    pub async fn fetch_user_vods(&self, username: &str) -> Result<Vec<Vod>, String> {
+    pub async fn fetch_user_vods(&self, username: &str) -> AppResult<Vec<Vod>> {
         let cache_key = format!("vods_{username}");
         if let Some(cached) = self.cache.get(&cache_key) {
-            return serde_json::from_value(cached).map_err(|e| e.to_string());
+            return serde_json::from_value(cached).map_err(AppError::from);
         }
 
         let body = format!(
@@ -1677,7 +1697,7 @@ impl TwitchService {
 
         let data = self.gql_post(&body).await?;
         if data["data"]["user"].is_null() {
-            return Err("User not found".to_string());
+            return Err(AppError::NotFound("User not found".to_string()));
         }
 
         let vods: Vec<Vod> = data["data"]["user"]["videos"]["edges"]
@@ -1704,10 +1724,7 @@ impl TwitchService {
         Ok(vods)
     }
 
-    pub async fn fetch_user_live_stream(
-        &self,
-        username: &str,
-    ) -> Result<Option<LiveStream>, String> {
+    pub async fn fetch_user_live_stream(&self, username: &str) -> AppResult<Option<LiveStream>> {
         let login = username.trim().to_lowercase();
         if login.is_empty() {
             return Ok(None);
@@ -1812,7 +1829,7 @@ impl TwitchService {
         result
     }
 
-    pub async fn search_channels(&self, query: &str) -> Result<Vec<UserInfo>, String> {
+    pub async fn search_channels(&self, query: &str) -> AppResult<Vec<UserInfo>> {
         let body = format!(
             r#"{{"query":"query {{ searchFor(userQuery: \"{}\", platform: \"web\") {{ channels {{ edges {{ item {{ ... on User {{ id, login, displayName, profileImageURL(width: 300) }} }} }} }} }} }}"}}"#,
             gql_escape(query)
@@ -1832,7 +1849,7 @@ impl TwitchService {
         Ok(users)
     }
 
-    pub async fn search_global_content(&self, query: &str) -> Result<Value, String> {
+    pub async fn search_global_content(&self, query: &str) -> AppResult<Value> {
         let body = format!(
             r#"{{"query":"query {{ searchFor(userQuery: \"{}\", platform: \"web\") {{ channels {{ edges {{ item {{ ... on User {{ id, login, displayName, profileImageURL(width: 300), stream {{ id title viewersCount previewImageURL(width: 640, height: 360) }}, __typename }} }} }} }}, games {{ edges {{ item {{ ... on Game {{ id, name, boxArtURL(width: 150, height: 200), __typename }} }} }} }} }} }}"}}"#,
             gql_escape(query)
@@ -1854,7 +1871,7 @@ impl TwitchService {
         Ok(Value::Array(combined))
     }
 
-    pub async fn fetch_video_chat(&self, vod_id: &str, offset: f64) -> Result<Value, String> {
+    pub async fn fetch_video_chat(&self, vod_id: &str, offset: f64) -> AppResult<Value> {
         let body = format!(
             r#"{{"query":"query {{ video(id: \"{}\") {{ comments(contentOffsetSeconds: {}) {{ edges {{ node {{ id, commenter {{ displayName, login, profileImageURL(width: 50) }}, message {{ fragments {{ text, emote {{ id, setID }} }} }}, contentOffsetSeconds, createdAt }} }}, pageInfo {{ hasNextPage }} }} }} }}"}}"#,
             gql_escape(vod_id),
@@ -1878,7 +1895,7 @@ impl TwitchService {
         }))
     }
 
-    pub async fn fetch_video_markers(&self, vod_id: &str) -> Result<Value, String> {
+    pub async fn fetch_video_markers(&self, vod_id: &str) -> AppResult<Value> {
         let body = format!(
             r#"{{"query":"query {{ video(id: \"{}\") {{ markers {{ id, displayTime, description, type }} }} }}"}}"#,
             gql_escape(vod_id)
@@ -1896,7 +1913,7 @@ impl TwitchService {
         &self,
         first: usize,
         after: Option<&str>,
-    ) -> Result<LiveStreamsPage, String> {
+    ) -> AppResult<LiveStreamsPage> {
         let safe_first = first.clamp(8, 48);
         let safe_after = after.unwrap_or("").trim().to_string();
         let cache_key = format!(
@@ -1909,7 +1926,7 @@ impl TwitchService {
         );
 
         if let Some(cached) = self.cache.get(&cache_key) {
-            return serde_json::from_value(cached).map_err(|e| e.to_string());
+            return serde_json::from_value(cached).map_err(AppError::from);
         }
 
         let pagination = if safe_after.is_empty() {
@@ -2002,7 +2019,7 @@ impl TwitchService {
         &self,
         history: &HashMap<String, HistoryEntry>,
         subs: &[SubEntry],
-    ) -> Result<Vec<Vod>, String> {
+    ) -> AppResult<Vec<Vod>> {
         let mut history_by_time: Vec<&HistoryEntry> = history.values().collect();
         history_by_time.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         history_by_time.truncate(35);
@@ -2030,7 +2047,7 @@ impl TwitchService {
 
         let cache_key = format!("trending_vods_{fingerprint}");
         if let Some(cached) = self.cache.get(&cache_key) {
-            return serde_json::from_value(cached).map_err(|e| e.to_string());
+            return serde_json::from_value(cached).map_err(AppError::from);
         }
 
         let watched_ids: Vec<String> = history_by_time.iter().map(|e| e.vod_id.clone()).collect();
@@ -2198,33 +2215,31 @@ impl TwitchService {
         vod_id: &str,
         _host: &str,
         token: &str,
-    ) -> Result<String, String> {
+    ) -> AppResult<String> {
         let safe_vod_id = gql_escape(vod_id.trim());
-        let vod_id_re = regex::Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap();
+        let vod_id_re = regex::Regex::new(r"^[a-zA-Z0-9_-]+$")
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         if !vod_id_re.is_match(vod_id.trim()) {
-            return Err("Invalid VOD identifier".to_string());
+            return Err(AppError::BadRequest("Invalid VOD identifier".to_string()));
         }
 
         let body = format!(
             r#"{{"query":"query {{ video(id: \"{safe_vod_id}\") {{ broadcastType, createdAt, seekPreviewsURL, owner {{ login }} }} }}"}}"#
         );
 
-        let data = self
-            .gql_post(&body)
-            .await
-            .map_err(|e| format!("Twitch API error: {e}"))?;
+        let data = self.gql_post(&body).await?;
 
         let vod_data = &data["data"]["video"];
         if vod_data.is_null() {
-            return Err("Video not found".to_string());
+            return Err(AppError::NotFound("Video not found".to_string()));
         }
 
         let seek_previews_url = vod_data["seekPreviewsURL"]
             .as_str()
-            .ok_or("Missing seekPreviewsURL")?;
+            .ok_or_else(|| AppError::Internal("Missing seekPreviewsURL".to_string()))?;
         let channel_login = vod_data["owner"]["login"]
             .as_str()
-            .ok_or("Missing owner.login")?;
+            .ok_or_else(|| AppError::Internal("Missing owner.login".to_string()))?;
         let broadcast_type = vod_data["broadcastType"]
             .as_str()
             .unwrap_or("archive")
@@ -2298,7 +2313,7 @@ impl TwitchService {
         _host: &str,
         settings: &ExperienceSettings,
         server_token: &str,
-    ) -> Result<String, String> {
+    ) -> AppResult<String> {
         let token = self
             .fetch_live_playback_token(channel_login, settings)
             .await?;
@@ -2335,7 +2350,7 @@ impl TwitchService {
         &self,
         channel_login: &str,
         settings: &ExperienceSettings,
-    ) -> Result<(String, String), String> {
+    ) -> AppResult<(String, String)> {
         let platform = if settings.adblock_enabled {
             "ios" // iOS platform avoids many hardcoded ads
         } else {
@@ -2406,40 +2421,43 @@ impl TwitchService {
                     .header("Client-Session-Id", &session_id)
                     .json(&fallback_body)
                     .send()
-                    .await
-                    .map_err(|e| e.to_string())?;
+                    .await?;
 
                 if !resp.status().is_success() {
-                    return Err(format!(
+                    return Err(AppError::Internal(format!(
                         "Failed to fetch live playback token ({})",
                         resp.status()
-                    ));
+                    )));
                 }
-                resp.json().await.map_err(|e| e.to_string())?
+                resp.json().await?
             }
         };
 
         let token = &data["data"]["streamPlaybackAccessToken"];
 
         if token.is_null() {
-            return Err("Missing streamPlaybackAccessToken in response".to_string());
+            return Err(AppError::Internal(
+                "Missing streamPlaybackAccessToken in response".to_string(),
+            ));
         }
 
         // Sometimes the 'value' itself is an object (or string depending on endpoints), make sure we handle it robustly
         let value = if token["value"].is_string() {
-            token["value"].as_str().unwrap().to_string()
+            token["value"].as_str().unwrap_or_default().to_string()
         } else {
             token["value"].to_string()
         };
 
         let sig = if token["signature"].is_string() {
-            token["signature"].as_str().unwrap().to_string()
+            token["signature"].as_str().unwrap_or_default().to_string()
         } else {
             token["signature"].to_string()
         };
 
         if value.is_empty() || value == "null" || sig.is_empty() || sig == "null" {
-            return Err("Missing token value or signature".to_string());
+            return Err(AppError::Internal(
+                "Missing token value or signature".to_string(),
+            ));
         }
 
         Ok((value, sig))
@@ -2450,7 +2468,7 @@ impl TwitchService {
         proxy_id: &str,
         settings: &ExperienceSettings,
         token: &str,
-    ) -> Result<String, String> {
+    ) -> AppResult<String> {
         let target_url = resolve_variant_proxy_target(&self.variant_cache, proxy_id)?;
 
         let client = self.get_client(settings).await;
@@ -2582,7 +2600,7 @@ struct TwitchServiceHandle {
 }
 
 impl TwitchServiceHandle {
-    async fn fetch_user_live_stream(&self, login: &str) -> Result<Option<LiveStream>, String> {
+    async fn fetch_user_live_stream(&self, login: &str) -> AppResult<Option<LiveStream>> {
         let cache_key = format!("live_user_{login}");
         if let Some(cached) = self.cache.get(&cache_key) {
             return Ok(serde_json::from_value(cached).unwrap_or(None));
@@ -2601,14 +2619,13 @@ impl TwitchServiceHandle {
             .header("Content-Type", "application/json")
             .body(body)
             .send()
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
 
         if !resp.status().is_success() {
-            return Err(format!("HTTP {}", resp.status()));
+            return Err(AppError::TwitchApi(format!("HTTP {}", resp.status())));
         }
 
-        let data: Value = resp.json().await.map_err(|e| e.to_string())?;
+        let data: Value = resp.json().await?;
         let user = &data["data"]["user"];
         if user.is_null() || user["stream"].is_null() {
             self.cache.set(cache_key, Value::Null, 25);

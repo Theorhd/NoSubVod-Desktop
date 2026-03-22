@@ -43,6 +43,8 @@ impl Default for DownloadManager {
     }
 }
 
+use crate::server::error::AppResult;
+
 impl DownloadManager {
     pub fn new() -> Self {
         Self {
@@ -65,7 +67,7 @@ impl DownloadManager {
         start_time: Option<f64>,
         end_time: Option<f64>,
         total_duration: f64,
-    ) -> Result<(), String> {
+    ) -> AppResult<()> {
         // Register the download immediately so the UI sees it asap.
         let progress = DownloadProgress {
             vod_id: vod_id.clone(),
@@ -83,10 +85,15 @@ impl DownloadManager {
         let active_downloads = self.active_downloads.clone();
 
         tokio::spawn(async move {
-            let client = Client::builder()
-                .timeout(Duration::from_secs(60))
-                .build()
-                .unwrap_or_default();
+            let client_res = Client::builder().timeout(Duration::from_secs(60)).build();
+
+            let client = match client_res {
+                Ok(c) => c,
+                Err(e) => {
+                    set_error(&active_downloads, &vod_id, e.to_string()).await;
+                    return;
+                }
+            };
 
             // Derive the server origin from the master URL so we can resolve
             // relative paths returned by the proxy ("/api/stream/variant.ts?id=…").
@@ -96,7 +103,7 @@ impl DownloadManager {
             let master_text = match get_text_checked(&client, &m3u8_url).await {
                 Ok(t) => t,
                 Err(e) => {
-                    set_error(&active_downloads, &vod_id, e).await;
+                    set_error(&active_downloads, &vod_id, e.to_string()).await;
                     return;
                 }
             };
@@ -118,7 +125,7 @@ impl DownloadManager {
             let variant_text = match get_text_checked(&client, &variant_url).await {
                 Ok(t) => t,
                 Err(e) => {
-                    set_error(&active_downloads, &vod_id, e).await;
+                    set_error(&active_downloads, &vod_id, e.to_string()).await;
                     return;
                 }
             };
@@ -186,7 +193,7 @@ impl DownloadManager {
 
                 // Pre-collect owned URLs to avoid HRTB lifetime issues with the stream closure.
                 let batch_urls: Vec<String> = batch.iter().map(|s| s.url.clone()).collect();
-                let results: Vec<Result<bytes::Bytes, String>> =
+                let results: Vec<AppResult<bytes::Bytes>> =
                     stream::iter(batch_urls.into_iter().map(|url| {
                         let client = client.clone();
                         async move { get_bytes_checked(&client, &url).await }

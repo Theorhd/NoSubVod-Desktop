@@ -1,35 +1,42 @@
+use super::error::{AppError, AppResult};
 use reqwest::Client;
 
-pub async fn get_text_checked(client: &Client, url: &str) -> Result<String, String> {
+pub async fn get_text_checked(client: &Client, url: &str) -> AppResult<String> {
     let resp = client
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("GET {url}: {e}"))?;
+        .map_err(|e| AppError::Internal(format!("GET {url}: {e}")))?;
 
     if !resp.status().is_success() {
-        return Err(format!("HTTP {} for {url}", resp.status().as_u16()));
+        return Err(AppError::Internal(format!(
+            "HTTP {} for {url}",
+            resp.status().as_u16()
+        )));
     }
 
     resp.text()
         .await
-        .map_err(|e| format!("Reading response from {url}: {e}"))
+        .map_err(|e| AppError::Internal(format!("Reading response from {url}: {e}")))
 }
 
-pub async fn get_bytes_checked(client: &Client, url: &str) -> Result<bytes::Bytes, String> {
+pub async fn get_bytes_checked(client: &Client, url: &str) -> AppResult<bytes::Bytes> {
     let resp = client
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("GET {url}: {e}"))?;
+        .map_err(|e| AppError::Internal(format!("GET {url}: {e}")))?;
 
     if !resp.status().is_success() {
-        return Err(format!("HTTP {} for {url}", resp.status().as_u16()));
+        return Err(AppError::Internal(format!(
+            "HTTP {} for {url}",
+            resp.status().as_u16()
+        )));
     }
 
     resp.bytes()
         .await
-        .map_err(|e| format!("Reading bytes from {url}: {e}"))
+        .map_err(|e| AppError::Internal(format!("Reading bytes from {url}: {e}")))
 }
 
 pub async fn get_text_with_direct_fallback(
@@ -37,9 +44,12 @@ pub async fn get_text_with_direct_fallback(
     fallback_client: &Client,
     url: &str,
     context: &str,
-) -> Result<String, String> {
+) -> AppResult<String> {
     match primary_client.get(url).send().await {
-        Ok(resp) if resp.status().is_success() => resp.text().await.map_err(|e| e.to_string()),
+        Ok(resp) if resp.status().is_success() => resp
+            .text()
+            .await
+            .map_err(|e| AppError::Internal(e.to_string())),
         Ok(resp) => {
             eprintln!(
                 "[adblock] proxy returned HTTP {} for {context}, retrying direct",

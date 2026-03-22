@@ -165,6 +165,8 @@ pub struct CallbackQuery {
     error_description: Option<String>,
 }
 
+use crate::server::error::{AppError, AppResult};
+
 /// GET /api/auth/twitch/callback  (Twitch redirects here after user approves)
 pub async fn handle_auth_callback(
     Query(q): Query<CallbackQuery>,
@@ -282,8 +284,8 @@ pub async fn handle_auth_callback(
     };
 
     // ── Persist ─────────────────────────────────────────────────────────────
-    state.history.set_twitch_token(Some(access_token)).await;
-    state
+    let _ = state.history.set_twitch_token(Some(access_token)).await;
+    let _ = state
         .history
         .update_twitch_account(
             user_id,
@@ -301,7 +303,7 @@ pub async fn handle_auth_callback(
                 tokio::spawn({
                     let state = state.clone();
                     async move {
-                        import_followed_channels(&token, &uid, &state).await;
+                        let _ = import_followed_channels(&token, &uid, &state).await;
                     }
                 });
             }
@@ -318,7 +320,7 @@ pub async fn handle_auth_callback(
 }
 
 /// GET /api/auth/twitch/status
-pub async fn handle_auth_status(State(state): State<ApiState>) -> Response {
+pub async fn handle_auth_status(State(state): State<ApiState>) -> impl IntoResponse {
     let settings = state.history.get_settings().await;
     let linked = settings
         .twitch_user_id
@@ -335,14 +337,13 @@ pub async fn handle_auth_status(State(state): State<ApiState>) -> Response {
         "userAvatar": settings.twitch_user_avatar,
         "importFollows": settings.twitch_import_follows,
     }))
-    .into_response()
 }
 
 /// DELETE /api/auth/twitch
-pub async fn handle_auth_unlink(State(state): State<ApiState>) -> Response {
-    state.history.set_twitch_token(None).await;
-    state.history.clear_twitch_account().await;
-    Json(serde_json::json!({ "ok": true })).into_response()
+pub async fn handle_auth_unlink(State(state): State<ApiState>) -> AppResult<Response> {
+    state.history.set_twitch_token(None).await?;
+    state.history.clear_twitch_account().await?;
+    Ok(Json(serde_json::json!({ "ok": true })).into_response())
 }
 
 #[derive(Deserialize)]
@@ -355,7 +356,7 @@ pub struct ImportFollowsBody {
 pub async fn handle_auth_import_follows(
     State(state): State<ApiState>,
     Json(body): Json<ImportFollowsBody>,
-) -> Response {
+) -> AppResult<Response> {
     let (token, user_id) = {
         let settings = state.history.get_settings().await;
         let token = state.history.get_twitch_token().await;
@@ -363,19 +364,17 @@ pub async fn handle_auth_import_follows(
     };
 
     let (Some(access_token), Some(uid)) = (token, user_id) else {
-        return (
-            axum::http::StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "Not linked to a Twitch account" })),
-        )
-            .into_response();
+        return Err(AppError::Unauthorized(
+            "Not linked to a Twitch account".to_string(),
+        ));
     };
 
     if body.save.unwrap_or(false) {
-        state.history.update_import_follows_setting(true).await;
+        state.history.update_import_follows_setting(true).await?;
     }
 
     let imported = import_followed_channels(&access_token, &uid, &state).await;
-    Json(serde_json::json!({ "imported": imported })).into_response()
+    Ok(Json(serde_json::json!({ "imported": imported })).into_response())
 }
 
 /// PUT /api/auth/twitch/import-follows-setting
@@ -387,12 +386,12 @@ pub struct ImportFollowsSettingBody {
 pub async fn handle_auth_set_import_follows(
     State(state): State<ApiState>,
     Json(body): Json<ImportFollowsSettingBody>,
-) -> Response {
+) -> AppResult<Response> {
     state
         .history
         .update_import_follows_setting(body.enabled)
-        .await;
-    Json(serde_json::json!({ "ok": true })).into_response()
+        .await?;
+    Ok(Json(serde_json::json!({ "ok": true })).into_response())
 }
 
 // ── Follow importer ────────────────────────────────────────────────────────────
@@ -505,7 +504,7 @@ pub async fn import_followed_channels(
 
         for (broadcaster_id, login, display_name) in chunk {
             let avatar = user_map.get(broadcaster_id).cloned().unwrap_or_default();
-            state
+            let _ = state
                 .history
                 .add_sub(SubEntry {
                     login: login.clone(),

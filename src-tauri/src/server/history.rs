@@ -12,6 +12,7 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 
+use super::error::{AppError, AppResult};
 use super::types::{
     ExperienceSettings, HistoryEntry, PersistedData, SubEntry, TrustedDevice, WatchlistEntry,
 };
@@ -32,7 +33,7 @@ fn derive_key(data_dir: &std::path::Path) -> Vec<u8> {
     hasher.finalize().to_vec()
 }
 
-fn encrypt_token(token: &str, key: &[u8]) -> String {
+fn encrypt_token(token: &str, key: &[u8]) -> AppResult<String> {
     // Key must be 32 bytes for AES-256-GCM; derive_key guarantees this.
     let cipher_key = Key::<Aes256Gcm>::from_slice(key);
     let cipher = Aes256Gcm::new(cipher_key);
@@ -44,14 +45,14 @@ fn encrypt_token(token: &str, key: &[u8]) -> String {
 
     let ciphertext = cipher
         .encrypt(nonce, token.as_bytes())
-        .expect("encryption failure");
+        .map_err(|_| AppError::Internal("Encryption failure".to_string()))?;
 
     // Store nonce || ciphertext, base64-encoded.
     let mut out = Vec::with_capacity(nonce_bytes.len() + ciphertext.len());
     out.extend_from_slice(&nonce_bytes);
     out.extend_from_slice(&ciphertext);
 
-    B64.encode(&out)
+    Ok(B64.encode(&out))
 }
 
 fn decrypt_token(encoded: &str, key: &[u8]) -> Option<String> {
@@ -83,16 +84,13 @@ pub struct HistoryStore {
 
 impl HistoryStore {
     /// Load from disk synchronously (file is small – safe to block on startup).
-    pub fn load(data_dir: PathBuf) -> Self {
+    pub fn load(data_dir: PathBuf) -> AppResult<Self> {
         let file_path = data_dir.join("history.json");
         let token_key = derive_key(&data_dir);
         let mut data = match std::fs::read_to_string(&file_path) {
-            Ok(raw) => serde_json::from_str::<PersistedData>(&raw).unwrap_or_default(),
+            Ok(raw) => serde_json::from_str::<PersistedData>(&raw)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => PersistedData::default(),
-            Err(e) => {
-                eprintln!("[history] read error: {e}");
-                PersistedData::default()
-            }
+            Err(e) => return Err(AppError::Io(e)),
         };
 
         // Decrypt token from disk format
@@ -100,31 +98,26 @@ impl HistoryStore {
             data.twitch_token = decrypt_token(encrypted, &token_key);
         }
 
-        Self {
+        Ok(Self {
             data: Arc::new(RwLock::new(data)),
             file_path,
             token_key,
-        }
+        })
     }
 
-    async fn save(&self) {
+    async fn save(&self) -> AppResult<()> {
         let data = self.data.read().await;
         // Create a copy with the token encrypted for on-disk storage
         let mut disk_data = data.clone();
         if let Some(ref plaintext) = disk_data.twitch_token {
-            disk_data.twitch_token = Some(encrypt_token(plaintext, &self.token_key));
+            disk_data.twitch_token = Some(encrypt_token(plaintext, &self.token_key)?);
         }
-        match serde_json::to_string_pretty(&disk_data) {
-            Ok(json) => {
-                if let Some(parent) = self.file_path.parent() {
-                    let _ = tokio::fs::create_dir_all(parent).await;
-                }
-                if let Err(e) = tokio::fs::write(&self.file_path, json).await {
-                    eprintln!("[history] write error: {e}");
-                }
-            }
-            Err(e) => eprintln!("[history] serialize error: {e}"),
+        let json = serde_json::to_string_pretty(&disk_data)?;
+        if let Some(parent) = self.file_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
         }
+        tokio::fs::write(&self.file_path, json).await?;
+        Ok(())
     }
 
     // ── History ──────────────────────────────────────────────────────────────
@@ -137,11 +130,16 @@ impl HistoryStore {
         self.data.read().await.history.get(vod_id).cloned()
     }
 
-    pub async fn update_history(&self, vod_id: &str, timecode: f64, duration: f64) -> HistoryEntry {
+    pub async fn update_history(
+        &self,
+        vod_id: &str,
+        timecode: f64,
+        duration: f64,
+    ) -> AppResult<HistoryEntry> {
         let timecode = timecode.max(0.0);
         let updated_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
+            .map_err(|e| AppError::Internal(e.to_string()))?
             .as_millis() as u64;
 
         let entry = HistoryEntry {
@@ -156,8 +154,8 @@ impl HistoryStore {
             data.history.insert(vod_id.to_string(), entry.clone());
         }
 
-        self.save().await;
-        entry
+        self.save().await?;
+        Ok(entry)
     }
 
     // ── Watchlist ────────────────────────────────────────────────────────────
@@ -166,27 +164,35 @@ impl HistoryStore {
         self.data.read().await.watchlist.clone()
     }
 
-    pub async fn add_to_watchlist(&self, mut entry: WatchlistEntry) -> Vec<WatchlistEntry> {
-        let mut data = self.data.write().await;
-        if !data.watchlist.iter().any(|w| w.vod_id == entry.vod_id) {
-            entry.added_at = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64;
-            data.watchlist.push(entry);
-            drop(data);
-            self.save().await;
+    pub async fn add_to_watchlist(
+        &self,
+        mut entry: WatchlistEntry,
+    ) -> AppResult<Vec<WatchlistEntry>> {
+        let mut should_save = false;
+        {
+            let mut data = self.data.write().await;
+            if !data.watchlist.iter().any(|w| w.vod_id == entry.vod_id) {
+                entry.added_at = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|e| AppError::Internal(e.to_string()))?
+                    .as_millis() as u64;
+                data.watchlist.push(entry);
+                should_save = true;
+            }
         }
-        self.data.read().await.watchlist.clone()
+        if should_save {
+            self.save().await?;
+        }
+        Ok(self.data.read().await.watchlist.clone())
     }
 
-    pub async fn remove_from_watchlist(&self, vod_id: &str) -> Vec<WatchlistEntry> {
+    pub async fn remove_from_watchlist(&self, vod_id: &str) -> AppResult<Vec<WatchlistEntry>> {
         {
             let mut data = self.data.write().await;
             data.watchlist.retain(|w| w.vod_id != vod_id);
         }
-        self.save().await;
-        self.data.read().await.watchlist.clone()
+        self.save().await?;
+        Ok(self.data.read().await.watchlist.clone())
     }
 
     // ── Settings ─────────────────────────────────────────────────────────────
@@ -207,7 +213,7 @@ impl HistoryStore {
         download_local_path: Option<Option<String>>,
         download_network_shared_path: Option<Option<String>>,
         launch_at_login: Option<bool>,
-    ) -> ExperienceSettings {
+    ) -> AppResult<ExperienceSettings> {
         {
             let mut data = self.data.write().await;
             if let Some(v) = one_sync {
@@ -238,8 +244,8 @@ impl HistoryStore {
                 data.settings.launch_at_login = v;
             }
         }
-        self.save().await;
-        self.data.read().await.settings.clone()
+        self.save().await?;
+        Ok(self.data.read().await.settings.clone())
     }
 
     // ── Subs ─────────────────────────────────────────────────────────────────
@@ -248,12 +254,13 @@ impl HistoryStore {
         self.data.read().await.subs.clone()
     }
 
-    pub async fn add_sub(&self, entry: SubEntry) -> Vec<SubEntry> {
+    pub async fn add_sub(&self, entry: SubEntry) -> AppResult<Vec<SubEntry>> {
         let login = entry.login.trim().to_lowercase();
         if login.is_empty() {
-            return self.data.read().await.subs.clone();
+            return Ok(self.data.read().await.subs.clone());
         }
 
+        let mut should_save = false;
         {
             let mut data = self.data.write().await;
             if !data.subs.iter().any(|s| s.login == login) {
@@ -262,20 +269,23 @@ impl HistoryStore {
                     display_name: entry.display_name,
                     profile_image_url: entry.profile_image_url,
                 });
+                should_save = true;
             }
         }
-        self.save().await;
-        self.data.read().await.subs.clone()
+        if should_save {
+            self.save().await?;
+        }
+        Ok(self.data.read().await.subs.clone())
     }
 
-    pub async fn remove_sub(&self, login: &str) -> Vec<SubEntry> {
+    pub async fn remove_sub(&self, login: &str) -> AppResult<Vec<SubEntry>> {
         let login = login.trim().to_lowercase();
         {
             let mut data = self.data.write().await;
             data.subs.retain(|s| s.login != login);
         }
-        self.save().await;
-        self.data.read().await.subs.clone()
+        self.save().await?;
+        Ok(self.data.read().await.subs.clone())
     }
 
     // ── Twitch token (kept server-side only, never serialised to API) ─────────
@@ -284,12 +294,13 @@ impl HistoryStore {
         self.data.read().await.twitch_token.clone()
     }
 
-    pub async fn set_twitch_token(&self, token: Option<String>) {
+    pub async fn set_twitch_token(&self, token: Option<String>) -> AppResult<()> {
         {
             let mut data = self.data.write().await;
             data.twitch_token = token;
         }
-        self.save().await;
+        self.save().await?;
+        Ok(())
     }
 
     // ── Twitch linked account ─────────────────────────────────────────────────
@@ -300,7 +311,7 @@ impl HistoryStore {
         user_login: String,
         user_display_name: String,
         user_avatar: String,
-    ) {
+    ) -> AppResult<()> {
         {
             let mut data = self.data.write().await;
             data.settings.twitch_user_id = Some(user_id);
@@ -308,10 +319,11 @@ impl HistoryStore {
             data.settings.twitch_user_display_name = Some(user_display_name);
             data.settings.twitch_user_avatar = Some(user_avatar);
         }
-        self.save().await;
+        self.save().await?;
+        Ok(())
     }
 
-    pub async fn clear_twitch_account(&self) {
+    pub async fn clear_twitch_account(&self) -> AppResult<()> {
         {
             let mut data = self.data.write().await;
             data.settings.twitch_user_id = None;
@@ -319,27 +331,34 @@ impl HistoryStore {
             data.settings.twitch_user_display_name = None;
             data.settings.twitch_user_avatar = None;
         }
-        self.save().await;
+        self.save().await?;
+        Ok(())
     }
 
-    pub async fn update_import_follows_setting(&self, value: bool) {
+    pub async fn update_import_follows_setting(&self, value: bool) -> AppResult<()> {
         {
             let mut data = self.data.write().await;
             data.settings.twitch_import_follows = value;
         }
-        self.save().await;
+        self.save().await?;
+        Ok(())
     }
 
     // ── Trusted devices ─────────────────────────────────────────────────────
 
-    pub async fn mark_device_seen(&self, device_id: &str, ip: Option<String>, ua: Option<String>) {
+    pub async fn mark_device_seen(
+        &self,
+        device_id: &str,
+        ip: Option<String>,
+        ua: Option<String>,
+    ) -> AppResult<()> {
         if device_id.trim().is_empty() {
-            return;
+            return Ok(());
         }
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
+            .map_err(|e| AppError::Internal(e.to_string()))?
             .as_millis() as u64;
 
         let mut should_save = false;
@@ -373,8 +392,9 @@ impl HistoryStore {
         }
 
         if should_save {
-            self.save().await;
+            self.save().await?;
         }
+        Ok(())
     }
 
     pub async fn get_trusted_devices(&self) -> Vec<TrustedDevice> {
@@ -400,9 +420,9 @@ impl HistoryStore {
         &self,
         device_id: &str,
         trusted: bool,
-    ) -> Option<TrustedDevice> {
+    ) -> AppResult<Option<TrustedDevice>> {
         if device_id.trim().is_empty() {
-            return None;
+            return Ok(None);
         }
 
         let mut updated = None;
@@ -419,9 +439,9 @@ impl HistoryStore {
         }
 
         if updated.is_some() {
-            self.save().await;
+            self.save().await?;
         }
 
-        updated
+        Ok(updated)
     }
 }

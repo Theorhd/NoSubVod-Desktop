@@ -80,10 +80,13 @@ pub fn run() {
             let app_data_dir = app
                 .path()
                 .app_data_dir()
-                .expect("Failed to resolve app data dir");
+                .map_err(|e| tauri::Error::from(std::io::Error::other(e.to_string())))?;
 
             // Initialize state synchronously (history loaded with std::fs)
-            let state = Arc::new(AppState::new(app_data_dir));
+            let state = Arc::new(
+                AppState::new(app_data_dir)
+                    .map_err(|e| tauri::Error::from(std::io::Error::other(e.to_string())))?,
+            );
             app.manage(state.clone());
 
             let app_handle = app.handle().clone();

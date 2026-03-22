@@ -27,6 +27,7 @@ use super::{
         build_master_m3u8_url, build_output_file_base_path, build_output_file_path,
         resolve_download_output_dir,
     },
+    error::{AppError, AppResult},
     history::HistoryStore,
     screenshare::ScreenShareService,
     screenshare::StartScreenShareRequest,
@@ -55,22 +56,17 @@ async fn handle_get_screenshare_state(State(state): State<ApiState>) -> impl Int
 async fn handle_start_screenshare(
     State(state): State<ApiState>,
     Json(request): Json<StartScreenShareRequest>,
-) -> Response {
-    match state
+) -> AppResult<Response> {
+    let session = state
         .screenshare
         .start(state.app_handle.as_ref(), request)
-        .await
-    {
-        Ok(session) => Json(session).into_response(),
-        Err(e) => bad_request(e),
-    }
+        .await?;
+    Ok(Json(session).into_response())
 }
 
-async fn handle_stop_screenshare(State(state): State<ApiState>) -> Response {
-    match state.screenshare.stop(state.app_handle.as_ref()).await {
-        Ok(session) => Json(session).into_response(),
-        Err(e) => internal(e),
-    }
+async fn handle_stop_screenshare(State(state): State<ApiState>) -> AppResult<Response> {
+    let session = state.screenshare.stop(state.app_handle.as_ref()).await?;
+    Ok(Json(session).into_response())
 }
 
 async fn handle_screenshare_ws(
@@ -82,21 +78,27 @@ async fn handle_screenshare_ws(
     })
 }
 
-async fn handle_screenshare_snapshot(State(state): State<ApiState>) -> Response {
+async fn handle_screenshare_snapshot(State(state): State<ApiState>) -> AppResult<Response> {
     let session = state.screenshare.get_state().await;
     if !session.active {
-        return bad_request("Screen share session is not active");
+        return Err(AppError::BadRequest(
+            "Screen share session is not active".to_string(),
+        ));
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        bad_request("Snapshot capture is currently supported on Windows only")
+        return Err(AppError::BadRequest(
+            "Snapshot capture is currently supported on Windows only".to_string(),
+        ));
     }
 
     #[cfg(target_os = "windows")]
     {
         let Some(source_type) = session.source_type else {
-            return bad_request("No active screen share source");
+            return Err(AppError::BadRequest(
+                "No active screen share source".to_string(),
+            ));
         };
 
         let capture_window_title = match source_type {
@@ -105,7 +107,9 @@ async fn handle_screenshare_snapshot(State(state): State<ApiState>) -> Response 
             }
             super::screenshare::ScreenShareSourceType::Application => {
                 let Some(label) = session.source_label else {
-                    return bad_request("No selected application window for screen share");
+                    return Err(AppError::BadRequest(
+                        "No selected application window for screen share".to_string(),
+                    ));
                 };
                 label
             }
@@ -132,19 +136,22 @@ async fn handle_screenshare_snapshot(State(state): State<ApiState>) -> Response 
             .await;
 
         let Ok(result) = output else {
-            return snapshot_unavailable_image("Snapshot unavailable: ffmpeg not found");
+            return Ok(snapshot_unavailable_image(
+                "Snapshot unavailable: ffmpeg not found",
+            ));
         };
 
         if !result.status.success() {
-            return snapshot_unavailable_image("Snapshot unavailable: host capture not ready");
+            return Ok(snapshot_unavailable_image(
+                "Snapshot unavailable: host capture not ready",
+            ));
         }
 
         Response::builder()
             .header(header::CONTENT_TYPE, "image/jpeg")
             .header(header::CACHE_CONTROL, "no-store")
             .body(Body::from(result.stdout))
-            .unwrap()
-            .into_response()
+            .map_err(|e| AppError::Internal(e.to_string()))
     }
 }
 
@@ -160,8 +167,9 @@ fn snapshot_unavailable_image(reason: &str) -> Response {
         .header(header::CONTENT_TYPE, "image/svg+xml; charset=utf-8")
         .header(header::CACHE_CONTROL, "no-store")
         .body(Body::from(body))
-        .unwrap()
-        .into_response()
+        .unwrap_or_else(|_| {
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build SVG").into_response()
+        })
 }
 
 // ── Authentication middleware ──────────────────────────────────────────────────
@@ -274,7 +282,7 @@ async fn auth_middleware(
     }
 
     if let Some(id) = device_id.as_deref() {
-        state
+        let _ = state
             .history
             .mark_device_seen(id, client_ip, user_agent)
             .await;
@@ -345,36 +353,17 @@ fn filter_hevc_variants_for_ios(master_playlist: &str) -> String {
 
 // ── Error helpers ─────────────────────────────────────────────────────────────
 
-fn internal(msg: impl std::fmt::Display) -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({ "error": msg.to_string() })),
-    )
-        .into_response()
-}
-
-fn bad_request(msg: impl std::fmt::Display) -> Response {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({ "error": msg.to_string() })),
-    )
-        .into_response()
-}
-
-fn not_found(msg: impl std::fmt::Display) -> Response {
-    (
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({ "error": msg.to_string() })),
-    )
-        .into_response()
-}
-
 fn m3u8_response(body: String) -> Response {
     Response::builder()
         .header(header::CONTENT_TYPE, "application/vnd.apple.mpegurl")
         .body(Body::from(body))
-        .unwrap()
-        .into_response()
+        .unwrap_or_else(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to build m3u8 response",
+            )
+                .into_response()
+        })
 }
 
 // ── Query param structs ───────────────────────────────────────────────────────
@@ -438,36 +427,38 @@ async fn handle_vod_chat(
     Path(vod_id): Path<String>,
     Query(q): Query<ChatQuery>,
     State(state): State<ApiState>,
-) -> Response {
+) -> AppResult<Response> {
     if !is_valid_id(&vod_id) {
-        return bad_request("Invalid VOD ID");
+        return Err(AppError::BadRequest("Invalid VOD ID".to_string()));
     }
     let offset = q.offset.unwrap_or(0.0);
-    match state.twitch.fetch_video_chat(&vod_id, offset).await {
-        Ok(data) => Json(data).into_response(),
-        Err(e) => internal(e),
-    }
+    let data = state.twitch.fetch_video_chat(&vod_id, offset).await?;
+    Ok(Json(data).into_response())
 }
 
-async fn handle_vod_markers(Path(vod_id): Path<String>, State(state): State<ApiState>) -> Response {
+async fn handle_vod_markers(
+    Path(vod_id): Path<String>,
+    State(state): State<ApiState>,
+) -> AppResult<Response> {
     if !is_valid_id(&vod_id) {
-        return bad_request("Invalid VOD ID");
+        return Err(AppError::BadRequest("Invalid VOD ID".to_string()));
     }
-    match state.twitch.fetch_video_markers(&vod_id).await {
-        Ok(data) => Json(data).into_response(),
-        Err(e) => internal(e),
-    }
+    let data = state.twitch.fetch_video_markers(&vod_id).await?;
+    Ok(Json(data).into_response())
 }
 
-async fn handle_vod_info(Path(vod_id): Path<String>, State(state): State<ApiState>) -> Response {
+async fn handle_vod_info(
+    Path(vod_id): Path<String>,
+    State(state): State<ApiState>,
+) -> AppResult<Response> {
     if !is_valid_id(&vod_id) {
-        return bad_request("Invalid VOD ID");
+        return Err(AppError::BadRequest("Invalid VOD ID".to_string()));
     }
     let vods = state.twitch.fetch_vods_by_ids(vec![vod_id]).await;
     if let Some(vod) = vods.into_iter().next() {
-        Json(vod).into_response()
+        Ok(Json(vod).into_response())
     } else {
-        not_found("VOD not found")
+        Err(AppError::NotFound("VOD not found".to_string()))
     }
 }
 
@@ -475,9 +466,9 @@ async fn handle_vod_master(
     Path(vod_id): Path<String>,
     State(state): State<ApiState>,
     headers: axum::http::HeaderMap,
-) -> Response {
+) -> AppResult<Response> {
     if !is_valid_id(&vod_id) {
-        return bad_request("Invalid VOD ID");
+        return Err(AppError::BadRequest("Invalid VOD ID".to_string()));
     }
     let host = headers
         .get(header::HOST)
@@ -485,31 +476,27 @@ async fn handle_vod_master(
         .unwrap_or("localhost")
         .to_string();
 
-    match state
+    let playlist = state
         .twitch
         .generate_master_playlist(&vod_id, &host, &state.server_token)
-        .await
-    {
-        Ok(playlist) => {
-            let body = if is_ios_family_request(&headers) {
-                filter_hevc_variants_for_ios(&playlist)
-            } else {
-                playlist
-            };
-            m3u8_response(body)
-        }
-        Err(e) => internal(e),
-    }
+        .await?;
+
+    let body = if is_ios_family_request(&headers) {
+        filter_hevc_variants_for_ios(&playlist)
+    } else {
+        playlist
+    };
+    Ok(m3u8_response(body))
 }
 
 async fn handle_live_master(
     Path(login): Path<String>,
     State(state): State<ApiState>,
     headers: axum::http::HeaderMap,
-) -> Response {
+) -> AppResult<Response> {
     let login = login.trim().to_lowercase();
     if !is_valid_login(&login) {
-        return bad_request("Invalid channel login");
+        return Err(AppError::BadRequest("Invalid channel login".to_string()));
     }
     let host = headers
         .get(header::HOST)
@@ -518,68 +505,58 @@ async fn handle_live_master(
         .to_string();
 
     let settings = state.history.get_settings().await;
-    match state
+    let m3u8 = state
         .twitch
         .generate_live_master_playlist(&login, &host, &settings, &state.server_token)
-        .await
-    {
-        Ok(m3u8) => {
-            let body = if is_ios_family_request(&headers) {
-                filter_hevc_variants_for_ios(&m3u8)
-            } else {
-                m3u8
-            };
-            m3u8_response(body)
-        }
-        Err(e) => internal(e),
-    }
+        .await?;
+
+    let body = if is_ios_family_request(&headers) {
+        filter_hevc_variants_for_ios(&m3u8)
+    } else {
+        m3u8
+    };
+    Ok(m3u8_response(body))
 }
 
 async fn handle_proxy_variant(
     Query(q): Query<VariantProxyQuery>,
     State(state): State<ApiState>,
-) -> Response {
+) -> AppResult<Response> {
     let Some(id) = q.id else {
-        return bad_request("Missing id parameter");
+        return Err(AppError::BadRequest("Missing id parameter".to_string()));
     };
 
     let settings = state.history.get_settings().await;
-    match state
+    let body = state
         .twitch
         .proxy_variant_playlist(&id, &settings, &state.server_token)
-        .await
-    {
-        Ok(body) => m3u8_response(body),
-        Err(e) => internal(e),
-    }
+        .await?;
+    Ok(m3u8_response(body))
 }
 
 async fn handle_proxy_segment(
     Query(q): Query<VariantProxyQuery>,
     State(state): State<ApiState>,
-) -> Response {
+) -> AppResult<Response> {
     let Some(id) = q.id else {
-        return bad_request("Missing id parameter");
+        return Err(AppError::BadRequest("Missing id parameter".to_string()));
     };
 
     let settings = state.history.get_settings().await;
-    match state.twitch.proxy_segment(&id, &settings).await {
-        Ok(resp) => {
-            let mut builder = Response::builder();
-            if let Some(ct) = resp.headers().get(reqwest::header::CONTENT_TYPE) {
-                builder = builder.header(reqwest::header::CONTENT_TYPE, ct);
-            }
-            if let Some(cc) = resp.headers().get(reqwest::header::CACHE_CONTROL) {
-                builder = builder.header(reqwest::header::CACHE_CONTROL, cc);
-            }
+    let resp = state.twitch.proxy_segment(&id, &settings).await?;
 
-            let body = Body::from_stream(resp.bytes_stream());
-            builder
-                .body(body)
-                .unwrap_or_else(|_| internal("Failed to build response"))
-        }
-        Err(e) => internal(e),
+    let mut builder = Response::builder();
+    if let Some(ct) = resp.headers().get(reqwest::header::CONTENT_TYPE) {
+        builder = builder.header(reqwest::header::CONTENT_TYPE, ct);
     }
+    if let Some(cc) = resp.headers().get(reqwest::header::CACHE_CONTROL) {
+        builder = builder.header(reqwest::header::CACHE_CONTROL, cc);
+    }
+
+    let body = Body::from_stream(resp.bytes_stream());
+    builder
+        .body(body)
+        .map_err(|e| AppError::Internal(e.to_string()))
 }
 
 async fn handle_get_watchlist(State(state): State<ApiState>) -> impl IntoResponse {
@@ -589,15 +566,15 @@ async fn handle_get_watchlist(State(state): State<ApiState>) -> impl IntoRespons
 async fn handle_add_watchlist(
     State(state): State<ApiState>,
     Json(entry): Json<WatchlistEntry>,
-) -> Response {
-    Json(state.history.add_to_watchlist(entry).await).into_response()
+) -> AppResult<Response> {
+    Ok(Json(state.history.add_to_watchlist(entry).await?).into_response())
 }
 
 async fn handle_remove_watchlist(
     Path(vod_id): Path<String>,
     State(state): State<ApiState>,
-) -> impl IntoResponse {
-    Json(state.history.remove_from_watchlist(&vod_id).await)
+) -> AppResult<impl IntoResponse> {
+    Ok(Json(state.history.remove_from_watchlist(&vod_id).await?))
 }
 
 async fn handle_get_settings(State(state): State<ApiState>) -> impl IntoResponse {
@@ -627,14 +604,14 @@ async fn handle_set_trusted_device(
     Path(device_id): Path<String>,
     State(state): State<ApiState>,
     Json(patch): Json<TrustedDevicePatch>,
-) -> Response {
+) -> AppResult<Response> {
     match state
         .history
         .set_device_trusted(device_id.trim(), patch.trusted)
-        .await
+        .await?
     {
-        Some(device) => Json(device).into_response(),
-        None => not_found("Device not found"),
+        Some(device) => Ok(Json(device).into_response()),
+        None => Err(AppError::NotFound("Device not found".to_string())),
     }
 }
 
@@ -663,7 +640,7 @@ struct SettingsPatch {
 async fn handle_update_settings(
     State(state): State<ApiState>,
     Json(patch): Json<SettingsPatch>,
-) -> Response {
+) -> AppResult<Response> {
     if let (Some(handle), Some(launch)) = (state.app_handle.as_ref(), patch.launch_at_login) {
         let manager = handle.autolaunch();
         if launch {
@@ -673,7 +650,7 @@ async fn handle_update_settings(
         }
     }
 
-    Json(
+    Ok(Json(
         state
             .history
             .update_settings(
@@ -687,67 +664,68 @@ async fn handle_update_settings(
                 patch.download_network_shared_path,
                 patch.launch_at_login,
             )
-            .await,
+            .await?,
     )
-    .into_response()
+    .into_response())
 }
 
 async fn handle_get_subs(State(state): State<ApiState>) -> impl IntoResponse {
     Json(state.history.get_subs().await)
 }
 
-async fn handle_add_sub(State(state): State<ApiState>, Json(entry): Json<SubEntry>) -> Response {
+async fn handle_add_sub(
+    State(state): State<ApiState>,
+    Json(entry): Json<SubEntry>,
+) -> AppResult<Response> {
     if entry.login.is_empty() || entry.display_name.is_empty() || entry.profile_image_url.is_empty()
     {
-        return bad_request("Invalid sub payload");
+        return Err(AppError::BadRequest("Invalid sub payload".to_string()));
     }
-    Json(state.history.add_sub(entry).await).into_response()
+    Ok(Json(state.history.add_sub(entry).await?).into_response())
 }
 
 async fn handle_remove_sub(
     Path(login): Path<String>,
     State(state): State<ApiState>,
-) -> impl IntoResponse {
-    Json(state.history.remove_sub(&login).await)
+) -> AppResult<impl IntoResponse> {
+    Ok(Json(state.history.remove_sub(&login).await?))
 }
 
 async fn handle_search_channels(
     Query(q): Query<SearchQuery>,
     State(state): State<ApiState>,
-) -> Response {
+) -> AppResult<Response> {
     let Some(query) = q.q.filter(|s| !s.is_empty()) else {
-        return Json(Value::Array(vec![])).into_response();
+        return Ok(Json(Value::Array(vec![])).into_response());
     };
-    match state.twitch.search_channels(&query).await {
-        Ok(results) => Json(results).into_response(),
-        Err(e) => internal(e),
-    }
+    let results = state.twitch.search_channels(&query).await?;
+    Ok(Json(results).into_response())
 }
 
 async fn handle_search_global(
     Query(q): Query<SearchQuery>,
     State(state): State<ApiState>,
-) -> Response {
+) -> AppResult<Response> {
     let Some(query) = q.q.filter(|s| !s.is_empty()) else {
-        return Json(Value::Array(vec![])).into_response();
+        return Ok(Json(Value::Array(vec![])).into_response());
     };
-    match state.twitch.search_global_content(&query).await {
-        Ok(results) => Json(results).into_response(),
-        Err(e) => internal(e),
-    }
+    let results = state.twitch.search_global_content(&query).await?;
+    Ok(Json(results).into_response())
 }
 
 async fn handle_search_category_vods(
     Query(q): Query<SearchCategoryQuery>,
     State(state): State<ApiState>,
-) -> Response {
+) -> AppResult<Response> {
     let id = q.id.unwrap_or_default();
     let id = id.trim().to_string();
     let name = q.name.unwrap_or_default();
     let name = name.trim().to_string();
     if id.is_empty() && name.is_empty() {
-        return Json(serde_json::json!({ "items": [], "hasMore": false, "nextCursor": null }))
-            .into_response();
+        return Ok(
+            Json(serde_json::json!({ "items": [], "hasMore": false, "nextCursor": null }))
+                .into_response(),
+        );
     }
     let limit = q
         .limit
@@ -771,24 +749,25 @@ async fn handle_search_category_vods(
             cursor.as_deref(),
         )
         .await;
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "items": items,
         "hasMore": has_more,
         "nextCursor": next_cursor,
     }))
-    .into_response()
+    .into_response())
 }
 
-async fn handle_trends(State(state): State<ApiState>) -> Response {
+async fn handle_trends(State(state): State<ApiState>) -> AppResult<Response> {
     let history = state.history.get_all_history().await;
     let subs = state.history.get_subs().await;
-    match state.twitch.fetch_trending_vods(&history, &subs).await {
-        Ok(results) => Json(results).into_response(),
-        Err(e) => internal(e),
-    }
+    let results = state.twitch.fetch_trending_vods(&history, &subs).await?;
+    Ok(Json(results).into_response())
 }
 
-async fn handle_live(Query(q): Query<LiveQuery>, State(state): State<ApiState>) -> Response {
+async fn handle_live(
+    Query(q): Query<LiveQuery>,
+    State(state): State<ApiState>,
+) -> AppResult<Response> {
     let limit = q
         .limit
         .and_then(|s| s.parse::<usize>().ok())
@@ -801,30 +780,25 @@ async fn handle_live(Query(q): Query<LiveQuery>, State(state): State<ApiState>) 
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
-    match state
+    let page = state
         .twitch
         .fetch_live_streams(limit, cursor.as_deref())
-        .await
-    {
-        Ok(page) => Json(page).into_response(),
-        Err(e) => internal(e),
-    }
+        .await?;
+    Ok(Json(page).into_response())
 }
 
-async fn handle_live_top_categories(State(state): State<ApiState>) -> Response {
-    match state.twitch.fetch_top_live_categories().await {
-        Ok(cats) => Json(cats).into_response(),
-        Err(e) => internal(e),
-    }
+async fn handle_live_top_categories(State(state): State<ApiState>) -> AppResult<Response> {
+    let cats = state.twitch.fetch_top_live_categories().await?;
+    Ok(Json(cats).into_response())
 }
 
 async fn handle_live_category(
     Query(q): Query<LiveCategoryQuery>,
     State(state): State<ApiState>,
-) -> Response {
+) -> AppResult<Response> {
     let name = q.name.unwrap_or_default().trim().to_string();
     if name.is_empty() {
-        return bad_request("Missing category name");
+        return Err(AppError::BadRequest("Missing category name".to_string()));
     }
     let limit = q
         .limit
@@ -836,43 +810,37 @@ async fn handle_live_category(
         .cursor
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    match state
+    let page = state
         .twitch
         .fetch_live_streams_by_category(&name, limit, cursor.as_deref())
-        .await
-    {
-        Ok(page) => Json(page).into_response(),
-        Err(e) => internal(e),
-    }
+        .await?;
+    Ok(Json(page).into_response())
 }
 
 async fn handle_live_search(
     Query(q): Query<LiveSearchQuery>,
     State(state): State<ApiState>,
-) -> Response {
+) -> AppResult<Response> {
     let query = q.q.unwrap_or_default().trim().to_string();
     if query.is_empty() {
-        return bad_request("Missing query");
+        return Err(AppError::BadRequest("Missing query".to_string()));
     }
     let limit = q
         .limit
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(24)
         .clamp(8, 48);
-    match state
+    let page = state
         .twitch
         .search_live_streams_by_query(&query, limit)
-        .await
-    {
-        Ok(page) => Json(page).into_response(),
-        Err(e) => internal(e),
-    }
+        .await?;
+    Ok(Json(page).into_response())
 }
 
 async fn handle_live_status(
     Query(q): Query<LiveStatusQuery>,
     State(state): State<ApiState>,
-) -> Response {
+) -> impl IntoResponse {
     let raw = q.logins.unwrap_or_default();
     let raw = raw.trim().to_string();
     if raw.is_empty() {
@@ -896,7 +864,7 @@ async fn handle_get_history(State(state): State<ApiState>) -> impl IntoResponse 
 async fn handle_get_history_list(
     Query(q): Query<HistoryListQuery>,
     State(state): State<ApiState>,
-) -> Response {
+) -> impl IntoResponse {
     let limit = q
         .limit
         .and_then(|s| s.parse::<usize>().ok())
@@ -928,13 +896,13 @@ async fn handle_get_history_list(
         })
         .collect();
 
-    Json(enriched).into_response()
+    Json(enriched)
 }
 
 async fn handle_get_history_vod(
     Path(vod_id): Path<String>,
     State(state): State<ApiState>,
-) -> Response {
+) -> impl IntoResponse {
     match state.history.get_history_by_vod_id(&vod_id).await {
         Some(entry) => Json(entry).into_response(),
         None => Json(serde_json::Value::Null).into_response(),
@@ -952,56 +920,53 @@ struct HistoryBody {
 async fn handle_post_history(
     State(state): State<ApiState>,
     Json(body): Json<HistoryBody>,
-) -> Response {
+) -> AppResult<Response> {
     let Some(vod_id) = body.vod_id else {
-        return bad_request("Invalid parameters");
+        return Err(AppError::BadRequest("Invalid parameters".to_string()));
     };
     let Some(timecode) = body.timecode else {
-        return bad_request("Invalid parameters");
+        return Err(AppError::BadRequest("Invalid parameters".to_string()));
     };
     let duration = body.duration.unwrap_or(0.0);
 
     let entry = state
         .history
         .update_history(&vod_id, timecode, duration)
-        .await;
-    Json(entry).into_response()
+        .await?;
+    Ok(Json(entry).into_response())
 }
 
-async fn handle_get_user(Path(username): Path<String>, State(state): State<ApiState>) -> Response {
+async fn handle_get_user(
+    Path(username): Path<String>,
+    State(state): State<ApiState>,
+) -> AppResult<Response> {
     if !is_valid_login(&username) {
-        return bad_request("Invalid username");
+        return Err(AppError::BadRequest("Invalid username".to_string()));
     }
-    match state.twitch.fetch_user_info(&username).await {
-        Ok(user) => Json(user).into_response(),
-        Err(e) => not_found(e),
-    }
+    let user = state.twitch.fetch_user_info(&username).await?;
+    Ok(Json(user).into_response())
 }
 
 async fn handle_get_user_vods(
     Path(username): Path<String>,
     State(state): State<ApiState>,
-) -> Response {
+) -> AppResult<Response> {
     if !is_valid_login(&username) {
-        return bad_request("Invalid username");
+        return Err(AppError::BadRequest("Invalid username".to_string()));
     }
-    match state.twitch.fetch_user_vods(&username).await {
-        Ok(vods) => Json(vods).into_response(),
-        Err(e) => internal(e),
-    }
+    let vods = state.twitch.fetch_user_vods(&username).await?;
+    Ok(Json(vods).into_response())
 }
 
 async fn handle_get_user_live(
     Path(username): Path<String>,
     State(state): State<ApiState>,
-) -> Response {
+) -> AppResult<Response> {
     if !is_valid_login(&username) {
-        return bad_request("Invalid username");
+        return Err(AppError::BadRequest("Invalid username".to_string()));
     }
-    match state.twitch.fetch_user_live_stream(&username).await {
-        Ok(stream) => Json(stream).into_response(),
-        Err(e) => internal(e),
-    }
+    let stream = state.twitch.fetch_user_live_stream(&username).await?;
+    Ok(Json(stream).into_response())
 }
 
 #[cfg(debug_assertions)]
@@ -1024,13 +989,15 @@ async fn handle_shared_downloads(
     Path(file_path): Path<String>,
     State(state): State<ApiState>,
     req: axum::extract::Request,
-) -> Response {
+) -> AppResult<Response> {
     let settings = state.history.get_settings().await;
     let Some(base_path) = settings
         .download_local_path
         .or(settings.download_network_shared_path)
     else {
-        return not_found("Download path is not configured");
+        return Err(AppError::NotFound(
+            "Download path is not configured".to_string(),
+        ));
     };
 
     // Treat the configured download directory as the base path.
@@ -1039,31 +1006,21 @@ async fn handle_shared_downloads(
     // Reject absolute paths in the user-supplied segment to avoid replacing the base.
     let requested_path = std::path::Path::new(&file_path);
     if requested_path.is_absolute() {
-        return bad_request("Invalid path");
+        return Err(AppError::BadRequest("Invalid path".to_string()));
     }
 
     // Resolve the base directory to an absolute, canonical path.
-    let base_dir_canon = match std::fs::canonicalize(base_dir) {
-        Ok(p) => p,
-        Err(_) => {
-            // Misconfigured or missing base download directory.
-            return not_found("Download path is not configured");
-        }
-    };
+    let base_dir_canon = std::fs::canonicalize(base_dir)
+        .map_err(|_| AppError::NotFound("Download path is not configured".to_string()))?;
 
     // Join the base directory with the requested relative path, then canonicalize.
     let full_path = base_dir.join(requested_path);
-    let full_path_canon = match std::fs::canonicalize(&full_path) {
-        Ok(p) => p,
-        Err(_) => {
-            // The requested file does not exist or is not accessible.
-            return not_found("File not found");
-        }
-    };
+    let full_path_canon = std::fs::canonicalize(&full_path)
+        .map_err(|_| AppError::NotFound("File not found".to_string()))?;
 
     // Ensure the resolved path is still within the configured download directory.
     if !full_path_canon.starts_with(&base_dir_canon) {
-        return bad_request("Invalid path");
+        return Err(AppError::BadRequest("Invalid path".to_string()));
     }
 
     match ServeFile::new(&full_path_canon).oneshot(req).await {
@@ -1074,9 +1031,9 @@ async fn handle_shared_downloads(
                     .headers_mut()
                     .insert(header::CONTENT_TYPE, "video/mp2t".parse().unwrap());
             }
-            response
+            Ok(response)
         }
-        Err(_) => not_found("File not found"),
+        Err(_) => Err(AppError::NotFound("File not found".to_string())),
     }
 }
 
@@ -1090,7 +1047,7 @@ struct DownloadedFile {
     metadata: Option<Value>,
 }
 
-async fn handle_get_downloads(State(state): State<ApiState>) -> Response {
+async fn handle_get_downloads(State(state): State<ApiState>) -> impl IntoResponse {
     let settings = state.history.get_settings().await;
     let Some(base_path) = settings
         .download_local_path
@@ -1131,7 +1088,7 @@ async fn handle_get_downloads(State(state): State<ApiState>) -> Response {
     Json(files).into_response()
 }
 
-async fn handle_system_dialog_folder() -> Response {
+async fn handle_system_dialog_folder() -> impl IntoResponse {
     if let Some(folder) = rfd::AsyncFileDialog::new().pick_folder().await {
         return Json(serde_json::json!({ "path": folder.path().to_string_lossy().to_string() }))
             .into_response();
@@ -1154,24 +1111,24 @@ async fn handle_live_chat_send(
     Path(login): Path<String>,
     State(state): State<ApiState>,
     Json(body): Json<ChatSendBody>,
-) -> Response {
+) -> AppResult<Response> {
     let message = body.message.trim().to_string();
     if message.is_empty() {
-        return bad_request("Empty message");
+        return Err(AppError::BadRequest("Empty message".to_string()));
     }
     if message.len() > 500 {
-        return bad_request("Message too long (max 500 chars)");
+        return Err(AppError::BadRequest(
+            "Message too long (max 500 chars)".to_string(),
+        ));
     }
 
     let settings = state.history.get_settings().await;
     let token = state.history.get_twitch_token().await;
 
     let (Some(access_token), Some(sender_id)) = (token, settings.twitch_user_id) else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "Not linked to a Twitch account" })),
-        )
-            .into_response();
+        return Err(AppError::Unauthorized(
+            "Not linked to a Twitch account".to_string(),
+        ));
     };
 
     let client = reqwest::Client::new();
@@ -1194,15 +1151,19 @@ async fn handle_live_chat_send(
                 .unwrap_or("")
                 .to_string()
         }
-        _ => return internal("Failed to resolve broadcaster ID"),
+        _ => {
+            return Err(AppError::Internal(
+                "Failed to resolve broadcaster ID".to_string(),
+            ))
+        }
     };
 
     if broadcaster_id.is_empty() {
-        return not_found("Channel not found");
+        return Err(AppError::NotFound("Channel not found".to_string()));
     }
 
     // Send via Helix chat messages API (requires user:write:chat scope)
-    match client
+    let resp = client
         .post("https://api.twitch.tv/helix/chat/messages")
         .header("Authorization", format!("Bearer {access_token}"))
         .header("Client-Id", crate::server::auth::TWITCH_CLIENT_ID.as_str())
@@ -1212,60 +1173,53 @@ async fn handle_live_chat_send(
             "message": message,
         }))
         .send()
-        .await
-    {
-        Ok(r) if r.status().is_success() => {
-            let body: serde_json::Value = r.json().await.unwrap_or_default();
-            let result = body
-                .get("data")
-                .and_then(|d| d.as_array())
-                .and_then(|a| a.first())
-                .cloned()
-                .unwrap_or_default();
+        .await?;
 
-            let is_sent = result
-                .get("is_sent")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
+    if resp.status().is_success() {
+        let body: serde_json::Value = resp.json().await.unwrap_or_default();
+        let result = body
+            .get("data")
+            .and_then(|d| d.as_array())
+            .and_then(|a| a.first())
+            .cloned()
+            .unwrap_or_default();
 
-            if is_sent {
-                Json(serde_json::json!({ "ok": true })).into_response()
-            } else {
-                let drop_code = result
-                    .get("drop_reason")
-                    .and_then(|d| d.get("code"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-                let drop_message = result
-                    .get("drop_reason")
-                    .and_then(|d| d.get("message"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Twitch a refusé le message.");
+        let is_sent = result
+            .get("is_sent")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "error": format!("Message non envoyé par Twitch ({drop_code}): {drop_message}")
-                    })),
-                )
-                    .into_response()
-            }
+        if is_sent {
+            Ok(Json(serde_json::json!({ "ok": true })).into_response())
+        } else {
+            let drop_code = result
+                .get("drop_reason")
+                .and_then(|d| d.get("code"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let drop_message = result
+                .get("drop_reason")
+                .and_then(|d| d.get("message"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Twitch a refusé le message.");
+
+            Err(AppError::BadRequest(format!(
+                "Message non envoyé par Twitch ({drop_code}): {drop_message}"
+            )))
         }
-        Ok(r) => {
-            let status = r.status();
-            let body = r.text().await.unwrap_or_default();
-            (status, Json(serde_json::json!({ "error": body }))).into_response()
-        }
-        Err(e) => internal(e),
+    } else {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        Ok((status, Json(serde_json::json!({ "error": body }))).into_response())
     }
 }
 
 async fn handle_download_hls(
     Path(file_name): Path<String>,
     State(state): State<ApiState>,
-) -> Response {
+) -> AppResult<Response> {
     if file_name.contains('/') || file_name.contains('\\') || file_name.contains("..") {
-        return bad_request("Invalid file name");
+        return Err(AppError::BadRequest("Invalid file name".to_string()));
     }
 
     let settings = state.history.get_settings().await;
@@ -1273,13 +1227,15 @@ async fn handle_download_hls(
         .download_local_path
         .or(settings.download_network_shared_path)
     else {
-        return not_found("Download path is not configured");
+        return Err(AppError::NotFound(
+            "Download path is not configured".to_string(),
+        ));
     };
 
     let full_path = std::path::PathBuf::from(&base_path).join(&file_name);
     let file_size = match tokio::fs::metadata(&full_path).await {
         Ok(m) if m.is_file() => m.len(),
-        _ => return not_found("File not found"),
+        _ => return Err(AppError::NotFound("File not found".to_string())),
     };
 
     // Build a byte-range HLS playlist so hls.js can load the file progressively.
@@ -1307,7 +1263,7 @@ async fn handle_download_hls(
     }
     playlist.push_str("#EXT-X-ENDLIST\n");
 
-    m3u8_response(playlist)
+    Ok(m3u8_response(playlist))
 }
 
 #[derive(Deserialize)]
@@ -1326,7 +1282,7 @@ struct DownloadRequest {
 async fn handle_start_download(
     State(state): State<ApiState>,
     Json(req): Json<DownloadRequest>,
-) -> Response {
+) -> AppResult<Response> {
     let settings = state.history.get_settings().await;
     let out_dir = resolve_download_output_dir(settings.download_local_path);
 
@@ -1350,7 +1306,7 @@ async fn handle_start_download(
         }
     }
 
-    match state
+    state
         .download
         .start_download(
             req.vod_id,
@@ -1361,11 +1317,9 @@ async fn handle_start_download(
             req.end_time,
             duration,
         )
-        .await
-    {
-        Ok(_) => Json(serde_json::json!({ "message": "Download started" })).into_response(),
-        Err(e) => internal(e),
-    }
+        .await?;
+
+    Ok(Json(serde_json::json!({ "message": "Download started" })).into_response())
 }
 
 // ── Security headers middleware ─────────────────────────────────────────────

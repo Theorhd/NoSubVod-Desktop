@@ -85,6 +85,8 @@ pub struct ScreenShareService {
     input_rate_limit: Arc<RwLock<HashMap<String, u64>>>,
 }
 
+use super::error::{AppError, AppResult};
+
 impl ScreenShareService {
     pub fn new() -> Self {
         Self {
@@ -104,16 +106,18 @@ impl ScreenShareService {
         &self,
         app_handle: Option<&tauri::AppHandle>,
         request: StartScreenShareRequest,
-    ) -> Result<ScreenShareSessionState, String> {
+    ) -> AppResult<ScreenShareSessionState> {
         let session_id = uuid::Uuid::new_v4().to_string();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
+            .map_err(|e| AppError::Internal(e.to_string()))?
             .as_millis() as u64;
 
         match request.source_type {
             ScreenShareSourceType::Browser => {
-                let app = app_handle.ok_or_else(|| "Tauri app handle unavailable".to_string())?;
+                let app = app_handle.ok_or_else(|| {
+                    AppError::Internal("Tauri app handle unavailable".to_string())
+                })?;
                 self.open_browser_window(app, request.url.as_deref())
                     .await?;
 
@@ -182,7 +186,7 @@ impl ScreenShareService {
     pub async fn stop(
         &self,
         app_handle: Option<&tauri::AppHandle>,
-    ) -> Result<ScreenShareSessionState, String> {
+    ) -> AppResult<ScreenShareSessionState> {
         if let Some(app) = app_handle {
             if let Some(window) = app.get_webview_window(SCREEN_SHARE_BROWSER_LABEL) {
                 let _ = window.close();
@@ -470,7 +474,7 @@ impl ScreenShareService {
                             client_id,
                             serde_json::json!({
                                 "type": "error",
-                                "message": err,
+                                "message": err.to_string(),
                             }),
                         )
                         .await;
@@ -625,7 +629,7 @@ impl ScreenShareService {
         &self,
         app_handle: &tauri::AppHandle,
         requested_url: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> AppResult<()> {
         if let Some(existing) = app_handle.get_webview_window(SCREEN_SHARE_BROWSER_LABEL) {
             let _ = existing.close();
         }
@@ -635,9 +639,9 @@ impl ScreenShareService {
             .filter(|value| !value.is_empty())
             .unwrap_or(DEFAULT_BROWSER_URL);
 
-        let parsed = raw
-            .parse()
-            .map_err(|e| format!("Invalid browser URL for screen share: {e}"))?;
+        let parsed = raw.parse().map_err(|e| {
+            AppError::Internal(format!("Invalid browser URL for screen share: {e}"))
+        })?;
 
         WebviewWindowBuilder::new(
             app_handle,
@@ -648,7 +652,9 @@ impl ScreenShareService {
         .inner_size(1280.0, 720.0)
         .resizable(true)
         .build()
-        .map_err(|e| format!("Unable to create screen share browser window: {e}"))?;
+        .map_err(|e| {
+            AppError::Internal(format!("Unable to create screen share browser window: {e}"))
+        })?;
 
         Ok(())
     }
@@ -669,11 +675,13 @@ impl ScreenShareService {
         true
     }
 
-    async fn inject_remote_input(&self, payload: &RemoteInputPayload) -> Result<(), String> {
+    async fn inject_remote_input(&self, payload: &RemoteInputPayload) -> AppResult<()> {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = payload;
-            Err("Remote input injection is supported on Windows only".to_string())
+            Err(AppError::BadRequest(
+                "Remote input injection is supported on Windows only".to_string(),
+            ))
         }
 
         #[cfg(target_os = "windows")]
@@ -695,32 +703,36 @@ fn window_title_utf16(value: &str) -> Vec<u16> {
 }
 
 #[cfg(target_os = "windows")]
-fn get_target_window() -> Result<HWND, String> {
+fn get_target_window() -> AppResult<HWND> {
     let title = window_title_utf16("NoSubVOD - Screen Share Browser");
     let hwnd = unsafe { FindWindowW(None, PCWSTR(title.as_ptr())) }
-        .map_err(|_| "Screen share browser window was not found".to_string())?;
+        .map_err(|_| AppError::NotFound("Screen share browser window was not found".to_string()))?;
     if hwnd.0.is_null() {
-        return Err("Screen share browser window was not found".to_string());
+        return Err(AppError::NotFound(
+            "Screen share browser window was not found".to_string(),
+        ));
     }
 
     let foreground = unsafe { GetForegroundWindow() };
     if foreground != hwnd {
-        return Err("Input blocked: target browser window must be focused".to_string());
+        return Err(AppError::BadRequest(
+            "Input blocked: target browser window must be focused".to_string(),
+        ));
     }
 
     Ok(hwnd)
 }
 
 #[cfg(target_os = "windows")]
-fn window_rect(hwnd: HWND) -> Result<RECT, String> {
+fn window_rect(hwnd: HWND) -> AppResult<RECT> {
     let mut rect = RECT::default();
     unsafe { GetWindowRect(hwnd, &mut rect) }
-        .map_err(|_| "Unable to read target window geometry".to_string())?;
+        .map_err(|_| AppError::Internal("Unable to read target window geometry".to_string()))?;
     Ok(rect)
 }
 
 #[cfg(target_os = "windows")]
-fn emit_mouse(flags: MOUSE_EVENT_FLAGS, data: i32) -> Result<(), String> {
+fn emit_mouse(flags: MOUSE_EVENT_FLAGS, data: i32) -> AppResult<()> {
     let input = INPUT {
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
@@ -737,13 +749,15 @@ fn emit_mouse(flags: MOUSE_EVENT_FLAGS, data: i32) -> Result<(), String> {
 
     let sent = unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) };
     if sent == 0 {
-        return Err("SendInput mouse injection failed".to_string());
+        return Err(AppError::Internal(
+            "SendInput mouse injection failed".to_string(),
+        ));
     }
     Ok(())
 }
 
 #[cfg(target_os = "windows")]
-fn emit_key(vk: u16, key_up: bool) -> Result<(), String> {
+fn emit_key(vk: u16, key_up: bool) -> AppResult<()> {
     let input = INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
@@ -763,7 +777,9 @@ fn emit_key(vk: u16, key_up: bool) -> Result<(), String> {
 
     let sent = unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) };
     if sent == 0 {
-        return Err("SendInput keyboard injection failed".to_string());
+        return Err(AppError::Internal(
+            "SendInput keyboard injection failed".to_string(),
+        ));
     }
     Ok(())
 }
@@ -799,7 +815,7 @@ fn map_key_to_vk(key: &str) -> Option<u16> {
 }
 
 #[cfg(target_os = "windows")]
-fn inject_remote_input_windows(payload: &RemoteInputPayload) -> Result<(), String> {
+fn inject_remote_input_windows(payload: &RemoteInputPayload) -> AppResult<()> {
     let hwnd = get_target_window()?;
     let rect = window_rect(hwnd)?;
     let width = (rect.right - rect.left).max(1) as f64;
@@ -837,25 +853,31 @@ fn inject_remote_input_windows(payload: &RemoteInputPayload) -> Result<(), Strin
                     let delta = payload.delta_y.unwrap_or(0.0).round() as i32;
                     emit_mouse(MOUSEEVENTF_WHEEL, delta)
                 }
-                _ => Err("Unsupported pointer action".to_string()),
+                _ => Err(AppError::BadRequest(
+                    "Unsupported pointer action".to_string(),
+                )),
             }
         }
         "keyboard" => {
             let action = payload.action.as_deref().unwrap_or("down");
             let Some(key) = payload.key.as_deref() else {
-                return Err("Keyboard input missing key".to_string());
+                return Err(AppError::BadRequest(
+                    "Keyboard input missing key".to_string(),
+                ));
             };
             let Some(vk) = map_key_to_vk(key) else {
-                return Err("Unsupported keyboard key".to_string());
+                return Err(AppError::BadRequest("Unsupported keyboard key".to_string()));
             };
 
             match action {
                 "down" => emit_key(vk, false),
                 "up" => emit_key(vk, true),
-                _ => Err("Unsupported keyboard action".to_string()),
+                _ => Err(AppError::BadRequest(
+                    "Unsupported keyboard action".to_string(),
+                )),
             }
         }
-        _ => Err("Unsupported input kind".to_string()),
+        _ => Err(AppError::BadRequest("Unsupported input kind".to_string())),
     }
 }
 
