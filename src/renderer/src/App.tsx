@@ -194,7 +194,7 @@ export default function App() {
     });
   };
 
-  const startHostCapture = async (sourceType: 'browser' | 'application') => {
+  const startHostCapture = async (_sourceType: 'browser' | 'application') => {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
@@ -202,15 +202,28 @@ export default function App() {
           height: { ideal: 1080, max: 2160 },
           frameRate: { ideal: 60, max: 60 },
         },
-        audio: false,
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          // @ts-expect-error - systemAudio is not in standard DOM typings yet
+          systemAudio: 'include',
+        },
       });
+
+      if (stream.getAudioTracks().length === 0) {
+        console.warn(
+          'System audio not detected. Please make sure "Share audio" is checked in the dialog.'
+        );
+        setActionMessage(
+          'Le flux n\'a pas de son ! Partagez l\'"Ecran complet" (Entire Screen) et cochez "Partager l\'audio du système". Les fenêtres ne partagent pas le son !'
+        );
+      }
 
       localStreamRef.current = stream;
       setHostRtcStatus('WebRTC capturing');
       setActionMessage(
-        sourceType === 'browser'
-          ? 'Selectionne la fenetre "NoSubVOD - Screen Share Browser" dans le picker Windows.'
-          : 'Selectionne la fenetre de l application a diffuser dans le picker Windows.'
+        'ATTENTION: Pour avec le son, choisis "Écran complet" et COCHE "Partager le son du système". Les fenêtres seules n\'ont pas de son !'
       );
 
       const [videoTrack] = stream.getVideoTracks();

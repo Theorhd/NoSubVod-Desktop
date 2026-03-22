@@ -441,8 +441,21 @@ export default function ScreenShare() {
           height: { ideal: 1080, max: 2160 },
           frameRate: { ideal: 60, max: 60 },
         },
-        audio: false,
+        // Request audio track from display capture so viewers can hear system/tab audio.
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          // @ts-expect-error - systemAudio is not in standard DOM typings yet
+          systemAudio: 'include',
+        },
       });
+
+      if (stream.getAudioTracks().length === 0) {
+        setStreamError(
+          'Attention : Le flux n\'a pas de son ! Il faut choisir "Ecran complet" (Entire Screen) ou "Onglet" et COCHER LA CASE "Partager l\'audio du système" !'
+        );
+      }
 
       localStreamRef.current = stream;
       setHostStreaming(true);

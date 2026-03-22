@@ -142,7 +142,7 @@ export type LiveStatusMap = Record<string, LiveStream>;
 
 export type ScreenShareSourceType = 'browser' | 'application';
 
-export interface ScreenShareSessionState {
+export type ScreenShareSessionState = {
   active: boolean;
   sessionId: string | null;
   sourceType: ScreenShareSourceType | null;
@@ -153,4 +153,32 @@ export interface ScreenShareSessionState {
   currentViewers: number;
   streamReady: boolean;
   streamMessage: string | null;
-}
+};
+
+export type SignalPayload = {
+  sdp?: RTCSessionDescriptionInit;
+  candidate?: RTCIceCandidateInit;
+};
+
+export type RemoteInputPayload = {
+  kind: 'pointer' | 'keyboard';
+  action: 'move' | 'down' | 'up' | 'wheel';
+  x?: number;
+  y?: number;
+  button?: 'left' | 'middle' | 'right';
+  key?: string;
+  deltaX?: number;
+  deltaY?: number;
+};
+
+export type WsMessage = {
+  type?: string;
+  state?: ScreenShareSessionState;
+  message?: string;
+  clientId?: string;
+  hostClientId?: string | null;
+  role?: string;
+  from?: string;
+  target?: string;
+  payload?: SignalPayload;
+};
