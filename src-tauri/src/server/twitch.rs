@@ -252,7 +252,7 @@ impl ProxyManager {
         let url = "https://api.proxyscrape.com/v2/?request=displayproxies\
 &protocol=http&timeout=10000&country=all&ssl=all&anonymity=all&simplified=true";
         let resp = self
-            .client
+            .android_tv_client
             .get(url)
             .header("Accept", "text/plain")
             .send()
@@ -287,7 +287,7 @@ impl ProxyManager {
 
         let mut out = Vec::new();
         for source in sources {
-            let Ok(resp) = self.client.get(source).send().await else {
+            let Ok(resp) = self.android_tv_client.get(source).send().await else {
                 continue;
             };
             let Ok(text) = resp.text().await else {
@@ -322,7 +322,10 @@ impl ProxyManager {
 // ── Shared Twitch service state ────────────────────────────────────────────────
 
 pub struct TwitchService {
-    client: Client,
+    /// Specialized client with Android TV User-Agent for GQL and playback APIs
+    android_tv_client: Client,
+    /// Shared client for general API and OAuth requests (Twitch Helix, token exchange, etc.)
+    shared_client: Client,
     /// Automatic proxy manager
     proxy_manager: Arc<ProxyManager>,
     /// Cache for proxy clients (proxy_url -> Client)
@@ -351,14 +354,20 @@ const ANDROID_TV_CLIENT_ID: &str = "ue6666qo983tsx6so1t0vnawi233wa";
 
 impl TwitchService {
     pub fn new() -> Self {
-        let client = Client::builder()
+        let android_tv_client = Client::builder()
             .user_agent(ANDROID_TV_UA)
             .timeout(Duration::from_secs(15))
             .build()
             .unwrap_or_else(|_| Client::new());
 
+        let shared_client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
         Self {
-            client,
+            android_tv_client,
+            shared_client,
             proxy_manager: Arc::new(ProxyManager::new()),
             proxy_clients: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             user_cache: Cache::builder()
@@ -413,7 +422,7 @@ impl TwitchService {
 
     async fn get_client(&self, settings: &ExperienceSettings) -> Client {
         if !settings.adblock_enabled {
-            return self.client.clone();
+            return self.android_tv_client.clone();
         }
 
         let mode = settings.adblock_proxy_mode.as_deref().unwrap_or("auto");
@@ -422,7 +431,7 @@ impl TwitchService {
         let proxy_url = self.proxy_manager.get_proxy(mode, manual_url).await;
 
         let Some(proxy) = proxy_url else {
-            return self.client.clone();
+            return self.android_tv_client.clone();
         };
 
         {
@@ -446,7 +455,7 @@ impl TwitchService {
             .build()
         {
             Ok(c) => c,
-            Err(_) => self.client.clone(),
+            Err(_) => self.android_tv_client.clone(),
         };
 
         clients.insert(proxy, new_client.clone());
@@ -2272,7 +2281,7 @@ impl TwitchService {
                 channel_login,
             );
 
-            if let Some(codec) = is_valid_quality(&self.client, &stream_url).await {
+            if let Some(codec) = is_valid_quality(&self.android_tv_client, &stream_url).await {
                 let quality = if *res_key == "chunked" {
                     let height = resolution.split('x').nth(1).unwrap_or("1080");
                     format!("{height}p")
@@ -2328,7 +2337,7 @@ impl TwitchService {
         let client = self.get_client(settings).await;
 
         let master =
-            get_text_with_direct_fallback(&client, &self.client, &source_url, "live master")
+            get_text_with_direct_fallback(&client, &self.android_tv_client, &source_url, "live master")
                 .await?;
 
         Ok(rewrite_master_with_proxy(
@@ -2459,7 +2468,7 @@ impl TwitchService {
         let client = self.get_client(settings).await;
 
         let mut body =
-            get_text_with_direct_fallback(&client, &self.client, &target_url, "variant").await?;
+            get_text_with_direct_fallback(&client, &self.android_tv_client, &target_url, "variant").await?;
 
         body = filter_live_playlist(&body);
         body = body.replace("-unmuted", "-muted");

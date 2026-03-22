@@ -204,7 +204,7 @@ pub async fn handle_auth_callback(
     };
 
     // ── Exchange authorization code for access token ────────────────────────
-    let client = reqwest::Client::new();
+    let client = state.twitch.shared_client().clone();
     let token_res = client
         .post("https://id.twitch.tv/oauth2/token")
         .form(&[
@@ -306,7 +306,7 @@ pub async fn handle_auth_callback(
                 tokio::spawn({
                     let state = state.clone();
                     async move {
-                        let _ = import_followed_channels(&token, &uid, &state).await;
+                        let _ = import_followed_channels(&token, &uid, state.twitch.shared_client()).await;
                     }
                 });
             }
@@ -376,7 +376,7 @@ pub async fn handle_auth_import_follows(
         state.history.update_import_follows_setting(true).await?;
     }
 
-    let imported = import_followed_channels(&access_token, &uid, &state).await;
+    let imported = import_followed_channels(&access_token, &uid, state.twitch.shared_client()).await;
     Ok(Json(serde_json::json!({ "imported": imported })).into_response())
 }
 
@@ -402,9 +402,8 @@ pub async fn handle_auth_set_import_follows(
 pub async fn import_followed_channels(
     access_token: &str,
     user_id: &str,
-    state: &ApiState,
+    client: &reqwest::Client,
 ) -> usize {
-    let client = reqwest::Client::new();
     let mut cursor: Option<String> = None;
     // (broadcaster_id, login, display_name)
     let mut all_channels: Vec<(String, String, String)> = Vec::new();

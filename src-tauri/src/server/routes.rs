@@ -751,12 +751,14 @@ async fn handle_shared_downloads(
     }
 
     // Resolve the base directory to an absolute, canonical path.
-    let base_dir_canon = std::fs::canonicalize(base_dir)
+    let base_dir_canon = tokio::fs::canonicalize(base_dir)
+        .await
         .map_err(|_| AppError::NotFound("Download path is not configured".to_string()))?;
 
     // Join the base directory with the requested relative path, then canonicalize.
     let full_path = base_dir.join(requested_path);
-    let full_path_canon = std::fs::canonicalize(&full_path)
+    let full_path_canon = tokio::fs::canonicalize(&full_path)
+        .await
         .map_err(|_| AppError::NotFound("File not found".to_string()))?;
 
     // Ensure the resolved path is still within the configured download directory.
@@ -857,7 +859,7 @@ async fn handle_live_chat_send(
         ));
     };
 
-    let client = reqwest::Client::new();
+    let client = state.twitch.shared_client().clone();
 
     // Resolve login → broadcaster_id
     let broadcaster_id = match client
