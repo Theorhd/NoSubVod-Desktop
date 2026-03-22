@@ -70,6 +70,7 @@ pub async fn start_screen_share(
         .screenshare
         .start(Some(&app_handle), request)
         .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -77,7 +78,12 @@ pub async fn stop_screen_share(
     app_handle: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<ScreenShareSessionState, String> {
-    state.api_state.screenshare.stop(Some(&app_handle)).await
+    state
+        .api_state
+        .screenshare
+        .stop(Some(&app_handle))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -1,22 +1,24 @@
-pub fn extract_origin(url: &str) -> String {
+use std::borrow::Cow;
+
+pub fn extract_origin(url: &str) -> Cow<'_, str> {
     if let Some(sep) = url.find("://") {
         let after = &url[sep + 3..];
         let end = after.find('/').unwrap_or(after.len());
-        return format!("{}://{}", &url[..sep], &after[..end]);
+        return Cow::Owned(format!("{}://{}", &url[..sep], &after[..end]));
     }
 
-    url.to_string()
+    Cow::Borrowed(url)
 }
 
-pub fn resolve_url(raw: &str, origin: &str, base_url: &str) -> String {
+pub fn resolve_url<'a>(raw: &'a str, origin: &str, base_url: &str) -> Cow<'a, str> {
     let raw = raw.trim();
 
     if raw.starts_with("http://") || raw.starts_with("https://") {
-        return raw.to_string();
+        return Cow::Borrowed(raw);
     }
 
     if raw.starts_with('/') {
-        return format!("{origin}{raw}");
+        return Cow::Owned(format!("{origin}{raw}"));
     }
 
     let base_dir = base_url
@@ -24,7 +26,7 @@ pub fn resolve_url(raw: &str, origin: &str, base_url: &str) -> String {
         .map(|index| &base_url[..=index])
         .unwrap_or(base_url);
 
-    format!("{base_dir}{raw}")
+    Cow::Owned(format!("{base_dir}{raw}"))
 }
 
 #[cfg(test)]
@@ -38,6 +40,18 @@ mod tests {
     }
 
     #[test]
+    fn extracts_origin_without_path() {
+        let origin = extract_origin("https://example.com");
+        assert_eq!(origin, "https://example.com");
+    }
+
+    #[test]
+    fn extracts_origin_without_protocol_returns_original() {
+        let origin = extract_origin("example.com/path/file.m3u8");
+        assert_eq!(origin, "example.com/path/file.m3u8");
+    }
+
+    #[test]
     fn resolves_absolute_url_without_changes() {
         let url = resolve_url(
             "https://cdn.example.com/live/stream.m3u8",
@@ -45,6 +59,16 @@ mod tests {
             "https://host.local/master.m3u8",
         );
         assert_eq!(url, "https://cdn.example.com/live/stream.m3u8");
+    }
+
+    #[test]
+    fn resolves_http_absolute_url_without_changes() {
+        let url = resolve_url(
+            "http://cdn.example.com/live/stream.m3u8",
+            "https://host.local",
+            "https://host.local/master.m3u8",
+        );
+        assert_eq!(url, "http://cdn.example.com/live/stream.m3u8");
     }
 
     #[test]
@@ -65,5 +89,11 @@ mod tests {
             "https://host.local/api/vod/master.m3u8",
         );
         assert_eq!(url, "https://host.local/api/vod/chunked/index.m3u8");
+    }
+
+    #[test]
+    fn resolves_relative_url_when_base_has_no_slash() {
+        let url = resolve_url("index.m3u8", "https://host.local", "master.m3u8");
+        assert_eq!(url, "master.m3u8index.m3u8");
     }
 }

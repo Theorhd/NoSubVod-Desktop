@@ -2,16 +2,22 @@ pub mod auth;
 pub mod chat;
 pub mod download;
 pub mod download_paths;
+pub mod dto;
+pub mod error;
 pub mod history;
 pub mod http_utils;
+pub mod middleware;
 pub mod routes;
 pub mod screenshare;
 pub mod twitch;
 pub mod types;
 pub mod url_utils;
+pub mod validation;
 
+use moka::future::Cache;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 #[cfg(not(debug_assertions))]
 use axum_server::tls_rustls::RustlsConfig;
@@ -34,6 +40,8 @@ use screenshare::ScreenShareService;
 use twitch::TwitchService;
 use types::ServerInfo;
 
+use error::AppResult;
+
 pub const SERVER_PORT: u16 = 23455;
 #[cfg(not(debug_assertions))]
 pub const SERVER_HTTPS_PORT: u16 = 23456;
@@ -44,8 +52,8 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(app_data_dir: PathBuf) -> Self {
-        let history = Arc::new(HistoryStore::load(app_data_dir));
+    pub fn new(app_data_dir: PathBuf) -> AppResult<Self> {
+        let history = Arc::new(HistoryStore::load(app_data_dir)?);
         let twitch = Arc::new(TwitchService::new());
         let download = Arc::new(DownloadManager::new());
         let screenshare = Arc::new(ScreenShareService::new());
@@ -79,6 +87,11 @@ impl AppState {
 
         let oauth = Arc::new(auth::OAuthStateStore::new());
 
+        let download_cache = Cache::builder()
+            .time_to_live(Duration::from_secs(5))
+            .max_capacity(1)
+            .build();
+
         let api_state = ApiState {
             twitch,
             history,
@@ -87,12 +100,13 @@ impl AppState {
             oauth,
             server_token,
             app_handle: None,
+            download_cache,
         };
 
-        Self {
+        Ok(Self {
             server_info,
             api_state,
-        }
+        })
     }
 }
 

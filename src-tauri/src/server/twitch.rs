@@ -1,10 +1,15 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use moka::future::Cache;
+use once_cell::sync::Lazy;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tauri::async_runtime;
+use tokio::sync::RwLock;
+use tracing::{debug, error, instrument};
 use uuid::Uuid;
 
 use super::http_utils::get_text_with_direct_fallback;
@@ -14,51 +19,7 @@ use super::types::{
 };
 use super::url_utils::{extract_origin, resolve_url};
 
-// ── Simple in-process TTL cache ────────────────────────────────────────────────
-
-struct Entry<V> {
-    value: V,
-    expires: Instant,
-}
-
-pub struct TimedCache<V> {
-    inner: RwLock<HashMap<String, Entry<V>>>,
-}
-
-impl<V: Clone + Send + Sync + 'static> Default for TimedCache<V> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<V: Clone + Send + Sync + 'static> TimedCache<V> {
-    pub fn new() -> Self {
-        Self {
-            inner: RwLock::new(HashMap::new()),
-        }
-    }
-
-    pub fn get(&self, key: &str) -> Option<V> {
-        let inner = self.inner.read().unwrap();
-        if let Some(e) = inner.get(key) {
-            if e.expires > Instant::now() {
-                return Some(e.value.clone());
-            }
-        }
-        None
-    }
-
-    pub fn set(&self, key: impl Into<String>, value: V, ttl_secs: u64) {
-        let mut inner = self.inner.write().unwrap();
-        inner.insert(
-            key.into(),
-            Entry {
-                value,
-                expires: Instant::now() + Duration::from_secs(ttl_secs),
-            },
-        );
-    }
-}
+use super::error::{AppError, AppResult};
 
 // ── Proxy Manager for Automatic Adblocking ──────────────────────────────────
 
@@ -86,12 +47,14 @@ impl Default for ProxyManager {
 
 impl ProxyManager {
     pub fn new() -> Self {
+        let client = Client::builder()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
         Self {
-            client: Client::builder()
-                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-                .timeout(Duration::from_secs(10))
-                .build()
-                .unwrap(),
+            client,
             proxies: Arc::new(RwLock::new(Vec::new())),
             last_refresh: Arc::new(RwLock::new(None)),
             current_proxy: Arc::new(RwLock::new(None)),
@@ -99,12 +62,12 @@ impl ProxyManager {
         }
     }
 
-    pub fn get_all_proxies(&self) -> Vec<ProxyInfo> {
-        self.proxies.read().unwrap().clone()
+    pub async fn get_all_proxies(&self) -> Vec<ProxyInfo> {
+        self.proxies.read().await.clone()
     }
 
-    pub fn get_current_proxy(&self) -> Option<ProxyInfo> {
-        self.current_proxy.read().unwrap().clone()
+    pub async fn get_current_proxy(&self) -> Option<ProxyInfo> {
+        self.current_proxy.read().await.clone()
     }
 
     pub async fn get_proxy(&self, mode: &str, manual_url: Option<&str>) -> Option<String> {
@@ -113,7 +76,7 @@ impl ProxyManager {
         }
 
         let should_refresh = {
-            let last = self.last_refresh.read().unwrap();
+            let last = self.last_refresh.read().await;
             last.is_none() || last.unwrap().elapsed() > Duration::from_secs(3600)
         };
 
@@ -123,7 +86,7 @@ impl ProxyManager {
             let _guard = self.refresh_lock.lock().await;
             // Re-check after acquiring — another task may have refreshed while we waited
             let still_needed = {
-                let last = self.last_refresh.read().unwrap();
+                let last = self.last_refresh.read().await;
                 last.is_none() || last.unwrap().elapsed() > Duration::from_secs(3600)
             };
             if still_needed {
@@ -131,14 +94,14 @@ impl ProxyManager {
             }
         }
 
-        let proxies = self.proxies.read().unwrap();
+        let proxies = self.proxies.read().await;
         if proxies.is_empty() {
             return None;
         }
 
         // Return existing current proxy if still in valid list
         {
-            let curr = self.current_proxy.read().unwrap();
+            let curr = self.current_proxy.read().await;
             if let Some(ref p) = *curr {
                 if proxies.iter().any(|x| x.url == p.url) {
                     return Some(p.url.clone());
@@ -146,12 +109,10 @@ impl ProxyManager {
             }
         }
 
-        // Pick best ping
-        let mut sorted = proxies.clone();
-        sorted.sort_by_key(|p| p.ping);
-        let best = sorted[0].clone();
+        // Pick best ping (list is already sorted by refresh_proxies)
+        let best = proxies[0].clone();
         {
-            let mut curr = self.current_proxy.write().unwrap();
+            let mut curr = self.current_proxy.write().await;
             *curr = Some(best.clone());
         }
         Some(best.url)
@@ -159,7 +120,7 @@ impl ProxyManager {
 
     // ── Refresh: collect ALL sources in parallel, merge, probe concurrently, sort by latency ──
 
-    async fn refresh_proxies(&self) -> Result<(), String> {
+    async fn refresh_proxies(&self) -> AppResult<()> {
         // Launch all sources concurrently — proxyscrape + 3 GitHub lists in parallel
         let (scrape_api, scrape_gh) =
             tokio::join!(self.scrape_proxyscrape(), self.scrape_github_proxy_lists(),);
@@ -185,7 +146,9 @@ impl ProxyManager {
 
         // Extra fallback only if both returned nothing
         if candidates.is_empty() {
-            return Err("No proxy candidates found from any source".to_string());
+            return Err(AppError::Internal(
+                "No proxy candidates found from any source".to_string(),
+            ));
         }
 
         // Deduplicate, keeping first occurrence (which preserves country tag)
@@ -195,7 +158,9 @@ impl ProxyManager {
         eprintln!("[adblock] {} unique candidates to probe", candidates.len());
 
         if candidates.is_empty() {
-            return Err("No proxy candidates found from any source".to_string());
+            return Err(AppError::Internal(
+                "No proxy candidates found from any source".to_string(),
+            ));
         }
 
         // Probe ALL candidates concurrently — no sequential bottleneck
@@ -223,15 +188,19 @@ impl ProxyManager {
         );
 
         if working.is_empty() {
-            return Err("No working proxies after probing".to_string());
+            return Err(AppError::Internal(
+                "No working proxies after probing".to_string(),
+            ));
         }
 
         // Sort by ascending latency so the selector always shows best proxy first
         working.sort_by_key(|p| p.ping);
         {
-            let mut p = self.proxies.write().unwrap();
+            let mut p = self.proxies.write().await;
             *p = working;
-            let mut last = self.last_refresh.write().unwrap();
+        }
+        {
+            let mut last = self.last_refresh.write().await;
             *last = Some(Instant::now());
         }
 
@@ -352,15 +321,25 @@ impl ProxyManager {
 // ── Shared Twitch service state ────────────────────────────────────────────────
 
 pub struct TwitchService {
-    client: Client,
+    /// Specialized client with Android TV User-Agent for GQL and playback APIs
+    android_tv_client: Client,
+    /// Shared client for general API and OAuth requests (Twitch Helix, token exchange, etc.)
+    shared_client: Client,
     /// Automatic proxy manager
     proxy_manager: Arc<ProxyManager>,
     /// Cache for proxy clients (proxy_url -> Client)
     proxy_clients: Arc<tokio::sync::RwLock<HashMap<String, Client>>>,
-    /// General cache for Twitch API responses.
-    cache: Arc<TimedCache<Value>>,
+
+    // Specialized type-safe caches
+    user_cache: Cache<String, UserInfo>,
+    vod_cache: Cache<String, Vec<Vod>>,
+    live_stream_cache: Cache<String, Option<LiveStream>>,
+    live_page_cache: Cache<String, LiveStreamsPage>,
+    related_channels_cache: Cache<String, Vec<String>>,
+    generic_value_cache: Cache<String, Value>,
+
     /// Short-lived cache for variant proxy targets (UUID -> sanitized URL).
-    variant_cache: Arc<TimedCache<String>>,
+    variant_cache: Cache<String, String>,
 }
 
 impl Default for TwitchService {
@@ -374,33 +353,71 @@ const ANDROID_TV_CLIENT_ID: &str = "ue6666qo983tsx6so1t0vnawi233wa";
 
 impl TwitchService {
     pub fn new() -> Self {
+        let android_tv_client = Client::builder()
+            .user_agent(ANDROID_TV_UA)
+            .timeout(Duration::from_secs(15))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
+        let shared_client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
         Self {
-            client: Client::builder()
-                .user_agent(ANDROID_TV_UA)
-                .timeout(Duration::from_secs(15))
-                .build()
-                .expect("Failed to build HTTP client"),
+            android_tv_client,
+            shared_client,
             proxy_manager: Arc::new(ProxyManager::new()),
             proxy_clients: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
-            cache: Arc::new(TimedCache::new()),
-            variant_cache: Arc::new(TimedCache::new()),
+            user_cache: Cache::builder()
+                .max_capacity(500)
+                .time_to_live(Duration::from_secs(3600))
+                .build(),
+            vod_cache: Cache::builder()
+                .max_capacity(200)
+                .time_to_live(Duration::from_secs(600))
+                .build(),
+            live_stream_cache: Cache::builder()
+                .max_capacity(500)
+                .time_to_live(Duration::from_secs(20))
+                .build(),
+            live_page_cache: Cache::builder()
+                .max_capacity(100)
+                .time_to_live(Duration::from_secs(30))
+                .build(),
+            related_channels_cache: Cache::builder()
+                .max_capacity(200)
+                .time_to_live(Duration::from_secs(86400))
+                .build(),
+            generic_value_cache: Cache::builder()
+                .max_capacity(100)
+                .time_to_live(Duration::from_secs(120))
+                .build(),
+            variant_cache: Cache::builder()
+                .max_capacity(2000)
+                .time_to_live(Duration::from_secs(86400))
+                .build(),
         }
     }
 
-    pub fn get_all_proxies(&self) -> Vec<ProxyInfo> {
-        self.proxy_manager.get_all_proxies()
+    pub fn shared_client(&self) -> &Client {
+        &self.shared_client
     }
 
-    pub fn get_current_proxy(&self) -> Option<ProxyInfo> {
-        self.proxy_manager.get_current_proxy()
+    pub async fn get_all_proxies(&self) -> Vec<ProxyInfo> {
+        self.proxy_manager.get_all_proxies().await
+    }
+
+    pub async fn get_current_proxy(&self) -> Option<ProxyInfo> {
+        self.proxy_manager.get_current_proxy().await
     }
 
     pub fn refresh_adblock_proxy_state(&self) {
-        let proxy_manager = self.proxy_manager.clone();
         // try_lock: if a refresh is already in flight, skip — avoids N parallel scans
         // when the Settings page polls every 5 s.
-        if proxy_manager.refresh_lock.try_lock().is_ok() {
-            tokio::spawn(async move {
+        if let Ok(_lock) = self.proxy_manager.refresh_lock.try_lock() {
+            let proxy_manager = self.proxy_manager.clone();
+            async_runtime::spawn(async move {
                 let _ = proxy_manager.get_proxy("auto", None).await;
             });
         }
@@ -408,7 +425,7 @@ impl TwitchService {
 
     async fn get_client(&self, settings: &ExperienceSettings) -> Client {
         if !settings.adblock_enabled {
-            return self.client.clone();
+            return self.android_tv_client.clone();
         }
 
         let mode = settings.adblock_proxy_mode.as_deref().unwrap_or("auto");
@@ -417,7 +434,7 @@ impl TwitchService {
         let proxy_url = self.proxy_manager.get_proxy(mode, manual_url).await;
 
         let Some(proxy) = proxy_url else {
-            return self.client.clone();
+            return self.android_tv_client.clone();
         };
 
         {
@@ -432,54 +449,75 @@ impl TwitchService {
             return c.clone();
         }
 
-        let new_client = Client::builder()
+        let new_client = match Client::builder()
             .user_agent(ANDROID_TV_UA)
             .timeout(Duration::from_secs(15))
-            .proxy(reqwest::Proxy::all(&proxy).expect("Invalid proxy URL"))
+            .proxy(
+                reqwest::Proxy::all(&proxy).unwrap_or_else(|_| reqwest::Proxy::http("").unwrap()),
+            ) // Fallback if proxy url is invalid
             .build()
-            .unwrap_or_else(|_| self.client.clone());
+        {
+            Ok(c) => c,
+            Err(_) => self.android_tv_client.clone(),
+        };
 
         clients.insert(proxy, new_client.clone());
         new_client
     }
 
+    #[instrument(skip(self, settings), fields(proxy_id = %proxy_id))]
     pub async fn proxy_segment(
         &self,
         proxy_id: &str,
         settings: &ExperienceSettings,
-    ) -> Result<reqwest::Response, String> {
-        let target_url = resolve_variant_proxy_target(&self.variant_cache, proxy_id)?;
+    ) -> AppResult<reqwest::Response> {
+        debug!("Proxying media segment");
+        let target_url = resolve_variant_proxy_target(&self.variant_cache, proxy_id).await?;
 
         let client = self.get_client(settings).await;
 
-        client
-            .get(&target_url)
-            .send()
-            .await
-            .map_err(|e| e.to_string())
+        client.get(&target_url).send().await.map_err(|e| {
+            error!(error = %e, "Failed to proxy segment");
+            AppError::from(e)
+        })
+    }
+
+    pub async fn proxy_segment_url(
+        &self,
+        target_url: &str,
+        settings: &ExperienceSettings,
+    ) -> AppResult<reqwest::Response> {
+        debug!("Proxying media segment via direct URL query");
+        let target_url = validate_variant_target_url(target_url)?;
+        let client = self.get_client(settings).await;
+
+        client.get(&target_url).send().await.map_err(|e| {
+            error!(error = %e, "Failed to proxy segment by URL");
+            AppError::from(e)
+        })
     }
 
     // ── GQL helpers ──────────────────────────────────────────────────────────
 
-    async fn gql_post(&self, body: &str) -> Result<Value, String> {
+    async fn gql_post(&self, body: &str) -> AppResult<Value> {
         let resp = self
-            .client
+            .android_tv_client
             .post("https://gql.twitch.tv/gql")
             .header("Client-Id", ANDROID_TV_CLIENT_ID)
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .body(body.to_string())
             .send()
-            .await
-            .map_err(|e| format!("request failed: {e}"))?;
+            .await?;
 
         if !resp.status().is_success() {
-            return Err(format!("Twitch API HTTP {}", resp.status()));
+            return Err(AppError::TwitchApi(format!(
+                "Twitch API HTTP {}",
+                resp.status()
+            )));
         }
 
-        resp.json::<Value>()
-            .await
-            .map_err(|e| format!("JSON parse error: {e}"))
+        resp.json::<Value>().await.map_err(AppError::from)
     }
 }
 
@@ -525,15 +563,15 @@ fn get_watch_weight(entry: &HistoryEntry) -> f64 {
     clamp(entry.timecode / entry.duration, 0.05, 1.0)
 }
 
-fn parse_vod_url_info(seek_previews_url: &str) -> Result<(String, String), String> {
+fn parse_vod_url_info(seek_previews_url: &str) -> AppResult<(String, String)> {
     let after_scheme = seek_previews_url
         .find("//")
         .map(|i| &seek_previews_url[i + 2..])
-        .ok_or_else(|| "No '//' found in URL".to_string())?;
+        .ok_or_else(|| AppError::BadRequest("No '//' found in URL".to_string()))?;
 
     let domain_end = after_scheme
         .find('/')
-        .ok_or_else(|| "No path separator found".to_string())?;
+        .ok_or_else(|| AppError::BadRequest("No path separator found".to_string()))?;
     let domain = after_scheme[..domain_end].to_string();
     let path = &after_scheme[domain_end..];
 
@@ -541,15 +579,15 @@ fn parse_vod_url_info(seek_previews_url: &str) -> Result<(String, String), Strin
     let storyboard_idx = parts
         .iter()
         .position(|p| p.contains("storyboards"))
-        .ok_or_else(|| "Cannot find storyboards in URL".to_string())?;
+        .ok_or_else(|| AppError::BadRequest("Cannot find storyboards in URL".to_string()))?;
 
     if storyboard_idx == 0 {
-        return Err("storyboards at root".to_string());
+        return Err(AppError::BadRequest("storyboards at root".to_string()));
     }
 
     let vod_special_id = parts[storyboard_idx - 1].to_string();
     if vod_special_id.is_empty() {
-        return Err("Empty vodSpecialID".to_string());
+        return Err(AppError::BadRequest("Empty vodSpecialID".to_string()));
     }
 
     Ok((domain, vod_special_id))
@@ -577,11 +615,14 @@ fn build_stream_url(
 
 // ── Variant proxy validation ──────────────────────────────────────────────────
 
-fn validate_variant_target_url(url: &str) -> Result<String, String> {
-    let parsed = reqwest::Url::parse(url).map_err(|_| "Invalid URL".to_string())?;
+fn validate_variant_target_url(url: &str) -> AppResult<String> {
+    let parsed =
+        reqwest::Url::parse(url).map_err(|_| AppError::BadRequest("Invalid URL".to_string()))?;
 
     if parsed.scheme() != "https" {
-        return Err("Only HTTPS URLs are allowed".to_string());
+        return Err(AppError::BadRequest(
+            "Only HTTPS URLs are allowed".to_string(),
+        ));
     }
 
     let hostname = parsed.host_str().unwrap_or("").to_lowercase();
@@ -593,7 +634,7 @@ fn validate_variant_target_url(url: &str) -> Result<String, String> {
         || allowed_suffixes.iter().any(|s| hostname.ends_with(s));
 
     if !is_allowed {
-        return Err(format!("Disallowed host: {hostname}"));
+        return Err(AppError::BadRequest(format!("Disallowed host: {hostname}")));
     }
 
     let path = parsed.path().to_lowercase();
@@ -609,7 +650,7 @@ fn validate_variant_target_url(url: &str) -> Result<String, String> {
     .any(|ext| path.ends_with(ext));
 
     if !is_live_hls && !is_vod_path && !is_chunked && !is_m3u8 && !is_media_segment {
-        return Err("Disallowed target path".to_string());
+        return Err(AppError::BadRequest("Disallowed target path".to_string()));
     }
 
     let allowed_params: std::collections::HashSet<&str> = [
@@ -661,12 +702,7 @@ fn urlencoding_simple(s: &str) -> String {
     out
 }
 
-fn rewrite_tag_uri_with_proxy(
-    line: &str,
-    base_url: &str,
-    variant_cache: &TimedCache<String>,
-    token: &str,
-) -> String {
+async fn rewrite_tag_uri_with_proxy(line: &str, base_url: &str, token: &str) -> String {
     if !line.contains("URI=\"") {
         return line.to_string();
     }
@@ -691,12 +727,11 @@ fn rewrite_tag_uri_with_proxy(
                     format!("{base_url}{uri}")
                 };
 
-                let rewritten = match register_variant_proxy_target(variant_cache, &abs_url) {
-                    Ok(proxy_id) => format!(
-                        "/api/stream/variant.ts?id={}&t={}",
-                        urlencoding_simple(&proxy_id),
-                        token
-                    ),
+                let rewritten = match validate_variant_target_url(&abs_url) {
+                    Ok(sanitized) => {
+                        let encoded = urlencoding::encode(&sanitized);
+                        format!("/api/stream/variant.ts?url={encoded}&t={}", token)
+                    }
                     Err(_) => abs_url,
                 };
 
@@ -756,43 +791,49 @@ async fn is_valid_quality(client: &Client, url: &str) -> Option<String> {
 
 // ── Variant proxy storage helpers ────────────────────────────────────────────
 
-fn register_variant_proxy_target(
-    variant_cache: &TimedCache<String>,
+async fn register_variant_proxy_target(
+    variant_cache: &Cache<String, String>,
     target_url: &str,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let sanitized = validate_variant_target_url(target_url)?;
     let proxy_id = Uuid::new_v4().to_string();
-    variant_cache.set(
-        format!("variant_proxy_{proxy_id}"),
-        sanitized,
-        3600 * 24, // Keep for 24 hours to prevent mid-stream expiration
-    );
+    variant_cache
+        .insert(format!("variant_proxy_{proxy_id}"), sanitized)
+        .await;
     Ok(proxy_id)
 }
 
-fn resolve_variant_proxy_target(
-    variant_cache: &TimedCache<String>,
+static RE_UUID_V4: Lazy<regex::Regex> = Lazy::new(|| {
+    regex::Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+        .unwrap()
+});
+
+static RE_TWITCH_LOGIN: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"^[a-z0-9_]{2,25}$").unwrap());
+
+static RE_VOD_ID_SAFE: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
+
+async fn resolve_variant_proxy_target(
+    variant_cache: &Cache<String, String>,
     proxy_id: &str,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let normalized = proxy_id.trim();
-    let uuid_re = regex::Regex::new(
-        r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-    )
-    .unwrap();
-    if !uuid_re.is_match(normalized) {
-        return Err("Invalid variant proxy id".to_string());
+    if !RE_UUID_V4.is_match(normalized) {
+        return Err(AppError::BadRequest("Invalid variant proxy id".to_string()));
     }
 
     variant_cache
         .get(&format!("variant_proxy_{normalized}"))
-        .ok_or_else(|| "Variant proxy target not found or expired".to_string())
+        .await
+        .ok_or_else(|| AppError::NotFound("Variant proxy target not found or expired".to_string()))
 }
 
-fn rewrite_master_with_proxy(
+async fn rewrite_master_with_proxy(
     master: &str,
     _host: &str,
     source_master_url: &str,
-    variant_cache: &TimedCache<String>,
+    variant_cache: &Cache<String, String>,
     token: &str,
 ) -> String {
     let origin = extract_origin(source_master_url);
@@ -819,15 +860,15 @@ fn rewrite_master_with_proxy(
                     if let Some(end_offset) = new_line[abs_start..].find('"') {
                         let uri = &new_line[abs_start..abs_start + end_offset];
                         let abs_url = resolve_url(uri, &origin, source_master_url);
-                        let proxy_url = match register_variant_proxy_target(variant_cache, &abs_url)
-                        {
-                            Ok(pid) => format!(
-                                "/api/stream/variant.m3u8?id={}&t={}",
-                                urlencoding_simple(&pid),
-                                token
-                            ),
-                            Err(_) => abs_url.clone(),
-                        };
+                        let proxy_url =
+                            match register_variant_proxy_target(variant_cache, &abs_url).await {
+                                Ok(pid) => format!(
+                                    "/api/stream/variant.m3u8?id={}&t={}",
+                                    urlencoding_simple(&pid),
+                                    token
+                                ),
+                                Err(_) => abs_url.into_owned(),
+                            };
                         result.push_str(&new_line[cursor..abs_start]);
                         result.push_str(&proxy_url);
                         cursor = abs_start + end_offset;
@@ -842,7 +883,7 @@ fn rewrite_master_with_proxy(
             }
         } else if !line.starts_with('#') {
             let abs_url = resolve_url(&line, &origin, source_master_url);
-            if let Ok(proxy_id) = register_variant_proxy_target(variant_cache, &abs_url) {
+            if let Ok(proxy_id) = register_variant_proxy_target(variant_cache, &abs_url).await {
                 *line_entry = format!(
                     "/api/stream/variant.m3u8?id={}&t={}",
                     urlencoding_simple(&proxy_id),
@@ -1159,9 +1200,20 @@ impl TwitchService {
         languages: Option<Vec<String>>,
         first: usize,
     ) -> Vec<Vod> {
+        let cache_key = format!(
+            "game_vods_{}_{:?}_{}",
+            create_simple_hash(game_name),
+            languages,
+            first
+        );
+        if let Some(cached) = self.vod_cache.get(&cache_key).await {
+            return cached;
+        }
+
         let lang_filter = languages
+            .as_ref()
             .map(|langs| {
-                let json = serde_json::to_string(&langs).unwrap_or_default();
+                let json = serde_json::to_string(langs).unwrap_or_default();
                 format!(", languages: {json}")
             })
             .unwrap_or_default();
@@ -1173,25 +1225,29 @@ impl TwitchService {
             lang_filter
         );
 
-        let Ok(data) = self.gql_post(&query).await else {
-            return vec![];
+        let result = match self.gql_post(&query).await {
+            Ok(data) => data["data"]["game"]["videos"]["edges"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|e| {
+                            let vod = serde_json::from_value::<Vod>(e["node"].clone()).ok()?;
+                            if vod.is_valid() {
+                                Some(vod)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            Err(_) => vec![],
         };
 
-        data["data"]["game"]["videos"]["edges"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|e| {
-                        let vod = serde_json::from_value::<Vod>(e["node"].clone()).ok()?;
-                        if vod.is_valid() {
-                            Some(vod)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
+        if !result.is_empty() {
+            self.vod_cache.insert(cache_key, result.clone()).await;
+        }
+        result
     }
 
     /// Paginated category VODs: returns (vods, next_cursor, has_more)
@@ -1331,10 +1387,10 @@ impl TwitchService {
         self.fetch_watched_vod_metadata(&vod_ids).await
     }
 
-    pub async fn fetch_top_live_categories(&self) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn fetch_top_live_categories(&self) -> AppResult<Vec<serde_json::Value>> {
         let cache_key = "top_live_categories".to_string();
-        if let Some(cached) = self.cache.get(&cache_key) {
-            return serde_json::from_value(cached).map_err(|e| e.to_string());
+        if let Some(cached) = self.generic_value_cache.get(&cache_key).await {
+            return serde_json::from_value(cached).map_err(AppError::from);
         }
 
         let body = r#"{"query":"query { topGames(first: 5) { edges { node { id name boxArtURL(width: 80, height: 107) } } } }"}"#.to_string();
@@ -1360,7 +1416,7 @@ impl TwitchService {
             .unwrap_or_default();
 
         let val = serde_json::to_value(&categories).unwrap_or_default();
-        self.cache.set(cache_key, val, 120);
+        self.generic_value_cache.insert(cache_key, val).await;
         Ok(categories)
     }
 
@@ -1369,7 +1425,7 @@ impl TwitchService {
         category_name: &str,
         first: usize,
         after: Option<&str>,
-    ) -> Result<LiveStreamsPage, String> {
+    ) -> AppResult<LiveStreamsPage> {
         let safe_first = first.clamp(4, 48);
         let safe_after = after.unwrap_or("").trim().to_string();
         let escaped_name = gql_escape(category_name);
@@ -1383,8 +1439,8 @@ impl TwitchService {
             }
         );
 
-        if let Some(cached) = self.cache.get(&cache_key) {
-            return serde_json::from_value(cached).map_err(|e| e.to_string());
+        if let Some(cached) = self.live_page_cache.get(&cache_key).await {
+            return Ok(cached);
         }
 
         let pagination = if safe_after.is_empty() {
@@ -1464,8 +1520,7 @@ impl TwitchService {
             has_more: has_next && last_cursor.is_some(),
         };
 
-        let val = serde_json::to_value(&page).unwrap_or_default();
-        self.cache.set(cache_key, val, 25);
+        self.live_page_cache.insert(cache_key, page.clone()).await;
         Ok(page)
     }
 
@@ -1473,13 +1528,13 @@ impl TwitchService {
         &self,
         query: &str,
         first: usize,
-    ) -> Result<LiveStreamsPage, String> {
+    ) -> AppResult<LiveStreamsPage> {
         let safe_first = first.clamp(4, 48);
         let escaped_q = gql_escape(query);
         let cache_key = format!("live_search_{}_{}", create_simple_hash(query), safe_first);
 
-        if let Some(cached) = self.cache.get(&cache_key) {
-            return serde_json::from_value(cached).map_err(|e| e.to_string());
+        if let Some(cached) = self.live_page_cache.get(&cache_key).await {
+            return Ok(cached);
         }
 
         // Search by category name (game streams) + channel name search in parallel
@@ -1601,15 +1656,14 @@ impl TwitchService {
             next_cursor: None,
             items,
         };
-        let val = serde_json::to_value(&page).unwrap_or_default();
-        self.cache.set(cache_key, val, 30);
+        self.live_page_cache.insert(cache_key, page.clone()).await;
         Ok(page)
     }
 
-    pub async fn fetch_user_info(&self, username: &str) -> Result<UserInfo, String> {
+    pub async fn fetch_user_info(&self, username: &str) -> AppResult<UserInfo> {
         let cache_key = format!("user_{username}");
-        if let Some(cached) = self.cache.get(&cache_key) {
-            return serde_json::from_value(cached).map_err(|e| e.to_string());
+        if let Some(cached) = self.user_cache.get(&cache_key).await {
+            return Ok(cached);
         }
 
         let body = format!(
@@ -1618,21 +1672,20 @@ impl TwitchService {
         );
 
         let data = self.gql_post(&body).await?;
-        let user = data["data"]["user"].clone();
-        if user.is_null() {
-            return Err("User not found".to_string());
+        let user_val = data["data"]["user"].clone();
+        if user_val.is_null() {
+            return Err(AppError::NotFound("User not found".to_string()));
         }
 
-        self.cache.set(cache_key, user.clone(), 3600);
-        serde_json::from_value(user).map_err(|e| e.to_string())
+        let user: UserInfo = serde_json::from_value(user_val).map_err(AppError::from)?;
+        self.user_cache.insert(cache_key, user.clone()).await;
+        Ok(user)
     }
 
     pub async fn fetch_related_channels(&self, login: &str, first: usize) -> Vec<String> {
         let cache_key = format!("related_channels_{login}");
-        if let Some(cached) = self.cache.get(&cache_key) {
-            if let Ok(list) = serde_json::from_value::<Vec<String>>(cached) {
-                return list;
-            }
+        if let Some(cached) = self.related_channels_cache.get(&cache_key).await {
+            return cached;
         }
 
         let query = format!(
@@ -1655,19 +1708,17 @@ impl TwitchService {
             .unwrap_or_default();
 
         if !result.is_empty() {
-            self.cache.set(
-                cache_key,
-                serde_json::to_value(&result).unwrap_or_default(),
-                86400,
-            );
+            self.related_channels_cache
+                .insert(cache_key, result.clone())
+                .await;
         }
         result
     }
 
-    pub async fn fetch_user_vods(&self, username: &str) -> Result<Vec<Vod>, String> {
+    pub async fn fetch_user_vods(&self, username: &str) -> AppResult<Vec<Vod>> {
         let cache_key = format!("vods_{username}");
-        if let Some(cached) = self.cache.get(&cache_key) {
-            return serde_json::from_value(cached).map_err(|e| e.to_string());
+        if let Some(cached) = self.vod_cache.get(&cache_key).await {
+            return Ok(cached);
         }
 
         let body = format!(
@@ -1677,7 +1728,7 @@ impl TwitchService {
 
         let data = self.gql_post(&body).await?;
         if data["data"]["user"].is_null() {
-            return Err("User not found".to_string());
+            return Err(AppError::NotFound("User not found".to_string()));
         }
 
         let vods: Vec<Vod> = data["data"]["user"]["videos"]["edges"]
@@ -1696,26 +1747,19 @@ impl TwitchService {
             })
             .unwrap_or_default();
 
-        self.cache.set(
-            cache_key,
-            serde_json::to_value(&vods).unwrap_or_default(),
-            600,
-        );
+        self.vod_cache.insert(cache_key, vods.clone()).await;
         Ok(vods)
     }
 
-    pub async fn fetch_user_live_stream(
-        &self,
-        username: &str,
-    ) -> Result<Option<LiveStream>, String> {
+    pub async fn fetch_user_live_stream(&self, username: &str) -> AppResult<Option<LiveStream>> {
         let login = username.trim().to_lowercase();
         if login.is_empty() {
             return Ok(None);
         }
 
         let cache_key = format!("live_user_{login}");
-        if let Some(cached) = self.cache.get(&cache_key) {
-            return Ok(serde_json::from_value(cached).unwrap_or(None));
+        if let Some(cached) = self.live_stream_cache.get(&cache_key).await {
+            return Ok(cached);
         }
 
         let body = format!(
@@ -1727,7 +1771,7 @@ impl TwitchService {
         let user = &data["data"]["user"];
 
         if user.is_null() || data["data"]["user"]["stream"].is_null() {
-            self.cache.set(cache_key, serde_json::Value::Null, 25);
+            self.live_stream_cache.insert(cache_key, None).await;
             return Ok(None);
         }
 
@@ -1759,8 +1803,9 @@ impl TwitchService {
             },
         };
 
-        let val = serde_json::to_value(&live).unwrap_or_default();
-        self.cache.set(cache_key, val, 20);
+        self.live_stream_cache
+            .insert(cache_key, Some(live.clone()))
+            .await;
         Ok(Some(live))
     }
 
@@ -1768,13 +1813,12 @@ impl TwitchService {
         &self,
         logins: Vec<String>,
     ) -> HashMap<String, LiveStream> {
-        let login_re = regex::Regex::new(r"^[a-z0-9_]{2,25}$").unwrap();
         let normalized: Vec<String> = {
             let mut seen = std::collections::HashSet::new();
             logins
                 .into_iter()
                 .map(|l| l.trim().to_lowercase())
-                .filter(|l| !l.is_empty() && login_re.is_match(l) && seen.insert(l.clone()))
+                .filter(|l| !l.is_empty() && RE_TWITCH_LOGIN.is_match(l) && seen.insert(l.clone()))
                 .take(80)
                 .collect()
         };
@@ -1787,32 +1831,31 @@ impl TwitchService {
         sorted.sort();
         let cache_key = format!("live_status_{}", create_simple_hash(&sorted.join("|")));
 
-        if let Some(cached) = self.cache.get(&cache_key) {
+        if let Some(cached) = self.generic_value_cache.get(&cache_key).await {
             return serde_json::from_value(cached).unwrap_or_default();
         }
 
-        let handles: Vec<_> = normalized
-            .iter()
-            .map(|login| {
-                let svc = self.clone_for_spawn();
-                let login = login.clone();
-                tokio::spawn(async move { svc.fetch_user_live_stream(&login).await })
-            })
-            .collect();
-
         let mut result: HashMap<String, LiveStream> = HashMap::new();
-        for (login, handle) in normalized.iter().zip(handles) {
-            if let Ok(Ok(Some(stream))) = handle.await {
+        let mut futures = Vec::new();
+
+        for login in &normalized {
+            futures.push(self.fetch_user_live_stream(login));
+        }
+
+        let results = futures::future::join_all(futures).await;
+
+        for (login, res) in normalized.iter().zip(results) {
+            if let Ok(Some(stream)) = res {
                 result.insert(login.clone(), stream);
             }
         }
 
         let val = serde_json::to_value(&result).unwrap_or_default();
-        self.cache.set(cache_key, val, 18);
+        self.generic_value_cache.insert(cache_key, val).await;
         result
     }
 
-    pub async fn search_channels(&self, query: &str) -> Result<Vec<UserInfo>, String> {
+    pub async fn search_channels(&self, query: &str) -> AppResult<Vec<UserInfo>> {
         let body = format!(
             r#"{{"query":"query {{ searchFor(userQuery: \"{}\", platform: \"web\") {{ channels {{ edges {{ item {{ ... on User {{ id, login, displayName, profileImageURL(width: 300) }} }} }} }} }} }}"}}"#,
             gql_escape(query)
@@ -1832,7 +1875,7 @@ impl TwitchService {
         Ok(users)
     }
 
-    pub async fn search_global_content(&self, query: &str) -> Result<Value, String> {
+    pub async fn search_global_content(&self, query: &str) -> AppResult<Value> {
         let body = format!(
             r#"{{"query":"query {{ searchFor(userQuery: \"{}\", platform: \"web\") {{ channels {{ edges {{ item {{ ... on User {{ id, login, displayName, profileImageURL(width: 300), stream {{ id title viewersCount previewImageURL(width: 640, height: 360) }}, __typename }} }} }} }}, games {{ edges {{ item {{ ... on Game {{ id, name, boxArtURL(width: 150, height: 200), __typename }} }} }} }} }} }}"}}"#,
             gql_escape(query)
@@ -1854,7 +1897,7 @@ impl TwitchService {
         Ok(Value::Array(combined))
     }
 
-    pub async fn fetch_video_chat(&self, vod_id: &str, offset: f64) -> Result<Value, String> {
+    pub async fn fetch_video_chat(&self, vod_id: &str, offset: f64) -> AppResult<Value> {
         let body = format!(
             r#"{{"query":"query {{ video(id: \"{}\") {{ comments(contentOffsetSeconds: {}) {{ edges {{ node {{ id, commenter {{ displayName, login, profileImageURL(width: 50) }}, message {{ fragments {{ text, emote {{ id, setID }} }} }}, contentOffsetSeconds, createdAt }} }}, pageInfo {{ hasNextPage }} }} }} }}"}}"#,
             gql_escape(vod_id),
@@ -1878,7 +1921,7 @@ impl TwitchService {
         }))
     }
 
-    pub async fn fetch_video_markers(&self, vod_id: &str) -> Result<Value, String> {
+    pub async fn fetch_video_markers(&self, vod_id: &str) -> AppResult<Value> {
         let body = format!(
             r#"{{"query":"query {{ video(id: \"{}\") {{ markers {{ id, displayTime, description, type }} }} }}"}}"#,
             gql_escape(vod_id)
@@ -1896,7 +1939,7 @@ impl TwitchService {
         &self,
         first: usize,
         after: Option<&str>,
-    ) -> Result<LiveStreamsPage, String> {
+    ) -> AppResult<LiveStreamsPage> {
         let safe_first = first.clamp(8, 48);
         let safe_after = after.unwrap_or("").trim().to_string();
         let cache_key = format!(
@@ -1908,8 +1951,8 @@ impl TwitchService {
             }
         );
 
-        if let Some(cached) = self.cache.get(&cache_key) {
-            return serde_json::from_value(cached).map_err(|e| e.to_string());
+        if let Some(cached) = self.live_page_cache.get(&cache_key).await {
+            return Ok(cached);
         }
 
         let pagination = if safe_after.is_empty() {
@@ -1993,22 +2036,17 @@ impl TwitchService {
             has_more: has_next && last_cursor.is_some(),
         };
 
-        let val = serde_json::to_value(&page).unwrap_or_default();
-        self.cache.set(cache_key, val, 25);
+        self.live_page_cache.insert(cache_key, page.clone()).await;
         Ok(page)
     }
 
     pub async fn fetch_trending_vods(
         &self,
-        history: &HashMap<String, HistoryEntry>,
-        subs: &[SubEntry],
-    ) -> Result<Vec<Vod>, String> {
-        let mut history_by_time: Vec<&HistoryEntry> = history.values().collect();
-        history_by_time.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-        history_by_time.truncate(35);
-
+        history: Vec<HistoryEntry>,
+        subs: Vec<String>,
+    ) -> AppResult<Vec<Vod>> {
         let fingerprint = create_simple_hash(&{
-            let h: Vec<_> = history_by_time
+            let h: Vec<_> = history
                 .iter()
                 .map(|e| {
                     format!(
@@ -2021,7 +2059,7 @@ impl TwitchService {
                 })
                 .collect();
             let s_subs: Vec<_> = {
-                let mut v: Vec<_> = subs.iter().map(|s| s.login.to_lowercase()).collect();
+                let mut v: Vec<_> = subs.iter().map(|s| s.to_lowercase()).collect();
                 v.sort();
                 v
             };
@@ -2029,18 +2067,35 @@ impl TwitchService {
         });
 
         let cache_key = format!("trending_vods_{fingerprint}");
-        if let Some(cached) = self.cache.get(&cache_key) {
-            return serde_json::from_value(cached).map_err(|e| e.to_string());
+        if let Some(cached) = self.vod_cache.get(&cache_key).await {
+            return Ok(cached);
         }
 
-        let watched_ids: Vec<String> = history_by_time.iter().map(|e| e.vod_id.clone()).collect();
+        let watched_ids: Vec<String> = history.iter().map(|e| e.vod_id.clone()).collect();
         let watched_vods = self.fetch_watched_vod_metadata(&watched_ids).await;
-        let profile = build_preference_profile(history, &watched_vods, subs);
-        let subs_set: HashSet<String> = subs.iter().map(|s| s.login.to_lowercase()).collect();
+
+        // Convert optimized inputs back to what build_preference_profile expects if needed,
+        // or update build_preference_profile.
+        // Looking at build_preference_profile, it expects &HashMap and &[SubEntry].
+        // I will update build_preference_profile to be more flexible or adapt here.
+
+        let history_map: HashMap<String, HistoryEntry> =
+            history.into_iter().map(|e| (e.vod_id.clone(), e)).collect();
+        let subs_entries: Vec<SubEntry> = subs
+            .iter()
+            .map(|login| SubEntry {
+                login: login.clone(),
+                display_name: String::new(),
+                profile_image_url: String::new(),
+            })
+            .collect();
+
+        let profile = build_preference_profile(&history_map, &watched_vods, &subs_entries);
+        let subs_set: HashSet<String> = subs.iter().map(|s| s.to_lowercase()).collect();
 
         // ── Step 1: Expand source candidates ──
 
-        // Top 5 games (increased from 3)
+        // Top 5 games
         let mut top_games: Vec<String> = {
             let mut entries: Vec<_> = profile.game_scores.iter().collect();
             entries.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -2059,7 +2114,7 @@ impl TwitchService {
             entries.iter().take(5).map(|(k, _)| (*k).clone()).collect()
         };
 
-        // Fetch related channels for top channels to provide variety ("If you like A, you might like B")
+        // Fetch related channels for top channels
         let mut related_futures = Vec::new();
         for channel in &top_channels {
             related_futures.push(self.fetch_related_channels(channel, 3));
@@ -2079,21 +2134,17 @@ impl TwitchService {
 
         let mut game_futures = Vec::new();
         for game in &top_games {
-            // Fetch more VODs per game (40 instead of 35)
             game_futures.push(self.fetch_game_vods(game, Some(vec!["fr".to_string()]), 40));
             game_futures.push(self.fetch_game_vods(game, None, 40));
         }
 
         let mut channels_to_fetch: HashSet<String> = HashSet::new();
-        // User's subs (up to 20)
         for sub in subs.iter().take(20) {
-            channels_to_fetch.insert(sub.login.to_lowercase());
+            channels_to_fetch.insert(sub.to_lowercase());
         }
-        // User's top watched channels
         for ch in &top_channels {
             channels_to_fetch.insert(ch.clone());
         }
-        // Discovered related channels
         for ch in &related_channels_set {
             channels_to_fetch.insert(ch.clone());
         }
@@ -2135,10 +2186,9 @@ impl TwitchService {
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        // Increase truncation limit to allow more candidates to survive for the diversity pass
         scored.truncate(400);
 
-        // Diversity pass: cap same-channel VODs to avoid feed monopolisation
+        // Diversity pass
         {
             let mut channel_count: HashMap<String, usize> = HashMap::new();
             scored.retain(|sv| {
@@ -2153,7 +2203,6 @@ impl TwitchService {
                     subs_set.contains(&login) || profile.channel_scores.contains_key(&login);
                 let is_related = related_channels_set.contains(&login);
 
-                // Subs/favorites get 4 slots; related channels 3; others 2
                 let max_slots = if is_favorite {
                     4
                 } else if is_related {
@@ -2188,8 +2237,7 @@ impl TwitchService {
 
         let feed = interleave_localized_feed(scored, foreign_ratio, 120);
 
-        let val = serde_json::to_value(&feed).unwrap_or_default();
-        self.cache.set(cache_key, val, 1800); // 30 mins cache
+        self.vod_cache.insert(cache_key, feed.clone()).await;
         Ok(feed)
     }
 
@@ -2198,33 +2246,29 @@ impl TwitchService {
         vod_id: &str,
         _host: &str,
         token: &str,
-    ) -> Result<String, String> {
+    ) -> AppResult<String> {
         let safe_vod_id = gql_escape(vod_id.trim());
-        let vod_id_re = regex::Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap();
-        if !vod_id_re.is_match(vod_id.trim()) {
-            return Err("Invalid VOD identifier".to_string());
+        if !RE_VOD_ID_SAFE.is_match(vod_id.trim()) {
+            return Err(AppError::BadRequest("Invalid VOD identifier".to_string()));
         }
 
         let body = format!(
             r#"{{"query":"query {{ video(id: \"{safe_vod_id}\") {{ broadcastType, createdAt, seekPreviewsURL, owner {{ login }} }} }}"}}"#
         );
 
-        let data = self
-            .gql_post(&body)
-            .await
-            .map_err(|e| format!("Twitch API error: {e}"))?;
+        let data = self.gql_post(&body).await?;
 
         let vod_data = &data["data"]["video"];
         if vod_data.is_null() {
-            return Err("Video not found".to_string());
+            return Err(AppError::NotFound("Video not found".to_string()));
         }
 
         let seek_previews_url = vod_data["seekPreviewsURL"]
             .as_str()
-            .ok_or("Missing seekPreviewsURL")?;
+            .ok_or_else(|| AppError::Internal("Missing seekPreviewsURL".to_string()))?;
         let channel_login = vod_data["owner"]["login"]
             .as_str()
-            .ok_or("Missing owner.login")?;
+            .ok_or_else(|| AppError::Internal("Missing owner.login".to_string()))?;
         let broadcast_type = vod_data["broadcastType"]
             .as_str()
             .unwrap_or("archive")
@@ -2262,7 +2306,7 @@ impl TwitchService {
                 channel_login,
             );
 
-            if let Some(codec) = is_valid_quality(&self.client, &stream_url).await {
+            if let Some(codec) = is_valid_quality(&self.android_tv_client, &stream_url).await {
                 let quality = if *res_key == "chunked" {
                     let height = resolution.split('x').nth(1).unwrap_or("1080");
                     format!("{height}p")
@@ -2271,11 +2315,11 @@ impl TwitchService {
                 };
                 let enabled = if *res_key == "chunked" { "YES" } else { "NO" };
 
-                let proxy_id = match register_variant_proxy_target(&self.variant_cache, &stream_url)
-                {
-                    Ok(id) => id,
-                    Err(_) => continue,
-                };
+                let proxy_id =
+                    match register_variant_proxy_target(&self.variant_cache, &stream_url).await {
+                        Ok(id) => id,
+                        Err(_) => continue,
+                    };
                 let proxy_url = format!(
                     "/api/stream/variant.m3u8?id={}&t={}",
                     urlencoding_simple(&proxy_id),
@@ -2298,7 +2342,7 @@ impl TwitchService {
         _host: &str,
         settings: &ExperienceSettings,
         server_token: &str,
-    ) -> Result<String, String> {
+    ) -> AppResult<String> {
         let token = self
             .fetch_live_playback_token(channel_login, settings)
             .await?;
@@ -2317,10 +2361,13 @@ impl TwitchService {
 
         let client = self.get_client(settings).await;
 
-        // Try via proxy first; if it fails, retry direct to avoid playback breakage.
-        let master =
-            get_text_with_direct_fallback(&client, &self.client, &source_url, "live master")
-                .await?;
+        let master = get_text_with_direct_fallback(
+            &client,
+            &self.android_tv_client,
+            &source_url,
+            "live master",
+        )
+        .await?;
 
         Ok(rewrite_master_with_proxy(
             &master,
@@ -2328,16 +2375,17 @@ impl TwitchService {
             &source_url,
             &self.variant_cache,
             server_token,
-        ))
+        )
+        .await)
     }
 
     async fn fetch_live_playback_token(
         &self,
         channel_login: &str,
         settings: &ExperienceSettings,
-    ) -> Result<(String, String), String> {
+    ) -> AppResult<(String, String)> {
         let platform = if settings.adblock_enabled {
-            "ios" // iOS platform avoids many hardcoded ads
+            "ios"
         } else {
             "web"
         };
@@ -2351,7 +2399,6 @@ impl TwitchService {
             "variables": { "login": channel_login }
         });
 
-        // Try with adblock proxy first
         let client = self.get_client(settings).await;
 
         let make_req = |c: &Client| {
@@ -2373,25 +2420,17 @@ impl TwitchService {
             if let Ok(resp) = make_req(&client).send().await {
                 if resp.status().is_success() {
                     if let Ok(json) = resp.json::<Value>().await {
-                        // Ensure proxy didn't return a valid JSON format but denied access
                         if !json["data"]["streamPlaybackAccessToken"].is_null() {
                             data_opt = Some(json);
                         }
                     }
                 }
             }
-
-            if data_opt.is_none() {
-                eprintln!("[adblock] Proxy failed to fetch valid GQL token (Connection reset or Token denied), falling back to direct connection...");
-            }
         }
 
-        // Fallback or Direct Mode (always runs if adblock is off OR if proxy failed)
         let data = match data_opt {
             Some(d) => d,
             None => {
-                // IMPORTANT: When falling back, we must change platform back to web
-                // because iOS requests from direct IPs are often blocked or flagged by Twitch.
                 let fallback_body = serde_json::json!({
                     "operationName": "PlaybackAccessToken_Template",
                     "query": "query PlaybackAccessToken_Template($login: String!) { streamPlaybackAccessToken(channelName: $login, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: \"site\"}) { value signature } }",
@@ -2399,47 +2438,49 @@ impl TwitchService {
                 });
 
                 let resp = self
-                    .client
+                    .android_tv_client
                     .post("https://gql.twitch.tv/gql")
                     .header("Client-Id", "kimne78kx3ncx6brgo4mv6wki5h1ko")
                     .header("X-Device-Id", &device_id)
                     .header("Client-Session-Id", &session_id)
                     .json(&fallback_body)
                     .send()
-                    .await
-                    .map_err(|e| e.to_string())?;
+                    .await?;
 
                 if !resp.status().is_success() {
-                    return Err(format!(
+                    return Err(AppError::Internal(format!(
                         "Failed to fetch live playback token ({})",
                         resp.status()
-                    ));
+                    )));
                 }
-                resp.json().await.map_err(|e| e.to_string())?
+                resp.json().await?
             }
         };
 
         let token = &data["data"]["streamPlaybackAccessToken"];
 
         if token.is_null() {
-            return Err("Missing streamPlaybackAccessToken in response".to_string());
+            return Err(AppError::Internal(
+                "Missing streamPlaybackAccessToken in response".to_string(),
+            ));
         }
 
-        // Sometimes the 'value' itself is an object (or string depending on endpoints), make sure we handle it robustly
         let value = if token["value"].is_string() {
-            token["value"].as_str().unwrap().to_string()
+            token["value"].as_str().unwrap_or_default().to_string()
         } else {
             token["value"].to_string()
         };
 
         let sig = if token["signature"].is_string() {
-            token["signature"].as_str().unwrap().to_string()
+            token["signature"].as_str().unwrap_or_default().to_string()
         } else {
             token["signature"].to_string()
         };
 
         if value.is_empty() || value == "null" || sig.is_empty() || sig == "null" {
-            return Err("Missing token value or signature".to_string());
+            return Err(AppError::Internal(
+                "Missing token value or signature".to_string(),
+            ));
         }
 
         Ok((value, sig))
@@ -2450,16 +2491,15 @@ impl TwitchService {
         proxy_id: &str,
         settings: &ExperienceSettings,
         token: &str,
-    ) -> Result<String, String> {
-        let target_url = resolve_variant_proxy_target(&self.variant_cache, proxy_id)?;
+    ) -> AppResult<String> {
+        let target_url = resolve_variant_proxy_target(&self.variant_cache, proxy_id).await?;
 
         let client = self.get_client(settings).await;
 
-        // Same resilience pattern as live master: fallback to direct on proxy errors.
         let mut body =
-            get_text_with_direct_fallback(&client, &self.client, &target_url, "variant").await?;
+            get_text_with_direct_fallback(&client, &self.android_tv_client, &target_url, "variant")
+                .await?;
 
-        // Always apply local filtering as a fallback protection even if proxy disabled
         body = filter_live_playlist(&body);
         body = body.replace("-unmuted", "-muted");
 
@@ -2469,52 +2509,34 @@ impl TwitchService {
             .unwrap_or(&target_url)
             .to_string();
 
-        let lines: Vec<String> = body
-            .split('\n')
-            .map(|line| {
-                let l = line.trim_end_matches('\r');
-                if l.is_empty() || l.starts_with('#') {
-                    // Rewrite URI="..." inside HLS tags through local proxy to avoid browser CORS hits.
-                    if l.contains("URI=\"") {
-                        return rewrite_tag_uri_with_proxy(
-                            l,
-                            &base_url,
-                            &self.variant_cache,
-                            token,
-                        );
-                    }
-                    return l.to_string();
-                }
-
-                // If it's a segment URL (not a tag)
-                let abs_url = if !l.starts_with("http") {
-                    format!("{base_url}{l}")
+        let mut lines = Vec::new();
+        for line in body.split('\n') {
+            let l = line.trim_end_matches('\r');
+            if l.is_empty() || l.starts_with('#') {
+                if l.contains("URI=\"") {
+                    lines.push(rewrite_tag_uri_with_proxy(l, &base_url, token).await);
                 } else {
-                    l.to_string()
-                };
-
-                // Register segment for proxying to ensure continuity of requests through the system
-                if let Ok(proxy_id) = register_variant_proxy_target(&self.variant_cache, &abs_url) {
-                    return format!(
-                        "/api/stream/variant.ts?id={}&t={}",
-                        urlencoding_simple(&proxy_id),
-                        token
-                    );
+                    lines.push(l.to_string());
                 }
+                continue;
+            }
 
-                abs_url
-            })
-            .collect();
+            let abs_url = if !l.starts_with("http") {
+                format!("{base_url}{l}")
+            } else {
+                l.to_string()
+            };
+
+            match validate_variant_target_url(&abs_url) {
+                Ok(sanitized) => {
+                    let encoded = urlencoding::encode(&sanitized);
+                    lines.push(format!("/api/stream/variant.ts?url={encoded}&t={}", token));
+                }
+                Err(_) => lines.push(abs_url),
+            }
+        }
 
         Ok(lines.join("\n"))
-    }
-
-    /// Helper: clone the Arc fields needed for spawning tasks.
-    fn clone_for_spawn(&self) -> TwitchServiceHandle {
-        TwitchServiceHandle {
-            client: self.client.clone(),
-            cache: self.cache.clone(),
-        }
     }
 }
 
@@ -2531,7 +2553,6 @@ fn filter_live_playlist(body: &str) -> String {
     for line in lines {
         let l = line.trim();
 
-        // Comprehensive ad tag detection
         if l.starts_with("#EXT-X-TWITCH-AD")
             || l.starts_with("#EXT-X-AD")
             || l.starts_with("#EXT-X-TWITCH-CONTENT-TYPE:ad")
@@ -2541,26 +2562,21 @@ fn filter_live_playlist(body: &str) -> String {
             continue;
         }
 
-        // If we are in an ad block, skip everything until the next valid content segment
         if skipping_ad {
             if l.starts_with("#EXT-X-TWITCH-CONTENT-TYPE:live") {
                 skipping_ad = false;
-                // Add discontinuity tag so the HLS player doesn't freeze when timestamps jump
                 filtered.push("#EXT-X-DISCONTINUITY");
                 filtered.push(line);
                 continue;
             }
             if !l.starts_with('#') {
-                // This is likely an ad segment URL, skip it
                 continue;
             }
             if l.starts_with("#EXTINF") || l.starts_with("#EXT-X-DISCONTINUITY") {
-                // Skip ad metadata
                 continue;
             }
         }
 
-        // Remove other tracking tags
         if l.starts_with("#EXT-X-TWITCH-TOTAL-AD-DURATION")
             || l.starts_with("#EXT-X-TWITCH-ELAPSED-SECS")
             || l.starts_with("#EXT-X-TWITCH-ROUTING-ID")
@@ -2575,81 +2591,6 @@ fn filter_live_playlist(body: &str) -> String {
     filtered.join("\n")
 }
 
-/// Minimal handle used for spawned tasks (avoids non-Clone reqwest::Client wrapping issues).
-struct TwitchServiceHandle {
-    client: Client,
-    cache: Arc<TimedCache<Value>>,
-}
-
-impl TwitchServiceHandle {
-    async fn fetch_user_live_stream(&self, login: &str) -> Result<Option<LiveStream>, String> {
-        let cache_key = format!("live_user_{login}");
-        if let Some(cached) = self.cache.get(&cache_key) {
-            return Ok(serde_json::from_value(cached).unwrap_or(None));
-        }
-
-        let body = format!(
-            r#"{{"query":"query {{ user(login: \"{}\") {{ id login displayName profileImageURL(width: 70) stream {{ id title viewersCount previewImageURL(width: 640, height: 360) createdAt language game {{ id name boxArtURL(width: 110, height: 147) }} }} }} }}"}}"#,
-            gql_escape(login)
-        );
-
-        let resp = self
-            .client
-            .post("https://gql.twitch.tv/gql")
-            .header("Client-Id", "kimne78kx3ncx6brgo4mv6wki5h1ko")
-            .header("Accept", "application/json")
-            .header("Content-Type", "application/json")
-            .body(body)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-
-        if !resp.status().is_success() {
-            return Err(format!("HTTP {}", resp.status()));
-        }
-
-        let data: Value = resp.json().await.map_err(|e| e.to_string())?;
-        let user = &data["data"]["user"];
-        if user.is_null() || user["stream"].is_null() {
-            self.cache.set(cache_key, Value::Null, 25);
-            return Ok(None);
-        }
-
-        let stream = &user["stream"];
-        let live = LiveStream {
-            id: stream["id"].as_str().unwrap_or("").to_string(),
-            title: stream["title"]
-                .as_str()
-                .unwrap_or("Live stream")
-                .to_string(),
-            preview_image_url: stream["previewImageURL"].as_str().unwrap_or("").to_string(),
-            viewer_count: stream["viewersCount"].as_u64().unwrap_or(0),
-            language: stream["language"].as_str().map(|s| s.to_string()),
-            started_at: stream["createdAt"].as_str().unwrap_or("").to_string(),
-            broadcaster: LiveBroadcaster {
-                id: user["id"].as_str().unwrap_or("").to_string(),
-                login: user["login"].as_str().unwrap_or(login).to_string(),
-                display_name: user["displayName"].as_str().unwrap_or(login).to_string(),
-                profile_image_url: user["profileImageURL"].as_str().unwrap_or("").to_string(),
-            },
-            game: if stream["game"].is_null() {
-                None
-            } else {
-                Some(LiveGame {
-                    id: stream["game"]["id"].as_str().map(|s| s.to_string()),
-                    name: stream["game"]["name"].as_str().unwrap_or("").to_string(),
-                    box_art_url: stream["game"]["boxArtURL"].as_str().map(|s| s.to_string()),
-                })
-            },
-        };
-
-        let val = serde_json::to_value(&live).unwrap_or_default();
-        self.cache.set(cache_key, val, 20);
-        Ok(Some(live))
-    }
-}
-
-/// A minimal platform-independent random u32 using UUID entropy.
 fn rand_u32() -> u32 {
     let id = Uuid::new_v4();
     let bytes = id.as_bytes();

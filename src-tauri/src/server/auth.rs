@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
 use once_cell::sync::Lazy;
@@ -11,6 +12,7 @@ use axum::{
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use tracing::{info, instrument};
 
 use super::routes::ApiState;
 use super::types::SubEntry;
@@ -40,10 +42,15 @@ const SCOPES: &str = "user:read:follows user:write:chat";
 
 // ── In-memory OAuth pending state ──────────────────────────────────────────────
 
+pub struct PendingOAuth {
+    pub code_verifier: String,
+    pub created_at: u64,
+}
+
 #[derive(Clone)]
 pub struct OAuthStateStore {
-    /// Maps state token → code_verifier for in-flight OAuth requests.
-    pub pending: Arc<RwLock<HashMap<String, String>>>,
+    /// Maps state token → PendingOAuth for in-flight OAuth requests.
+    pub pending: Arc<RwLock<HashMap<String, PendingOAuth>>>,
 }
 
 impl Default for OAuthStateStore {
@@ -57,6 +64,17 @@ impl OAuthStateStore {
         Self {
             pending: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Remove entries older than 10 minutes.
+    pub async fn cleanup_expired(&self) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let mut pending = self.pending.write().await;
+        // Keep only those created within the last 600 seconds (10 mins)
+        pending.retain(|_, v| now.saturating_sub(v.created_at) < 600);
     }
 }
 
@@ -127,16 +145,25 @@ pub async fn handle_auth_start(State(state): State<ApiState>) -> Response {
         return client_not_configured();
     }
 
+    // Proactive cleanup
+    state.oauth.cleanup_expired().await;
+
     let state_token = random_string(32);
     let code_verifier = random_string(64);
     let challenge = pkce_challenge(&code_verifier);
 
-    state
-        .oauth
-        .pending
-        .write()
-        .await
-        .insert(state_token.clone(), code_verifier);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    state.oauth.pending.write().await.insert(
+        state_token.clone(),
+        PendingOAuth {
+            code_verifier,
+            created_at: now,
+        },
+    );
 
     let auth_url = format!(
         "https://id.twitch.tv/oauth2/authorize\
@@ -165,11 +192,19 @@ pub struct CallbackQuery {
     error_description: Option<String>,
 }
 
+use crate::server::error::{AppError, AppResult};
+
 /// GET /api/auth/twitch/callback  (Twitch redirects here after user approves)
+#[instrument(skip(state, q), fields(state_token = q.state))]
 pub async fn handle_auth_callback(
     Query(q): Query<CallbackQuery>,
     State(state): State<ApiState>,
 ) -> Response {
+    info!("Received Twitch OAuth callback");
+
+    // Proactive cleanup
+    state.oauth.cleanup_expired().await;
+
     if let Some(err) = q.error {
         let desc = q.error_description.unwrap_or_default();
         return close_tab_html(
@@ -187,7 +222,7 @@ pub async fn handle_auth_callback(
     let code_verifier = {
         let mut pending = state.oauth.pending.write().await;
         match pending.remove(&state_token) {
-            Some(v) => v,
+            Some(p) => p.code_verifier,
             None => {
                 return close_tab_html(
                     "État OAuth invalide ou expiré. Reconnecte-toi depuis les Settings.",
@@ -199,8 +234,8 @@ pub async fn handle_auth_callback(
     };
 
     // ── Exchange authorization code for access token ────────────────────────
-    let client = reqwest::Client::new();
-    let token_res = client
+    let client = state.twitch.shared_client().clone();
+    let token_res: Result<reqwest::Response, reqwest::Error> = client
         .post("https://id.twitch.tv/oauth2/token")
         .form(&[
             ("client_id", TWITCH_CLIENT_ID.as_str()),
@@ -236,7 +271,7 @@ pub async fn handle_auth_callback(
     };
 
     // ── Fetch user profile ──────────────────────────────────────────────────
-    let user_res = client
+    let user_res: Result<reqwest::Response, reqwest::Error> = client
         .get("https://api.twitch.tv/helix/users")
         .header("Authorization", format!("Bearer {access_token}"))
         .header("Client-Id", TWITCH_CLIENT_ID.as_str())
@@ -282,8 +317,8 @@ pub async fn handle_auth_callback(
     };
 
     // ── Persist ─────────────────────────────────────────────────────────────
-    state.history.set_twitch_token(Some(access_token)).await;
-    state
+    let _ = state.history.set_twitch_token(Some(access_token)).await;
+    let _ = state
         .history
         .update_twitch_account(
             user_id,
@@ -301,7 +336,13 @@ pub async fn handle_auth_callback(
                 tokio::spawn({
                     let state = state.clone();
                     async move {
-                        import_followed_channels(&token, &uid, &state).await;
+                        let _ = import_followed_channels(
+                            &token,
+                            &uid,
+                            state.twitch.shared_client(),
+                            &state,
+                        )
+                        .await;
                     }
                 });
             }
@@ -318,7 +359,7 @@ pub async fn handle_auth_callback(
 }
 
 /// GET /api/auth/twitch/status
-pub async fn handle_auth_status(State(state): State<ApiState>) -> Response {
+pub async fn handle_auth_status(State(state): State<ApiState>) -> impl IntoResponse {
     let settings = state.history.get_settings().await;
     let linked = settings
         .twitch_user_id
@@ -335,14 +376,13 @@ pub async fn handle_auth_status(State(state): State<ApiState>) -> Response {
         "userAvatar": settings.twitch_user_avatar,
         "importFollows": settings.twitch_import_follows,
     }))
-    .into_response()
 }
 
 /// DELETE /api/auth/twitch
-pub async fn handle_auth_unlink(State(state): State<ApiState>) -> Response {
-    state.history.set_twitch_token(None).await;
-    state.history.clear_twitch_account().await;
-    Json(serde_json::json!({ "ok": true })).into_response()
+pub async fn handle_auth_unlink(State(state): State<ApiState>) -> AppResult<Response> {
+    state.history.set_twitch_token(None).await?;
+    state.history.clear_twitch_account().await?;
+    Ok(Json(serde_json::json!({ "ok": true })).into_response())
 }
 
 #[derive(Deserialize)]
@@ -355,7 +395,7 @@ pub struct ImportFollowsBody {
 pub async fn handle_auth_import_follows(
     State(state): State<ApiState>,
     Json(body): Json<ImportFollowsBody>,
-) -> Response {
+) -> AppResult<Response> {
     let (token, user_id) = {
         let settings = state.history.get_settings().await;
         let token = state.history.get_twitch_token().await;
@@ -363,19 +403,18 @@ pub async fn handle_auth_import_follows(
     };
 
     let (Some(access_token), Some(uid)) = (token, user_id) else {
-        return (
-            axum::http::StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "Not linked to a Twitch account" })),
-        )
-            .into_response();
+        return Err(AppError::Unauthorized(
+            "Not linked to a Twitch account".to_string(),
+        ));
     };
 
     if body.save.unwrap_or(false) {
-        state.history.update_import_follows_setting(true).await;
+        state.history.update_import_follows_setting(true).await?;
     }
 
-    let imported = import_followed_channels(&access_token, &uid, &state).await;
-    Json(serde_json::json!({ "imported": imported })).into_response()
+    let imported =
+        import_followed_channels(&access_token, &uid, state.twitch.shared_client(), &state).await;
+    Ok(Json(serde_json::json!({ "imported": imported })).into_response())
 }
 
 /// PUT /api/auth/twitch/import-follows-setting
@@ -387,12 +426,12 @@ pub struct ImportFollowsSettingBody {
 pub async fn handle_auth_set_import_follows(
     State(state): State<ApiState>,
     Json(body): Json<ImportFollowsSettingBody>,
-) -> Response {
+) -> AppResult<Response> {
     state
         .history
         .update_import_follows_setting(body.enabled)
-        .await;
-    Json(serde_json::json!({ "ok": true })).into_response()
+        .await?;
+    Ok(Json(serde_json::json!({ "ok": true })).into_response())
 }
 
 // ── Follow importer ────────────────────────────────────────────────────────────
@@ -400,9 +439,9 @@ pub async fn handle_auth_set_import_follows(
 pub async fn import_followed_channels(
     access_token: &str,
     user_id: &str,
+    client: &reqwest::Client,
     state: &ApiState,
 ) -> usize {
-    let client = reqwest::Client::new();
     let mut cursor: Option<String> = None;
     // (broadcaster_id, login, display_name)
     let mut all_channels: Vec<(String, String, String)> = Vec::new();
@@ -505,7 +544,7 @@ pub async fn import_followed_channels(
 
         for (broadcaster_id, login, display_name) in chunk {
             let avatar = user_map.get(broadcaster_id).cloned().unwrap_or_default();
-            state
+            let _ = state
                 .history
                 .add_sub(SubEntry {
                     login: login.clone(),

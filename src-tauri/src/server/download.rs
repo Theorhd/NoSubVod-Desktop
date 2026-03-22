@@ -5,8 +5,9 @@ use std::time::Duration;
 use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use serde::Serialize;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::RwLock;
+use tracing::{info, instrument};
 
 use super::http_utils::{get_bytes_checked, get_text_checked};
 use super::url_utils::{extract_origin, resolve_url};
@@ -23,8 +24,9 @@ pub enum DownloadStatus {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadProgress {
-    pub vod_id: String,
-    pub title: String,
+    #[serde(rename = "vodId")]
+    pub vod_id: Arc<str>,
+    pub title: Arc<str>,
     pub status: DownloadStatus,
     pub progress: f64,        // 0.0 – 100.0
     pub current_time: String, // "HH:MM:SS" of content downloaded so far
@@ -33,8 +35,11 @@ pub struct DownloadProgress {
 
 // ── Manager ───────────────────────────────────────────────────────────────────
 
+pub type ActiveDownloads = Arc<RwLock<HashMap<Arc<str>, Arc<RwLock<DownloadProgress>>>>>;
+
 pub struct DownloadManager {
-    pub active_downloads: Arc<RwLock<HashMap<String, DownloadProgress>>>,
+    /// Granular locking: the map itself is RwLocked, and each progress entry is also RwLocked.
+    pub active_downloads: ActiveDownloads,
 }
 
 impl Default for DownloadManager {
@@ -42,6 +47,8 @@ impl Default for DownloadManager {
         Self::new()
     }
 }
+
+use crate::server::error::AppResult;
 
 impl DownloadManager {
     pub fn new() -> Self {
@@ -56,17 +63,24 @@ impl DownloadManager {
     /// `output_path` – destination file path (should end in `.ts`).
     /// `start_time` / `end_time` – optional clip window in seconds.
     #[allow(clippy::too_many_arguments)]
+    #[instrument(skip(self), fields(vod_id = %vod_id_raw, title = %title_raw))]
     pub async fn start_download(
         &self,
-        vod_id: String,
-        title: String,
+        vod_id_raw: String,
+        title_raw: String,
         m3u8_url: String,
         output_path: String,
         start_time: Option<f64>,
         end_time: Option<f64>,
         total_duration: f64,
-    ) -> Result<(), String> {
-        // Register the download immediately so the UI sees it asap.
+    ) -> AppResult<()> {
+        let vod_id: Arc<str> = Arc::from(vod_id_raw);
+        let title: Arc<str> = Arc::from(title_raw);
+
+        info!(
+            vod_id = %vod_id,
+            "Starting download task for VOD"
+        );
         let progress = DownloadProgress {
             vod_id: vod_id.clone(),
             title: title.clone(),
@@ -75,18 +89,26 @@ impl DownloadManager {
             current_time: "00:00:00".to_string(),
             total_duration,
         };
+        let progress_arc = Arc::new(RwLock::new(progress));
+
         self.active_downloads
             .write()
             .await
-            .insert(vod_id.clone(), progress);
+            .insert(vod_id.clone(), progress_arc.clone());
 
         let active_downloads = self.active_downloads.clone();
+        let vod_id_task = vod_id.clone();
 
         tokio::spawn(async move {
-            let client = Client::builder()
-                .timeout(Duration::from_secs(60))
-                .build()
-                .unwrap_or_default();
+            let client_res = Client::builder().timeout(Duration::from_secs(60)).build();
+
+            let client = match client_res {
+                Ok(c) => c,
+                Err(e) => {
+                    set_error(&active_downloads, &vod_id_task, e.to_string()).await;
+                    return;
+                }
+            };
 
             // Derive the server origin from the master URL so we can resolve
             // relative paths returned by the proxy ("/api/stream/variant.ts?id=…").
@@ -96,7 +118,7 @@ impl DownloadManager {
             let master_text = match get_text_checked(&client, &m3u8_url).await {
                 Ok(t) => t,
                 Err(e) => {
-                    set_error(&active_downloads, &vod_id, e).await;
+                    set_error(&active_downloads, &vod_id_task, e.to_string()).await;
                     return;
                 }
             };
@@ -106,7 +128,7 @@ impl DownloadManager {
                 None => {
                     set_error(
                         &active_downloads,
-                        &vod_id,
+                        &vod_id_task,
                         "No playable quality found in master playlist".to_string(),
                     )
                     .await;
@@ -118,7 +140,7 @@ impl DownloadManager {
             let variant_text = match get_text_checked(&client, &variant_url).await {
                 Ok(t) => t,
                 Err(e) => {
-                    set_error(&active_downloads, &vod_id, e).await;
+                    set_error(&active_downloads, &vod_id_task, e.to_string()).await;
                     return;
                 }
             };
@@ -127,7 +149,7 @@ impl DownloadManager {
             if all_segments.is_empty() {
                 set_error(
                     &active_downloads,
-                    &vod_id,
+                    &vod_id_task,
                     "Variant playlist contains no segments".to_string(),
                 )
                 .await;
@@ -146,7 +168,7 @@ impl DownloadManager {
             if total_segments == 0 {
                 set_error(
                     &active_downloads,
-                    &vod_id,
+                    &vod_id_task,
                     "No segments match the requested time range".to_string(),
                 )
                 .await;
@@ -154,39 +176,39 @@ impl DownloadManager {
             }
 
             // ── Step 4: create output file ────────────────────────────────────
-            let mut file = match tokio::fs::File::create(&output_path).await {
+            let raw_file = match tokio::fs::File::create(&output_path).await {
                 Ok(f) => f,
                 Err(e) => {
                     set_error(
                         &active_downloads,
-                        &vod_id,
+                        &vod_id_task,
                         format!("Cannot create output file '{output_path}': {e}"),
                     )
                     .await;
                     return;
                 }
             };
+            let mut file = BufWriter::new(raw_file);
 
             {
-                let mut lock = active_downloads.write().await;
-                if let Some(p) = lock.get_mut(&vod_id) {
-                    p.status = DownloadStatus::Downloading;
-                }
+                let mut lock = progress_arc.write().await;
+                lock.status = DownloadStatus::Downloading;
             }
 
             // ── Step 5: download segments (up to 4 in parallel, in order) ─────
             const CONCURRENCY: usize = 4;
             let mut elapsed_secs: f64 = 0.0;
             let mut segments_done: usize = 0;
+            let mut last_reported_prog: f64 = 0.0;
 
             let mut seg_iter = segments.into_iter().peekable();
 
             'outer: while seg_iter.peek().is_some() {
                 let batch: Vec<Segment> = seg_iter.by_ref().take(CONCURRENCY).collect();
 
-                // Pre-collect owned URLs to avoid HRTB lifetime issues with the stream closure.
-                let batch_urls: Vec<String> = batch.iter().map(|s| s.url.clone()).collect();
-                let results: Vec<Result<bytes::Bytes, String>> =
+                // Segments already have Arc<str> for URLs
+                let batch_urls: Vec<Arc<str>> = batch.iter().map(|s| s.url.clone()).collect();
+                let results: Vec<AppResult<bytes::Bytes>> =
                     stream::iter(batch_urls.into_iter().map(|url| {
                         let client = client.clone();
                         async move { get_bytes_checked(&client, &url).await }
@@ -200,7 +222,7 @@ impl DownloadManager {
                         Err(e) => {
                             set_error(
                                 &active_downloads,
-                                &vod_id,
+                                &vod_id_task,
                                 format!("Segment download failed ({}): {}", seg.url, e),
                             )
                             .await;
@@ -209,8 +231,12 @@ impl DownloadManager {
                         }
                         Ok(data) => {
                             if let Err(e) = file.write_all(&data).await {
-                                set_error(&active_downloads, &vod_id, format!("Write error: {e}"))
-                                    .await;
+                                set_error(
+                                    &active_downloads,
+                                    &vod_id_task,
+                                    format!("Write error: {e}"),
+                                )
+                                .await;
                                 let _ = tokio::fs::remove_file(&output_path).await;
                                 break 'outer;
                             }
@@ -220,16 +246,21 @@ impl DownloadManager {
 
                             let prog =
                                 (segments_done as f64 / total_segments as f64 * 100.0).min(100.0);
-                            let content_secs =
-                                (start_time.unwrap_or(0.0) + elapsed_secs).min(clip_duration);
-                            let h = (content_secs / 3600.0) as u32;
-                            let m = ((content_secs % 3600.0) / 60.0) as u32;
-                            let s = (content_secs % 60.0) as u32;
 
-                            let mut lock = active_downloads.write().await;
-                            if let Some(p) = lock.get_mut(&vod_id) {
-                                p.progress = prog;
-                                p.current_time = format!("{h:02}:{m:02}:{s:02}");
+                            // Throttle progress updates to reduce lock contention: update every 1% or at the end.
+                            if (prog - last_reported_prog).abs() >= 1.0
+                                || segments_done == total_segments
+                            {
+                                last_reported_prog = prog;
+                                let content_secs =
+                                    (start_time.unwrap_or(0.0) + elapsed_secs).min(clip_duration);
+                                let h = (content_secs / 3600.0) as u32;
+                                let m = ((content_secs % 3600.0) / 60.0) as u32;
+                                let s = (content_secs % 60.0) as u32;
+
+                                let mut lock = progress_arc.write().await;
+                                lock.progress = prog;
+                                lock.current_time = format!("{h:02}:{m:02}:{s:02}");
                             }
                         }
                     }
@@ -239,11 +270,9 @@ impl DownloadManager {
             // Only mark Finished if we actually completed all segments.
             if segments_done == total_segments {
                 let _ = file.flush().await;
-                let mut lock = active_downloads.write().await;
-                if let Some(p) = lock.get_mut(&vod_id) {
-                    p.status = DownloadStatus::Finished;
-                    p.progress = 100.0;
-                }
+                let mut lock = progress_arc.write().await;
+                lock.status = DownloadStatus::Finished;
+                lock.progress = 100.0;
             }
         });
 
@@ -251,22 +280,31 @@ impl DownloadManager {
     }
 
     pub async fn get_all_downloads(&self) -> Vec<DownloadProgress> {
-        self.active_downloads
-            .read()
-            .await
-            .values()
-            .cloned()
-            .collect()
+        let lock = self.active_downloads.read().await;
+        let mut results = Vec::with_capacity(lock.len());
+        for p_arc in lock.values() {
+            results.push(p_arc.read().await.clone());
+        }
+        results
     }
 
     pub async fn clear_finished(&self) {
         let mut lock = self.active_downloads.write().await;
-        lock.retain(|_, p| {
-            !matches!(
+        let mut to_remove = Vec::new();
+
+        for (id, p_arc) in lock.iter() {
+            let p = p_arc.read().await;
+            if matches!(
                 p.status,
                 DownloadStatus::Finished | DownloadStatus::Error(_)
-            )
-        });
+            ) {
+                to_remove.push(id.clone());
+            }
+        }
+
+        for id in to_remove {
+            lock.remove(&id);
+        }
     }
 }
 
@@ -274,7 +312,7 @@ impl DownloadManager {
 
 #[derive(Debug, Clone)]
 struct Segment {
-    url: String,
+    url: Arc<str>,
     duration: f64,
 }
 
@@ -292,7 +330,7 @@ fn best_variant_url(master: &str, origin: &str, master_url: &str) -> Option<Stri
             if let Some(url_line) = lines.get(i + 1) {
                 let url_line = url_line.trim();
                 if !url_line.is_empty() && !url_line.starts_with('#') {
-                    let abs = resolve_url(url_line, origin, master_url);
+                    let abs = resolve_url(url_line, origin, master_url).into_owned();
                     if best.is_none() || bw > best.as_ref().unwrap().0 {
                         best = Some((bw, abs));
                     }
@@ -349,7 +387,7 @@ fn parse_segments(playlist: &str, origin: &str, base_url: &str) -> Vec<Segment> 
         } else if !l.is_empty() && !l.starts_with('#') {
             let dur = pending_duration.take().unwrap_or(0.0);
             segments.push(Segment {
-                url: resolve_url(l, origin, base_url),
+                url: Arc::from(resolve_url(l, origin, base_url).as_ref()),
                 duration: dur,
             });
         }
@@ -385,14 +423,11 @@ fn filter_segments_by_time(
 
 // ── Error helper ──────────────────────────────────────────────────────────────
 
-async fn set_error(
-    downloads: &Arc<RwLock<HashMap<String, DownloadProgress>>>,
-    vod_id: &str,
-    msg: String,
-) {
+async fn set_error(downloads: &ActiveDownloads, vod_id: &Arc<str>, msg: String) {
     eprintln!("[download] error for {vod_id}: {msg}");
-    let mut lock = downloads.write().await;
-    if let Some(p) = lock.get_mut(vod_id) {
+    let lock = downloads.read().await;
+    if let Some(p_arc) = lock.get(vod_id) {
+        let mut p = p_arc.write().await;
         p.status = DownloadStatus::Error(msg);
     }
 }

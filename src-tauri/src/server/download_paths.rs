@@ -39,6 +39,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn resolves_configured_download_dir() {
+        let dir = resolve_download_output_dir(Some("/custom/path".to_string()));
+        assert_eq!(dir, "/custom/path");
+    }
+
+    #[test]
+    fn resolves_default_download_dir() {
+        let dir = resolve_download_output_dir(None);
+        assert!(!dir.is_empty());
+    }
+
+    #[test]
     fn builds_master_playlist_url() {
         let url = build_master_m3u8_url(23455, "123456789");
         assert_eq!(url, "http://127.0.0.1:23455/api/vod/123456789/master.m3u8");
@@ -60,5 +72,11 @@ mod tests {
     fn trims_dot_from_extension() {
         let path = build_output_file_path("C:/downloads", "123", "chunked", ".mp4");
         assert!(path.ends_with("123_chunked.mp4"));
+    }
+
+    #[test]
+    fn builds_output_file_path_handles_empty_quality() {
+        let path = build_output_file_path("C:/downloads", "123", "", "ts");
+        assert!(path.ends_with("123_.ts"));
     }
 }
