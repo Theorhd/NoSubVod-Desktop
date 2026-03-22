@@ -26,7 +26,7 @@ pub fn resolve_url<'a>(raw: &'a str, origin: &str, base_url: &str) -> Cow<'a, st
         .map(|index| &base_url[..=index])
         .unwrap_or(base_url);
 
-     Cow::Owned(format!("{base_dir}{raw}"))
+    Cow::Owned(format!("{base_dir}{raw}"))
 }
 
 #[cfg(test)]
@@ -93,11 +93,7 @@ mod tests {
 
     #[test]
     fn resolves_relative_url_when_base_has_no_slash() {
-        let url = resolve_url(
-            "index.m3u8",
-            "https://host.local",
-            "master.m3u8",
-        );
+        let url = resolve_url("index.m3u8", "https://host.local", "master.m3u8");
         assert_eq!(url, "master.m3u8index.m3u8");
     }
 }

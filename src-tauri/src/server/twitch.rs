@@ -831,16 +831,15 @@ async fn rewrite_master_with_proxy(
                     if let Some(end_offset) = new_line[abs_start..].find('"') {
                         let uri = &new_line[abs_start..abs_start + end_offset];
                         let abs_url = resolve_url(uri, &origin, source_master_url);
-                        let proxy_url = match register_variant_proxy_target(variant_cache, &abs_url)
-                            .await
-                        {
-                            Ok(pid) => format!(
-                                "/api/stream/variant.m3u8?id={}&t={}",
-                                urlencoding_simple(&pid),
-                                token
-                            ),
-                            Err(_) => abs_url.clone(),
-                        };
+                        let proxy_url =
+                            match register_variant_proxy_target(variant_cache, &abs_url).await {
+                                Ok(pid) => format!(
+                                    "/api/stream/variant.m3u8?id={}&t={}",
+                                    urlencoding_simple(&pid),
+                                    token
+                                ),
+                                Err(_) => abs_url.into_owned(),
+                            };
                         result.push_str(&new_line[cursor..abs_start]);
                         result.push_str(&proxy_url);
                         cursor = abs_start + end_offset;
@@ -2277,12 +2276,11 @@ impl TwitchService {
                 };
                 let enabled = if *res_key == "chunked" { "YES" } else { "NO" };
 
-                let proxy_id = match register_variant_proxy_target(&self.variant_cache, &stream_url)
-                    .await
-                {
-                    Ok(id) => id,
-                    Err(_) => continue,
-                };
+                let proxy_id =
+                    match register_variant_proxy_target(&self.variant_cache, &stream_url).await {
+                        Ok(id) => id,
+                        Err(_) => continue,
+                    };
                 let proxy_url = format!(
                     "/api/stream/variant.m3u8?id={}&t={}",
                     urlencoding_simple(&proxy_id),

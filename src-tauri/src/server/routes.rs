@@ -16,6 +16,7 @@ use tauri_plugin_autostart::ManagerExt;
 #[cfg(target_os = "windows")]
 use tokio::process::Command;
 use tower::ServiceExt;
+use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
@@ -1174,6 +1175,7 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         .nest("/api", api)
         .layer(middleware::from_fn(security_headers_middleware))
         .layer(TraceLayer::new_for_http())
+        .layer(CompressionLayer::new())
         .layer(cors);
 
     // Serve portal static files if available
@@ -1197,20 +1199,23 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{body::Body, http::{Request, StatusCode}};
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
     use tower::ServiceExt;
 
     // Helper to create a dummy state for testing
     async fn create_test_state() -> ApiState {
         let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&temp_dir).unwrap();
-        
+
         let history = Arc::new(crate::server::history::HistoryStore::load(temp_dir).unwrap());
         let twitch = Arc::new(TwitchService::new());
         let download = Arc::new(DownloadManager::new());
         let screenshare = Arc::new(ScreenShareService::new());
         let oauth = Arc::new(crate::server::auth::OAuthStateStore::new());
-        
+
         ApiState {
             twitch,
             history,

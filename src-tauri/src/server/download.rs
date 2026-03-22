@@ -35,9 +35,11 @@ pub struct DownloadProgress {
 
 // ── Manager ───────────────────────────────────────────────────────────────────
 
+pub type ActiveDownloads = Arc<RwLock<HashMap<Arc<str>, Arc<RwLock<DownloadProgress>>>>>;
+
 pub struct DownloadManager {
     /// Granular locking: the map itself is RwLocked, and each progress entry is also RwLocked.
-    pub active_downloads: Arc<RwLock<HashMap<Arc<str>, Arc<RwLock<DownloadProgress>>>>>,
+    pub active_downloads: ActiveDownloads,
 }
 
 impl Default for DownloadManager {
@@ -61,7 +63,7 @@ impl DownloadManager {
     /// `output_path` – destination file path (should end in `.ts`).
     /// `start_time` / `end_time` – optional clip window in seconds.
     #[allow(clippy::too_many_arguments)]
-    #[instrument(skip(self), fields(vod_id = %vod_id, title = %title))]
+    #[instrument(skip(self), fields(vod_id = %vod_id_raw, title = %title_raw))]
     pub async fn start_download(
         &self,
         vod_id_raw: String,
@@ -229,8 +231,12 @@ impl DownloadManager {
                         }
                         Ok(data) => {
                             if let Err(e) = file.write_all(&data).await {
-                                set_error(&active_downloads, &vod_id_task, format!("Write error: {e}"))
-                                    .await;
+                                set_error(
+                                    &active_downloads,
+                                    &vod_id_task,
+                                    format!("Write error: {e}"),
+                                )
+                                .await;
                                 let _ = tokio::fs::remove_file(&output_path).await;
                                 break 'outer;
                             }
@@ -417,11 +423,7 @@ fn filter_segments_by_time(
 
 // ── Error helper ──────────────────────────────────────────────────────────────
 
-async fn set_error(
-    downloads: &Arc<RwLock<HashMap<Arc<str>, Arc<RwLock<DownloadProgress>>>>>,
-    vod_id: &Arc<str>,
-    msg: String,
-) {
+async fn set_error(downloads: &ActiveDownloads, vod_id: &Arc<str>, msg: String) {
     eprintln!("[download] error for {vod_id}: {msg}");
     let lock = downloads.read().await;
     if let Some(p_arc) = lock.get(vod_id) {

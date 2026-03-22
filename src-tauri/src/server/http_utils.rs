@@ -142,14 +142,16 @@ mod tests {
         let base_url = spawn_test_server().await;
         let primary_client = Client::new();
         let fallback_client = Client::new();
-        
+
         let res = get_text_with_direct_fallback(
             &primary_client,
             &fallback_client,
             &format!("{}/text", base_url),
             "test_context",
-        ).await.unwrap();
-        
+        )
+        .await
+        .unwrap();
+
         assert_eq!(res, "hello world");
     }
 }

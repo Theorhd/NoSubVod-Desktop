@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -149,22 +149,24 @@ impl HistoryStore {
 
     async fn perform_save(
         data_lock: &RwLock<PersistedData>,
-        file_path: &PathBuf,
+        file_path: &Path,
         token_key: &[u8],
     ) -> AppResult<()> {
         let mut disk_data = data_lock.read().await.clone();
-
-        // Create a copy with the token encrypted for on-disk storage
-        if let Some(ref plaintext) = disk_data.twitch_token {
-            disk_data.twitch_token = Some(encrypt_token(plaintext, token_key)?);
-        }
 
         if let Some(parent) = file_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
 
-        let file_path_clone = file_path.clone();
+        let file_path_clone = file_path.to_path_buf();
+        let token_key_clone = token_key.to_vec();
+
         tokio::task::spawn_blocking(move || {
+            // Move encryption inside the blocking task
+            if let Some(ref plaintext) = disk_data.twitch_token {
+                disk_data.twitch_token = Some(encrypt_token(plaintext, &token_key_clone)?);
+            }
+
             let file = std::fs::File::create(file_path_clone)?;
             let writer = std::io::BufWriter::new(file);
             serde_json::to_writer_pretty(writer, &disk_data)?;
