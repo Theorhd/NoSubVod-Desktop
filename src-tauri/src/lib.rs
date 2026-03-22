@@ -1,16 +1,32 @@
+#[cfg(not(test))]
 mod commands;
+
+#[cfg(not(test))]
 pub mod server;
 
+#[cfg(test)]
+pub mod server {
+    pub mod download_paths;
+    pub mod error;
+    pub mod http_utils;
+    pub mod url_utils;
+}
+
+#[cfg(not(test))]
 use std::sync::Arc;
+#[cfg(not(test))]
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
     Manager,
 };
+#[cfg(not(test))]
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+#[cfg(not(test))]
 use server::AppState;
 
+#[cfg(not(test))]
 fn init_tracing() {
     tracing_subscriber::registry()
         .with(
@@ -21,6 +37,7 @@ fn init_tracing() {
         .init();
 }
 
+#[cfg(not(test))]
 fn init_rustls_crypto_provider() {
     // rustls 0.23 may require explicit provider installation when both
     // providers are enabled through the dependency graph.
@@ -29,6 +46,7 @@ fn init_rustls_crypto_provider() {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[cfg(not(test))]
 pub fn run() {
     // Load .env from the directory next to the binary (src-tauri/ in dev)
     dotenvy::dotenv().ok();
@@ -118,3 +136,6 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+pub fn run() {}

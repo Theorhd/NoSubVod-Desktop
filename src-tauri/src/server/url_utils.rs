@@ -38,6 +38,18 @@ mod tests {
     }
 
     #[test]
+    fn extracts_origin_without_path() {
+        let origin = extract_origin("https://example.com");
+        assert_eq!(origin, "https://example.com");
+    }
+
+    #[test]
+    fn extracts_origin_without_protocol_returns_original() {
+        let origin = extract_origin("example.com/path/file.m3u8");
+        assert_eq!(origin, "example.com/path/file.m3u8");
+    }
+
+    #[test]
     fn resolves_absolute_url_without_changes() {
         let url = resolve_url(
             "https://cdn.example.com/live/stream.m3u8",
@@ -45,6 +57,16 @@ mod tests {
             "https://host.local/master.m3u8",
         );
         assert_eq!(url, "https://cdn.example.com/live/stream.m3u8");
+    }
+
+    #[test]
+    fn resolves_http_absolute_url_without_changes() {
+        let url = resolve_url(
+            "http://cdn.example.com/live/stream.m3u8",
+            "https://host.local",
+            "https://host.local/master.m3u8",
+        );
+        assert_eq!(url, "http://cdn.example.com/live/stream.m3u8");
     }
 
     #[test]
@@ -65,5 +87,15 @@ mod tests {
             "https://host.local/api/vod/master.m3u8",
         );
         assert_eq!(url, "https://host.local/api/vod/chunked/index.m3u8");
+    }
+
+    #[test]
+    fn resolves_relative_url_when_base_has_no_slash() {
+        let url = resolve_url(
+            "index.m3u8",
+            "https://host.local",
+            "master.m3u8",
+        );
+        assert_eq!(url, "master.m3u8index.m3u8");
     }
 }

@@ -1193,3 +1193,89 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
 
     router
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{body::Body, http::{Request, StatusCode}};
+    use tower::ServiceExt;
+
+    // Helper to create a dummy state for testing
+    async fn create_test_state() -> ApiState {
+        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        
+        let history = Arc::new(crate::server::history::HistoryStore::load(temp_dir).unwrap());
+        let twitch = Arc::new(TwitchService::new());
+        let download = Arc::new(DownloadManager::new());
+        let screenshare = Arc::new(ScreenShareService::new());
+        let oauth = Arc::new(crate::server::auth::OAuthStateStore::new());
+        
+        ApiState {
+            twitch,
+            history,
+            download,
+            screenshare,
+            oauth,
+            server_token: "test_token".to_string(),
+            app_handle: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn router_builds_and_handles_not_found() {
+        let state = create_test_state().await;
+        let app = build_router(state, None);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/does-not-exist")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn handle_vod_info_invalid_id() {
+        let state = create_test_state().await;
+        let app = build_router(state, None);
+
+        // Making a request to an endpoint with an invalid ID
+        // The id contains invalid characters like ! to trigger is_valid_id == false
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/vod/invalid!id/info")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn handle_live_master_invalid_login() {
+        let state = create_test_state().await;
+        let app = build_router(state, None);
+
+        // Login is invalid due to special character
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/live/invalid!login/master.m3u8")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+}

@@ -67,6 +67,8 @@ pub async fn get_text_with_direct_fallback(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{routing::get, Router};
+    use tokio::net::TcpListener;
 
     #[test]
     fn get_text_checked_signature_is_send_safe() {
@@ -75,5 +77,79 @@ mod tests {
         let fut = get_text_checked(&client, "https://example.com");
         assert_send(&fut);
         std::mem::drop(fut);
+    }
+
+    async fn spawn_test_server() -> String {
+        let app = Router::new()
+            .route("/text", get(|| async { "hello world" }))
+            .route("/bytes", get(|| async { vec![1u8, 2, 3] }))
+            .route(
+                "/error",
+                get(|| async { axum::http::StatusCode::INTERNAL_SERVER_ERROR }),
+            );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        format!("http://127.0.0.1:{}", port)
+    }
+
+    #[tokio::test]
+    async fn test_get_text_checked_success() {
+        let base_url = spawn_test_server().await;
+        let client = Client::new();
+        let res = get_text_checked(&client, &format!("{}/text", base_url))
+            .await
+            .unwrap();
+        assert_eq!(res, "hello world");
+    }
+
+    #[tokio::test]
+    async fn test_get_text_checked_http_error() {
+        let base_url = spawn_test_server().await;
+        let client = Client::new();
+        let res = get_text_checked(&client, &format!("{}/error", base_url)).await;
+        assert!(res.is_err());
+        if let Err(AppError::Internal(msg)) = res {
+            assert!(msg.contains("HTTP 500"));
+        } else {
+            panic!("Expected AppError::Internal");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_bytes_checked_success() {
+        let base_url = spawn_test_server().await;
+        let client = Client::new();
+        let res = get_bytes_checked(&client, &format!("{}/bytes", base_url))
+            .await
+            .unwrap();
+        assert_eq!(res.as_ref(), &[1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn test_get_bytes_checked_http_error() {
+        let base_url = spawn_test_server().await;
+        let client = Client::new();
+        let res = get_bytes_checked(&client, &format!("{}/error", base_url)).await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_text_with_direct_fallback_primary_success() {
+        let base_url = spawn_test_server().await;
+        let primary_client = Client::new();
+        let fallback_client = Client::new();
+        
+        let res = get_text_with_direct_fallback(
+            &primary_client,
+            &fallback_client,
+            &format!("{}/text", base_url),
+            "test_context",
+        ).await.unwrap();
+        
+        assert_eq!(res, "hello world");
     }
 }
