@@ -1,5 +1,5 @@
 import React from 'react';
-import type { ScreenShareSessionState } from '../../../shared/types';
+import type { ScreenShareSessionState } from '../../../../shared/types';
 
 interface PlayerSidebarProps {
   isMobileLayout: boolean;

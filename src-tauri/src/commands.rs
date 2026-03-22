@@ -1,12 +1,25 @@
 use std::sync::Arc;
+
 use tauri::State;
 #[cfg(target_os = "windows")]
 use tokio::process::Command;
 
-use crate::server::{AppState, types::ServerInfo};
+use crate::server::download_paths::{
+    build_master_m3u8_url, build_output_file_path, resolve_download_output_dir,
+};
 use crate::server::screenshare::{
     ScreenShareSessionState, ScreenShareSourceType, StartScreenShareRequest,
 };
+use crate::server::{types::ServerInfo, AppState};
+
+const DOWNLOAD_STARTED_MESSAGE: &str = "Download started in background";
+
+struct FfmpegDownloadJob {
+    master_m3u8_url: String,
+    output_file: String,
+    start_time: Option<f64>,
+    end_time: Option<f64>,
+}
 
 /// Returns current server info (IP, port, URL, QR code) to the renderer.
 #[tauri::command]
@@ -23,50 +36,18 @@ pub async fn start_download(
     state: State<'_, Arc<AppState>>,
 ) -> Result<String, String> {
     let settings = state.api_state.history.get_settings().await;
-    let out_dir = settings.download_local_path.unwrap_or_else(|| {
-        dirs::download_dir()
-            .map(|p: std::path::PathBuf| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| ".".to_string())
-    });
+    let out_dir = resolve_download_output_dir(settings.download_local_path);
 
-    let master_m3u8_url = format!("http://127.0.0.1:{}/api/vod/{}/master.m3u8", state.server_info.port, vod_id);
-    let output_file = format!("{}/{}_{}.mp4", out_dir, vod_id, quality);
+    let job = FfmpegDownloadJob {
+        master_m3u8_url: build_master_m3u8_url(state.server_info.port, &vod_id),
+        output_file: build_output_file_path(&out_dir, &vod_id, &quality, "mp4"),
+        start_time,
+        end_time,
+    };
 
-    // Run ffmpeg in background
-    tauri::async_runtime::spawn(async move {
-        let mut cmd = tokio::process::Command::new("ffmpeg");
-        
-        if let Some(st) = start_time {
-            cmd.arg("-ss").arg(st.to_string());
-        }
-        
-        cmd.arg("-i").arg(&master_m3u8_url);
-        
-        if let Some(et) = end_time {
-            if let Some(st) = start_time {
-                let duration = et - st;
-                if duration > 0.0 {
-                    cmd.arg("-t").arg(duration.to_string());
-                }
-            }
-        }
-        
-        cmd.arg("-c").arg("copy")
-           .arg("-bsf:a").arg("aac_adtstoasc")
-           .arg("-y")
-           .arg(&output_file);
-           
-        match cmd.spawn() {
-            Ok(mut child) => {
-                let _ = child.wait().await;
-            }
-            Err(e) => {
-                eprintln!("Failed to spawn ffmpeg: {}", e);
-            }
-        }
-    });
+    tauri::async_runtime::spawn(spawn_ffmpeg_download(job));
 
-    Ok("Download started in background".to_string())
+    Ok(DOWNLOAD_STARTED_MESSAGE.to_string())
 }
 
 #[tauri::command]
@@ -76,11 +57,7 @@ pub async fn start_screen_share(
     app_handle: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<ScreenShareSessionState, String> {
-    let parsed_source = match source_type.trim().to_lowercase().as_str() {
-        "browser" => ScreenShareSourceType::Browser,
-        "application" => ScreenShareSourceType::Application,
-        _ => return Err("Unsupported source type".to_string()),
-    };
+    let parsed_source = parse_screen_share_source_type(&source_type)?;
 
     let request = StartScreenShareRequest {
         source_type: parsed_source,
@@ -100,11 +77,7 @@ pub async fn stop_screen_share(
     app_handle: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<ScreenShareSessionState, String> {
-    state
-        .api_state
-        .screenshare
-        .stop(Some(&app_handle))
-        .await
+    state.api_state.screenshare.stop(Some(&app_handle)).await
 }
 
 #[tauri::command]
@@ -159,5 +132,50 @@ pub async fn list_stream_windows() -> Result<Vec<String>, String> {
         }
 
         Ok(titles.into_iter().collect())
+    }
+}
+
+fn clip_duration(start_time: Option<f64>, end_time: Option<f64>) -> Option<f64> {
+    match (start_time, end_time) {
+        (Some(start), Some(end)) if end > start => Some(end - start),
+        _ => None,
+    }
+}
+
+async fn spawn_ffmpeg_download(job: FfmpegDownloadJob) {
+    let mut cmd = tokio::process::Command::new("ffmpeg");
+
+    if let Some(start_time) = job.start_time {
+        cmd.arg("-ss").arg(start_time.to_string());
+    }
+
+    cmd.arg("-i").arg(&job.master_m3u8_url);
+
+    if let Some(duration) = clip_duration(job.start_time, job.end_time) {
+        cmd.arg("-t").arg(duration.to_string());
+    }
+
+    cmd.arg("-c")
+        .arg("copy")
+        .arg("-bsf:a")
+        .arg("aac_adtstoasc")
+        .arg("-y")
+        .arg(&job.output_file);
+
+    match cmd.spawn() {
+        Ok(mut child) => {
+            let _ = child.wait().await;
+        }
+        Err(error) => {
+            eprintln!("Failed to spawn ffmpeg: {error}");
+        }
+    }
+}
+
+fn parse_screen_share_source_type(source_type: &str) -> Result<ScreenShareSourceType, String> {
+    match source_type.trim().to_lowercase().as_str() {
+        "browser" => Ok(ScreenShareSourceType::Browser),
+        "application" => Ok(ScreenShareSourceType::Application),
+        _ => Err("Unsupported source type".to_string()),
     }
 }

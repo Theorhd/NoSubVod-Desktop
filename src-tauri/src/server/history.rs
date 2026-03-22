@@ -4,13 +4,13 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
-use base64::engine::general_purpose::STANDARD as B64;
-use base64::Engine;
-use sha2::{Digest, Sha256};
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine;
 use rand::rngs::OsRng;
 use rand::RngCore;
+use sha2::{Digest, Sha256};
 
 use super::types::{
     ExperienceSettings, HistoryEntry, PersistedData, SubEntry, TrustedDevice, WatchlistEntry,
@@ -50,24 +50,24 @@ fn encrypt_token(token: &str, key: &[u8]) -> String {
     let mut out = Vec::with_capacity(nonce_bytes.len() + ciphertext.len());
     out.extend_from_slice(&nonce_bytes);
     out.extend_from_slice(&ciphertext);
-    
+
     B64.encode(&out)
 }
 
 fn decrypt_token(encoded: &str, key: &[u8]) -> Option<String> {
     let data = B64.decode(encoded).ok()?;
-    
+
     // Must at least contain the 12-byte nonce.
     if data.len() < 12 {
         return None;
     }
-    
+
     let (nonce_bytes, ciphertext) = data.split_at(12);
     let nonce = Nonce::from_slice(nonce_bytes);
-    
+
     let cipher_key = Key::<Aes256Gcm>::from_slice(key);
     let cipher = Aes256Gcm::new(cipher_key);
-    
+
     let plaintext = cipher.decrypt(nonce, ciphertext).ok()?;
     String::from_utf8(plaintext).ok()
 }
@@ -137,12 +137,7 @@ impl HistoryStore {
         self.data.read().await.history.get(vod_id).cloned()
     }
 
-    pub async fn update_history(
-        &self,
-        vod_id: &str,
-        timecode: f64,
-        duration: f64,
-    ) -> HistoryEntry {
+    pub async fn update_history(&self, vod_id: &str, timecode: f64, duration: f64) -> HistoryEntry {
         let timecode = timecode.max(0.0);
         let updated_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -401,7 +396,11 @@ impl HistoryStore {
             .any(|d| d.device_id == device_id && d.trusted)
     }
 
-    pub async fn set_device_trusted(&self, device_id: &str, trusted: bool) -> Option<TrustedDevice> {
+    pub async fn set_device_trusted(
+        &self,
+        device_id: &str,
+        trusted: bool,
+    ) -> Option<TrustedDevice> {
         if device_id.trim().is_empty() {
             return None;
         }

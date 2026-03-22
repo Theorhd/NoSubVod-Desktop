@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import type { ScreenShareSessionState } from '../../shared/types';
+import type { ScreenShareSessionState } from '../../../shared/types';
 
 const defaultState: ScreenShareSessionState = {
   active: false,
