@@ -92,8 +92,12 @@ impl HistoryStore {
     pub fn load(data_dir: PathBuf) -> AppResult<Self> {
         let file_path = data_dir.join("history.json");
         let token_key = derive_key(&data_dir);
-        let mut data = match std::fs::read_to_string(&file_path) {
-            Ok(raw) => serde_json::from_str::<PersistedData>(&raw)?,
+
+        let mut data = match std::fs::File::open(&file_path) {
+            Ok(file) => {
+                let reader = std::io::BufReader::new(file);
+                serde_json::from_reader::<_, PersistedData>(reader)?
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => PersistedData::default(),
             Err(e) => return Err(AppError::Io(e)),
         };
@@ -148,17 +152,27 @@ impl HistoryStore {
         file_path: &PathBuf,
         token_key: &[u8],
     ) -> AppResult<()> {
-        let data = data_lock.read().await;
+        let mut disk_data = data_lock.read().await.clone();
+
         // Create a copy with the token encrypted for on-disk storage
-        let mut disk_data = data.clone();
         if let Some(ref plaintext) = disk_data.twitch_token {
             disk_data.twitch_token = Some(encrypt_token(plaintext, token_key)?);
         }
-        let json = serde_json::to_string_pretty(&disk_data)?;
+
         if let Some(parent) = file_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        tokio::fs::write(file_path, json).await?;
+
+        let file_path_clone = file_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let file = std::fs::File::create(file_path_clone)?;
+            let writer = std::io::BufWriter::new(file);
+            serde_json::to_writer_pretty(writer, &disk_data)?;
+            Ok::<(), AppError>(())
+        })
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))??;
+
         Ok(())
     }
 
