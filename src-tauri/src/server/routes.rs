@@ -318,12 +318,16 @@ async fn handle_proxy_segment(
     Query(q): Query<VariantProxyQuery>,
     State(state): State<ApiState>,
 ) -> AppResult<Response> {
-    let Some(id) = q.id else {
-        return Err(AppError::BadRequest("Missing id parameter".to_string()));
-    };
-
     let settings = state.history.get_settings().await;
-    let resp = state.twitch.proxy_segment(&id, &settings).await?;
+    let resp = if let Some(id) = q.id {
+        state.twitch.proxy_segment(&id, &settings).await?
+    } else if let Some(url) = q.url {
+        state.twitch.proxy_segment_url(&url, &settings).await?
+    } else {
+        return Err(AppError::BadRequest(
+            "Missing id or url parameter".to_string(),
+        ));
+    };
 
     let mut builder = Response::builder();
     if let Some(ct) = resp.headers().get(reqwest::header::CONTENT_TYPE) {

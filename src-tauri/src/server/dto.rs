@@ -16,6 +16,7 @@ pub struct SearchQuery {
 #[derive(Deserialize)]
 pub struct VariantProxyQuery {
     pub id: Option<String>,
+    pub url: Option<String>,
 }
 
 #[derive(Deserialize)]

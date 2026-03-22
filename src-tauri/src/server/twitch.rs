@@ -482,6 +482,21 @@ impl TwitchService {
         })
     }
 
+    pub async fn proxy_segment_url(
+        &self,
+        target_url: &str,
+        settings: &ExperienceSettings,
+    ) -> AppResult<reqwest::Response> {
+        debug!("Proxying media segment via direct URL query");
+        let target_url = validate_variant_target_url(target_url)?;
+        let client = self.get_client(settings).await;
+
+        client.get(&target_url).send().await.map_err(|e| {
+            error!(error = %e, "Failed to proxy segment by URL");
+            AppError::from(e)
+        })
+    }
+
     // ── GQL helpers ──────────────────────────────────────────────────────────
 
     async fn gql_post(&self, body: &str) -> AppResult<Value> {
@@ -690,7 +705,6 @@ fn urlencoding_simple(s: &str) -> String {
 async fn rewrite_tag_uri_with_proxy(
     line: &str,
     base_url: &str,
-    variant_cache: &Cache<String, String>,
     token: &str,
 ) -> String {
     if !line.contains("URI=\"") {
@@ -717,12 +731,11 @@ async fn rewrite_tag_uri_with_proxy(
                     format!("{base_url}{uri}")
                 };
 
-                let rewritten = match register_variant_proxy_target(variant_cache, &abs_url).await {
-                    Ok(proxy_id) => format!(
-                        "/api/stream/variant.ts?id={}&t={}",
-                        urlencoding_simple(&proxy_id),
-                        token
-                    ),
+                let rewritten = match validate_variant_target_url(&abs_url) {
+                    Ok(sanitized) => {
+                        let encoded = urlencoding::encode(&sanitized);
+                        format!("/api/stream/variant.ts?url={encoded}&t={}", token)
+                    }
                     Err(_) => abs_url,
                 };
 
@@ -2505,9 +2518,7 @@ impl TwitchService {
             let l = line.trim_end_matches('\r');
             if l.is_empty() || l.starts_with('#') {
                 if l.contains("URI=\"") {
-                    lines.push(
-                        rewrite_tag_uri_with_proxy(l, &base_url, &self.variant_cache, token).await,
-                    );
+                    lines.push(rewrite_tag_uri_with_proxy(l, &base_url, token).await);
                 } else {
                     lines.push(l.to_string());
                 }
@@ -2520,15 +2531,12 @@ impl TwitchService {
                 l.to_string()
             };
 
-            if let Ok(proxy_id) = register_variant_proxy_target(&self.variant_cache, &abs_url).await
-            {
-                lines.push(format!(
-                    "/api/stream/variant.ts?id={}&t={}",
-                    urlencoding_simple(&proxy_id),
-                    token
-                ));
-            } else {
-                lines.push(abs_url);
+            match validate_variant_target_url(&abs_url) {
+                Ok(sanitized) => {
+                    let encoded = urlencoding::encode(&sanitized);
+                    lines.push(format!("/api/stream/variant.ts?url={encoded}&t={}", token));
+                }
+                Err(_) => lines.push(abs_url),
             }
         }
 
