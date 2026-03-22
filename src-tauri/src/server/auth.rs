@@ -11,6 +11,7 @@ use axum::{
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use tracing::{info, instrument};
 
 use super::routes::ApiState;
 use super::types::SubEntry;
@@ -168,10 +169,12 @@ pub struct CallbackQuery {
 use crate::server::error::{AppError, AppResult};
 
 /// GET /api/auth/twitch/callback  (Twitch redirects here after user approves)
+#[instrument(skip(state, q), fields(state_token = q.state))]
 pub async fn handle_auth_callback(
     Query(q): Query<CallbackQuery>,
     State(state): State<ApiState>,
 ) -> Response {
+    info!("Received Twitch OAuth callback");
     if let Some(err) = q.error {
         let desc = q.error_description.unwrap_or_default();
         return close_tab_html(

@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracing::{debug, error, instrument};
 use uuid::Uuid;
 
 use super::http_utils::get_text_with_direct_fallback;
@@ -464,16 +465,21 @@ impl TwitchService {
         new_client
     }
 
+    #[instrument(skip(self, settings), fields(proxy_id = %proxy_id))]
     pub async fn proxy_segment(
         &self,
         proxy_id: &str,
         settings: &ExperienceSettings,
     ) -> AppResult<reqwest::Response> {
+        debug!("Proxying media segment");
         let target_url = resolve_variant_proxy_target(&self.variant_cache, proxy_id)?;
 
         let client = self.get_client(settings).await;
 
-        client.get(&target_url).send().await.map_err(AppError::from)
+        client.get(&target_url).send().await.map_err(|e| {
+            error!(error = %e, "Failed to proxy segment");
+            AppError::from(e)
+        })
     }
 
     // ── GQL helpers ──────────────────────────────────────────────────────────

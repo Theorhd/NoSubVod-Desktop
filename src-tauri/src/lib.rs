@@ -2,14 +2,24 @@ mod commands;
 pub mod server;
 
 use std::sync::Arc;
-
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
     Manager,
 };
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use server::AppState;
+
+fn init_tracing() {
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "nosubvod_desktop_lib=debug,tower_http=debug".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+}
 
 fn init_rustls_crypto_provider() {
     // rustls 0.23 may require explicit provider installation when both
@@ -22,6 +32,7 @@ fn init_rustls_crypto_provider() {
 pub fn run() {
     // Load .env from the directory next to the binary (src-tauri/ in dev)
     dotenvy::dotenv().ok();
+    init_tracing();
     init_rustls_crypto_provider();
 
     tauri::Builder::default()

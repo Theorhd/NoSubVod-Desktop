@@ -7,6 +7,7 @@ use reqwest::Client;
 use serde::Serialize;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
+use tracing::{info, instrument};
 
 use super::http_utils::{get_bytes_checked, get_text_checked};
 use super::url_utils::{extract_origin, resolve_url};
@@ -58,6 +59,7 @@ impl DownloadManager {
     /// `output_path` – destination file path (should end in `.ts`).
     /// `start_time` / `end_time` – optional clip window in seconds.
     #[allow(clippy::too_many_arguments)]
+    #[instrument(skip(self), fields(vod_id = %vod_id, title = %title))]
     pub async fn start_download(
         &self,
         vod_id: String,
@@ -68,7 +70,10 @@ impl DownloadManager {
         end_time: Option<f64>,
         total_duration: f64,
     ) -> AppResult<()> {
-        // Register the download immediately so the UI sees it asap.
+        info!(
+            vod_id = %vod_id,
+            "Starting download task for VOD"
+        );
         let progress = DownloadProgress {
             vod_id: vod_id.clone(),
             title: title.clone(),

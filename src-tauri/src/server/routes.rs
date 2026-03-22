@@ -18,6 +18,7 @@ use tokio::process::Command;
 use tower::ServiceExt;
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
+use tower_http::trace::TraceLayer;
 
 use super::{
     auth::OAuthStateStore,
@@ -1172,6 +1173,7 @@ pub fn build_router(state: ApiState, portal_dist: Option<std::path::PathBuf>) ->
         .nest("/api", auth_callback)
         .nest("/api", api)
         .layer(middleware::from_fn(security_headers_middleware))
+        .layer(TraceLayer::new_for_http())
         .layer(cors);
 
     // Serve portal static files if available
