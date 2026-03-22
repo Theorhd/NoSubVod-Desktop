@@ -5,8 +5,8 @@ use axum::response::Redirect;
 use axum::{
     body::Body,
     extract::{ws::WebSocketUpgrade, Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
-    middleware::{self, Next},
+    http::{header, StatusCode},
+    middleware,
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
     Json, Router,
@@ -29,10 +29,14 @@ use super::{
     },
     error::{AppError, AppResult},
     history::HistoryStore,
+    middleware::{auth_middleware, security_headers_middleware},
     screenshare::ScreenShareService,
     screenshare::StartScreenShareRequest,
     twitch::TwitchService,
     types::{SubEntry, WatchlistEntry},
+    validation::{
+        filter_hevc_variants_for_ios, is_ios_family_request, is_valid_id, is_valid_login,
+    },
 };
 
 // ── Application state shared across all routes ─────────────────────────────────
@@ -170,185 +174,6 @@ fn snapshot_unavailable_image(reason: &str) -> Response {
         .unwrap_or_else(|_| {
             (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build SVG").into_response()
         })
-}
-
-// ── Authentication middleware ──────────────────────────────────────────────────
-
-/// Validates requests carry a valid server token via the `X-NSV-Token` header
-/// or `t` query parameter. Rejects unauthorized requests with 401.
-#[cfg(debug_assertions)]
-async fn auth_middleware(
-    State(_state): State<ApiState>,
-    req: axum::extract::Request,
-    next: Next,
-) -> Response {
-    next.run(req).await
-}
-
-/// Validates requests carry a valid server token via the `X-NSV-Token` header
-/// or `t` query parameter. Rejects unauthorized requests with 401.
-#[cfg(not(debug_assertions))]
-async fn auth_middleware(
-    State(state): State<ApiState>,
-    req: axum::extract::Request,
-    next: Next,
-) -> Response {
-    let header_device_id = req
-        .headers()
-        .get("x-nsv-device-id")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty() && s.len() <= 128)
-        .filter(|s| {
-            s.chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        })
-        .map(|s| s.to_string());
-
-    let user_agent = req
-        .headers()
-        .get(header::USER_AGENT)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.chars().take(240).collect::<String>());
-
-    let client_ip = req
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .map(|raw| raw.split(',').next().unwrap_or("").trim().to_string())
-        .filter(|s| !s.is_empty());
-
-    let token_from_header = req
-        .headers()
-        .get("x-nsv-token")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
-
-    let token_from_query = req.uri().query().and_then(|q| {
-        q.split('&').find_map(|pair| {
-            let mut parts = pair.splitn(2, '=');
-            if parts.next() == Some("t") {
-                parts.next().map(|v| v.to_string())
-            } else {
-                None
-            }
-        })
-    });
-
-    let query_device_id = req
-        .uri()
-        .query()
-        .and_then(|q| {
-            q.split('&').find_map(|pair| {
-                let mut parts = pair.splitn(2, '=');
-                if parts.next() == Some("d") {
-                    parts
-                        .next()
-                        .and_then(|v| urlencoding::decode(v).ok())
-                        .map(|v| v.into_owned())
-                } else {
-                    None
-                }
-            })
-        })
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty() && s.len() <= 128)
-        .filter(|s| {
-            s.chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        });
-
-    let device_id = header_device_id.or(query_device_id);
-
-    let provided = token_from_header.or(token_from_query);
-
-    let token_ok = provided.as_deref() == Some(&state.server_token);
-    let device_trusted = if token_ok {
-        false
-    } else if let Some(id) = device_id.as_deref() {
-        state.history.is_device_trusted(id).await
-    } else {
-        false
-    };
-
-    if !token_ok && !device_trusted {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "Unauthorized" })),
-        )
-            .into_response();
-    }
-
-    if let Some(id) = device_id.as_deref() {
-        let _ = state
-            .history
-            .mark_device_seen(id, client_ip, user_agent)
-            .await;
-    }
-
-    next.run(req).await
-}
-
-// ── Input validation helpers ──────────────────────────────────────────────────
-
-/// Returns true if the string looks like a valid VOD / numeric ID.
-fn is_valid_id(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 20 && s.chars().all(|c| c.is_ascii_digit())
-}
-
-/// Returns true if the string looks like a valid Twitch login/username.
-fn is_valid_login(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 25 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-fn is_ios_family_request(headers: &HeaderMap) -> bool {
-    let ua = headers
-        .get(header::USER_AGENT)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_lowercase();
-
-    if ua.contains("iphone") || ua.contains("ipad") || ua.contains("ipod") {
-        return true;
-    }
-
-    if ua.contains("macintosh") && ua.contains("mobile") {
-        return true;
-    }
-
-    let platform = headers
-        .get("sec-ch-ua-platform")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_lowercase();
-
-    platform.contains("ios")
-}
-
-fn filter_hevc_variants_for_ios(master_playlist: &str) -> String {
-    let mut output: Vec<&str> = Vec::new();
-    let mut lines = master_playlist.lines().peekable();
-
-    while let Some(line) = lines.next() {
-        let trimmed = line.trim();
-
-        if trimmed.starts_with("#EXT-X-STREAM-INF") {
-            let lowered = trimmed.to_lowercase();
-            let is_hevc = lowered.contains("codecs=\"")
-                && (lowered.contains("hvc1") || lowered.contains("hev1"));
-
-            if is_hevc {
-                let _ = lines.next();
-                continue;
-            }
-        }
-
-        output.push(line);
-    }
-
-    output.join("\n")
 }
 
 // ── Error helpers ─────────────────────────────────────────────────────────────
@@ -1320,25 +1145,6 @@ async fn handle_start_download(
         .await?;
 
     Ok(Json(serde_json::json!({ "message": "Download started" })).into_response())
-}
-
-// ── Security headers middleware ─────────────────────────────────────────────
-
-async fn security_headers_middleware(req: axum::extract::Request, next: Next) -> Response {
-    let mut response = next.run(req).await;
-    let headers = response.headers_mut();
-    headers.insert("x-content-type-options", "nosniff".parse().unwrap());
-    headers.insert("x-frame-options", "DENY".parse().unwrap());
-    headers.insert("x-xss-protection", "1; mode=block".parse().unwrap());
-    headers.insert("referrer-policy", "no-referrer".parse().unwrap());
-    headers.insert(
-        "permissions-policy",
-        "camera=(), microphone=(), geolocation=(), interest-cohort=()"
-            .parse()
-            .unwrap(),
-    );
-    headers.insert("cache-control", "no-store, private".parse().unwrap());
-    response
 }
 
 // ── Router factory ────────────────────────────────────────────────────────────

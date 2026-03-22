@@ -5,11 +5,13 @@ pub mod download_paths;
 pub mod error;
 pub mod history;
 pub mod http_utils;
+pub mod middleware;
 pub mod routes;
 pub mod screenshare;
 pub mod twitch;
 pub mod types;
 pub mod url_utils;
+pub mod validation;
 
 use std::path::PathBuf;
 use std::sync::Arc;
