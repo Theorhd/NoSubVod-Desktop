@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use moka::future::Cache;
+use once_cell::sync::Lazy;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -781,16 +782,23 @@ async fn register_variant_proxy_target(
     Ok(proxy_id)
 }
 
+static RE_UUID_V4: Lazy<regex::Regex> = Lazy::new(|| {
+    regex::Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+        .unwrap()
+});
+
+static RE_TWITCH_LOGIN: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"^[a-z0-9_]{2,25}$").unwrap());
+
+static RE_VOD_ID_SAFE: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
+
 async fn resolve_variant_proxy_target(
     variant_cache: &Cache<String, String>,
     proxy_id: &str,
 ) -> AppResult<String> {
     let normalized = proxy_id.trim();
-    let uuid_re = regex::Regex::new(
-        r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-    )
-    .unwrap();
-    if !uuid_re.is_match(normalized) {
+    if !RE_UUID_V4.is_match(normalized) {
         return Err(AppError::BadRequest("Invalid variant proxy id".to_string()));
     }
 
@@ -1784,13 +1792,12 @@ impl TwitchService {
         &self,
         logins: Vec<String>,
     ) -> HashMap<String, LiveStream> {
-        let login_re = regex::Regex::new(r"^[a-z0-9_]{2,25}$").unwrap();
         let normalized: Vec<String> = {
             let mut seen = std::collections::HashSet::new();
             logins
                 .into_iter()
                 .map(|l| l.trim().to_lowercase())
-                .filter(|l| !l.is_empty() && login_re.is_match(l) && seen.insert(l.clone()))
+                .filter(|l| !l.is_empty() && RE_TWITCH_LOGIN.is_match(l) && seen.insert(l.clone()))
                 .take(80)
                 .collect()
         };
@@ -2207,9 +2214,7 @@ impl TwitchService {
         token: &str,
     ) -> AppResult<String> {
         let safe_vod_id = gql_escape(vod_id.trim());
-        let vod_id_re = regex::Regex::new(r"^[a-zA-Z0-9_-]+$")
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        if !vod_id_re.is_match(vod_id.trim()) {
+        if !RE_VOD_ID_SAFE.is_match(vod_id.trim()) {
             return Err(AppError::BadRequest("Invalid VOD identifier".to_string()));
         }
 
