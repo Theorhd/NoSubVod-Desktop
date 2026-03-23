@@ -64,6 +64,7 @@ export interface VideoMarker {
   displayTime: number;
   description: string;
   type: string;
+  url?: string | null;
 }
 
 export interface WatchlistEntry {

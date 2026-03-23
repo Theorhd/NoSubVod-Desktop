@@ -1,7 +1,17 @@
-import React, { useState } from 'react';
-import { Download as DownloadIcon, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
+import React, { useMemo, useRef, useState } from 'react';
+import {
+  Download as DownloadIcon,
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  ChevronLeft,
+  ChevronRight,
+  Play,
+  Pause,
+  X,
+} from 'lucide-react';
 import NSVPlayer, { NSVMediaSource } from './components/NSVPlayer';
-import { formatSize, formatDurationHuman } from './utils/formatters.ts';
+import { formatSize } from './utils/formatters.ts';
 import { TopBar } from './components/TopBar';
 import { DownloadedFile, useDownloadsData } from './hooks/useDownloadsData';
 
@@ -9,6 +19,18 @@ export default function Downloads() {
   const { files, activeDownloads, loading, resolveDownloadUrl } = useDownloadsData();
   const [playingFile, setPlayingFile] = useState<DownloadedFile | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const queueRef = useRef<HTMLDivElement | null>(null);
+
+  const formatDate = (value?: string) => {
+    if (!value) return 'Date inconnue';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return 'Date inconnue';
+    return d.toLocaleDateString('fr-FR', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  };
 
   const isTsFile = (file: DownloadedFile | null) => !!file?.name.toLowerCase().endsWith('.ts');
 
@@ -61,43 +83,53 @@ export default function Downloads() {
     return { label: 'Inconnu', icon: null, color: 'var(--text-muted)' };
   };
 
+  const getActiveThumbnail = (dl: any) => {
+    return (
+      dl.previewThumbnailURL ||
+      dl.previewImageURL ||
+      dl.preview_image_url ||
+      dl.thumbnail ||
+      null
+    );
+  };
+
+  const getActiveSubtitle = (dl: any) => {
+    return dl.speed || dl.download_speed || dl.rate || dl.current_time || 'En cours';
+  };
+
+  const knownVodById = useMemo(() => {
+    const byId: Record<string, DownloadedFile> = {};
+    files.forEach((f) => {
+      if (f.metadata?.id) byId[f.metadata.id] = f;
+    });
+    return byId;
+  }, [files]);
+
+  const scrollQueue = (direction: 'left' | 'right') => {
+    if (!queueRef.current) return;
+    const distance = direction === 'left' ? -360 : 360;
+    queueRef.current.scrollBy({ left: distance, behavior: 'smooth' });
+  };
+
   return (
     <>
       <TopBar mode="logo" title="Downloads" />
 
-      <div className="container">
+      <div className="container download-page">
         {playingFile && (
-          <div
-            style={{
-              marginBottom: '32px',
-              background: '#0e0e10',
-              padding: '16px',
-              borderRadius: '12px',
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: '16px',
-              }}
-            >
-              <h2 style={{ fontSize: '1.2rem', margin: 0 }}>{playingFile.name}</h2>
+          <div className="download-player-shell card">
+            <div className="download-player-head">
+              <h2>{playingFile.metadata?.title || playingFile.name}</h2>
               <button
                 onClick={() => {
                   setPlaybackError(null);
                   setPlayingFile(null);
                 }}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#ff4a4a',
-                  cursor: 'pointer',
-                  fontWeight: 'bold',
-                }}
+                className="queue-nav-btn"
+                type="button"
+                aria-label="Fermer le lecteur"
               >
-                Fermer
+                <X size={16} />
               </button>
             </div>
             {(() => {
@@ -121,92 +153,97 @@ export default function Downloads() {
                 />
               );
             })()}
-            {playbackError && (
-              <div
-                style={{
-                  marginTop: '10px',
-                  color: '#ff8b8b',
-                  fontSize: '0.9rem',
-                }}
-              >
-                {playbackError}
-              </div>
-            )}
+            {playbackError && <div className="error-text">{playbackError}</div>}
           </div>
         )}
 
         {activeDownloads.length > 0 && (
-          <div style={{ marginBottom: '32px' }}>
-            <h2 style={{ fontSize: '1.2rem', marginBottom: '16px', color: 'var(--text-muted)' }}>
-              Téléchargements actifs
-            </h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <section className="download-section">
+            <div className="download-section-head">
+              <h2>Download Queue</h2>
+              <div className="queue-nav-group">
+                <button
+                  type="button"
+                  className="queue-nav-btn"
+                  onClick={() => scrollQueue('left')}
+                  aria-label="Scroll left"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="queue-nav-btn"
+                  onClick={() => scrollQueue('right')}
+                  aria-label="Scroll right"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            </div>
+            <div className="download-queue-track" ref={queueRef}>
               {activeDownloads.map((dl) => {
                 const statusInfo = getStatusDisplay(dl.status);
+                const statusName = typeof dl.status === 'string' ? dl.status : '';
+                const knownFile = knownVodById[dl.vod_id];
+                const thumbnail =
+                  getActiveThumbnail(dl) || knownFile?.metadata?.previewThumbnailURL || null;
+                let queueIcon = statusInfo.icon;
+
+                if (statusName === 'Downloading') {
+                  queueIcon = <Pause size={14} />;
+                } else if (statusName === 'Queued') {
+                  queueIcon = <Clock size={14} />;
+                }
+
                 return (
-                  <div key={dl.vod_id} className="card" style={{ padding: '16px' }}>
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        marginBottom: '8px',
-                      }}
-                    >
-                      <div style={{ fontWeight: 'bold' }}>{dl.title}</div>
-                      <div
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          color: statusInfo.color,
-                          fontSize: '0.9rem',
-                        }}
-                      >
-                        {statusInfo.icon}
-                        {statusInfo.label}
+                  <article key={dl.vod_id} className="download-queue-card">
+                    <div className="download-queue-top">
+                      <div className="queue-thumb-wrap">
+                        {thumbnail ? (
+                          <img src={thumbnail} alt={dl.title} className="queue-thumb" />
+                        ) : (
+                          <div className="queue-thumb-placeholder">
+                            <DownloadIcon size={18} />
+                          </div>
+                        )}
+                      </div>
+                      <div className="download-queue-main">
+                        <div className="download-title-row">
+                          <h3>{dl.title}</h3>
+                          <span className="queue-status-dot" style={{ color: statusInfo.color }}>
+                            {queueIcon}
+                          </span>
+                        </div>
+                        <div className="download-queue-subline">{getActiveSubtitle(dl)}</div>
+                        <div className="download-progress-track">
+                          <div
+                            className="download-progress-fill"
+                            style={{
+                              width: `${dl.progress}%`,
+                              background:
+                                statusName === 'Downloading'
+                                  ? 'linear-gradient(90deg, #a855f7, #3b82f6)'
+                                  : undefined,
+                            }}
+                          />
+                        </div>
+                        <div className="download-queue-meta">
+                          <span>{dl.progress.toFixed(0)}%</span>
+                          <span style={{ color: statusInfo.color }}>{statusInfo.label}</span>
+                        </div>
                       </div>
                     </div>
-
-                    <div
-                      style={{
-                        background: 'var(--surface-soft)',
-                        height: '8px',
-                        borderRadius: '4px',
-                        overflow: 'hidden',
-                        marginBottom: '8px',
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: `${dl.progress}%`,
-                          height: '100%',
-                          background: statusInfo.color,
-                          transition: 'width 0.3s ease',
-                        }}
-                      />
-                    </div>
-
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        fontSize: '0.8rem',
-                        color: 'var(--text-muted)',
-                      }}
-                    >
-                      <span>{dl.progress.toFixed(1)}%</span>
-                      <span>{dl.current_time}</span>
-                    </div>
-                  </div>
+                  </article>
                 );
               })}
             </div>
-          </div>
+          </section>
         )}
 
-        <h2 style={{ fontSize: '1.2rem', marginBottom: '16px', color: 'var(--text-muted)' }}>
-          Fichiers terminés
-        </h2>
+        <section className="download-section">
+          <div className="download-section-head">
+            <h2>Local Storage</h2>
+          </div>
         {(() => {
           if (loading && files.length === 0) {
             return <div className="status-line">Chargement des fichiers...</div>;
@@ -215,96 +252,84 @@ export default function Downloads() {
             return <div className="status-line">Aucun fichier téléchargé trouvé.</div>;
           }
           return (
-            <div
-              style={{
-                display: 'grid',
-                gap: '16px',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-              }}
-            >
+            <div className="download-library-grid">
               {files.map((file) => (
-                <div
+                <article
                   key={file.name}
-                  className="card"
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '8px',
-                    padding: '16px',
-                  }}
+                  className="download-library-card"
                 >
-                  <div style={{ fontWeight: 'bold', wordBreak: 'break-all' }}>
-                    {file.metadata ? file.metadata.title : file.name}
-                  </div>
-                  {file.metadata && (
-                    <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                      {file.metadata.owner?.displayName || 'Unknown Streamer'}
-                      {file.metadata.game?.name ? ` • ${file.metadata.game.name}` : ''}
+                  <button
+                    type="button"
+                    className="download-library-thumb-btn"
+                    onClick={() => {
+                      setPlaybackError(null);
+                      setPlayingFile(file);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                  >
+                    <div className="download-library-thumb-wrap">
+                      {file.metadata?.previewThumbnailURL ? (
+                        <img
+                          src={file.metadata.previewThumbnailURL}
+                          alt={file.metadata?.title || file.name}
+                          className="download-library-thumb"
+                        />
+                      ) : (
+                        <div className="download-library-thumb-placeholder">
+                          <DownloadIcon size={22} />
+                        </div>
+                      )}
+                      <span className="download-complete-chip">
+                        <CheckCircle2 size={12} />
+                        COMPLETED
+                      </span>
                     </div>
-                  )}
-                  <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                    {formatSize(file.size)}
-                    {file.metadata?.lengthSeconds
-                      ? ` • ${formatDurationHuman(file.metadata.lengthSeconds)}`
-                      : ''}
+                  </button>
+
+                  <div className="download-library-body">
+                    <h3 className="download-file-title">{file.metadata?.title || file.name}</h3>
+                    <div className="download-meta-row">
+                      <span>
+                        {file.metadata?.owner?.displayName ||
+                          file.metadata?.owner?.login ||
+                          'Unknown channel'}
+                      </span>
+                      {file.metadata?.game?.name && <span>{file.metadata.game.name}</span>}
+                    </div>
+                    <div className="download-meta-row muted">
+                      <span>Size: {formatSize(file.size)}</span>
+                      <span>Date: {formatDate(file.metadata?.createdAt)}</span>
+                    </div>
+                    <div className="download-card-actions">
+                      <button
+                        onClick={() => {
+                          setPlaybackError(null);
+                          setPlayingFile(file);
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="download-card-btn primary"
+                        type="button"
+                      >
+                        <Play size={14} />
+                        Lire
+                      </button>
+                      <a
+                        href={resolveDownloadUrl(file.url)}
+                        download={file.name}
+                        className="download-card-btn secondary"
+                      >
+                        <DownloadIcon size={14} />
+                        Télécharger
+                      </a>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                    <button
-                      onClick={() => {
-                        setPlaybackError(null);
-                        setPlayingFile(file);
-                        window.scrollTo({ top: 0, behavior: 'smooth' });
-                      }}
-                      className="action-btn"
-                      style={{
-                        flex: 1,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '8px',
-                        background: '#9146ff',
-                        color: 'white',
-                        border: 'none',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      ▶ Lire
-                    </button>
-                    <a
-                      href={resolveDownloadUrl(file.url)}
-                      download={file.name}
-                      className="action-btn"
-                      style={{
-                        flex: 1,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '8px',
-                        textDecoration: 'none',
-                        background: '#3a3a3d',
-                        color: 'white',
-                      }}
-                    >
-                      <DownloadIcon size={16} />
-                      Télécharger
-                    </a>
-                  </div>
-                </div>
+                </article>
               ))}
             </div>
           );
         })()}
+        </section>
       </div>
-
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        .spinning {
-          animation: spin 2s linear infinite;
-        }
-      `}</style>
     </>
   );
 }

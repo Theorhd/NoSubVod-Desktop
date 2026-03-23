@@ -1,6 +1,7 @@
 import React from 'react';
 import { LiveStream } from '../../../shared/types';
 import { formatViewers, formatUptime } from '../utils/formatters';
+import { Users, Clock, Play } from 'lucide-react';
 
 type StreamCardProps = {
   stream: LiveStream;
@@ -18,7 +19,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({
   showBroadcaster = true,
 }) => {
   return (
-    <div className="vod-card live-card">
+    <div className="stream-card glass-hover">
       <div className="vod-thumb-wrap">
         <img
           src={
@@ -29,90 +30,101 @@ export const StreamCard: React.FC<StreamCardProps> = ({
           className="vod-thumb"
           loading="lazy"
         />
-        <div className="vod-chip live-chip">LIVE</div>
+        <div className="live-badge pulse">LIVE</div>
+        
+        <div className="vod-play-overlay" style={{
+          position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(255, 107, 135, 0.15)', opacity: 0, transition: 'opacity 0.3s ease',
+          pointerEvents: 'none', zIndex: 2
+        }}>
+          <div style={{
+            width: '48px', height: '48px', borderRadius: '50%', background: 'var(--danger)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff',
+            boxShadow: '0 0 20px rgba(255, 107, 135, 0.5)'
+          }}>
+            <Play size={24} fill="currentColor" />
+          </div>
+        </div>
+
+        <button 
+          className="stretched-link" 
+          aria-label={`Regarder le live de ${stream.broadcaster.displayName}`}
+          onClick={() => onWatch(stream.broadcaster.login)}
+          style={{ background: 'none', border: 'none', padding: 0 }}
+        />
       </div>
-      <div className="vod-body" style={{ position: 'relative' }}>
+
+      <div className="vod-body" style={{ position: 'relative', zIndex: 3 }}>
         {showBroadcaster && stream.broadcaster && (
-          <div className="vod-owner-row">
+          <div className="vod-meta" style={{ marginBottom: '8px', color: 'var(--text)' }}>
             {stream.broadcaster.profileImageURL && (
-              <img src={stream.broadcaster.profileImageURL} alt={stream.broadcaster.displayName} />
+              <img src={stream.broadcaster.profileImageURL} alt={stream.broadcaster.displayName} style={{ width: '20px', height: '20px', borderRadius: '50%' }} />
             )}
-            {onChannelClick ? (
-              <button
-                type="button"
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'inherit',
-                  font: 'inherit',
-                  padding: 0,
-                  cursor: 'pointer',
-                  fontWeight: 'bold',
-                }}
-                onClick={(e) => {
+            <button 
+              type="button"
+              style={{ 
+                background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit',
+                fontWeight: 600, cursor: onChannelClick ? 'pointer' : 'default',
+                textDecoration: 'none'
+              }}
+              onClick={(e) => {
+                if (onChannelClick) {
                   e.stopPropagation();
                   onChannelClick(stream.broadcaster.login);
-                }}
-              >
-                {stream.broadcaster.displayName}
-              </button>
-            ) : (
-              <span>{stream.broadcaster.displayName}</span>
-            )}
-          </div>
-        )}
-
-        <h3 title={stream.title}>
-          <button
-            type="button"
-            className="stretched-link"
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'inherit',
-              font: 'inherit',
-              padding: 0,
-              textAlign: 'left',
-              cursor: 'pointer',
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              onWatch(stream.broadcaster.login);
-            }}
-          >
-            {stream.title}
-          </button>
-        </h3>
-
-        <div className="vod-meta-row" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          {stream.game?.name && onCategoryClick ? (
-            <button
-              type="button"
-              className="meta-tag-btn"
-              style={{ position: 'relative', zIndex: 2 }}
-              onClick={(e) => {
-                e.stopPropagation();
-                onCategoryClick(stream.game!.name);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.stopPropagation();
-                  onCategoryClick(stream.game!.name);
                 }
               }}
             >
-              {stream.game.name}
+              {stream.broadcaster.displayName}
             </button>
-          ) : (
-            <span>{stream.game?.name || 'No category'}</span>
-          )}
+          </div>
+        )}
 
-          <span className="live-viewers">{formatViewers(stream.viewerCount)}</span>
+        <h3 className="vod-title" title={stream.title} style={{ position: 'relative', zIndex: 3 }}>{stream.title}</h3>
+
+        <div className="vod-meta" style={{ justifyContent: 'space-between', marginTop: '8px' }}>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            {stream.game?.name && onCategoryClick ? (
+              <button
+                type="button"
+                className="secondary-btn"
+                style={{ position: 'relative', zIndex: 4, fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px', border: '1px solid var(--primary-glow)', color: 'var(--primary)', fontWeight: 700 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCategoryClick(stream.game!.name);
+                }}
+              >
+                {stream.game.name}
+              </button>
+            ) : (
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{stream.game?.name || 'No category'}</span>
+            )}
+            
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--success)', fontWeight: 700 }}>
+              <Users size={12} />
+              {formatViewers(stream.viewerCount)}
+            </span>
+          </div>
         </div>
+        
         {stream.startedAt && (
-          <div className="vod-date">Uptime: {formatUptime(stream.startedAt)}</div>
+          <div style={{ marginTop: '8px', fontSize: '0.7rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <Clock size={12} />
+            Uptime: {formatUptime(stream.startedAt)}
+          </div>
         )}
       </div>
+
+      <style>{`
+        .stream-card:hover .vod-play-overlay { opacity: 1 !important; }
+        @keyframes pulse-live {
+          0% { box-shadow: 0 0 0 0 rgba(255, 107, 135, 0.7); }
+          70% { box-shadow: 0 0 0 10px rgba(255, 107, 135, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(255, 107, 135, 0); }
+        }
+        .pulse {
+          animation: pulse-live 2s infinite;
+        }
+      `}</style>
     </div>
   );
 };

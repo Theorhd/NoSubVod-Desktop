@@ -53,11 +53,7 @@ function BottomNav({ items }: Readonly<{ items: NavItem[] }>) {
   }
 
   return (
-    <nav
-      className="bottom-nav"
-      aria-label="Main Navigation"
-      style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}
-    >
+    <nav className={`bottom-nav nav-count-${items.length}`} aria-label="Main Navigation">
       {items.map((item) => {
         const isActive =
           item.path === '/' ? location.pathname === '/' : location.pathname === item.path;
@@ -68,9 +64,7 @@ function BottomNav({ items }: Readonly<{ items: NavItem[] }>) {
             onClick={() => navigate(item.path)}
             type="button"
           >
-            <span className="nav-icon">
-              <item.Icon size={item.isHome ? 24 : 20} />
-            </span>
+            <item.Icon size={item.isHome ? 28 : 22} />
             <span className="nav-label">{item.label}</span>
           </button>
         );

@@ -221,9 +221,10 @@ export default function Home() {
         mode="logo"
         title="NoSubVod"
         actions={
-          <>
+          <div style={{ display: 'flex', gap: '8px' }}>
             <button
-              className="add-btn"
+              className="action-btn"
+              style={{ width: '40px', height: '40px', padding: 0, borderRadius: '50%' }}
               onClick={() => setShowModal(true)}
               aria-label="Add sub"
               type="button"
@@ -231,7 +232,8 @@ export default function Home() {
               +
             </button>
             <button
-              className="settings-btn"
+              className="secondary-btn"
+              style={{ width: '40px', height: '40px', padding: 0, borderRadius: '50%' }}
               onClick={() => navigate('/settings')}
               aria-label="Open settings"
               title="Settings"
@@ -239,7 +241,7 @@ export default function Home() {
             >
               ⚙
             </button>
-          </>
+          </div>
         }
       />
 
