@@ -59,6 +59,20 @@ export function useWebRTCViewer(
     [hasRemoteStream, state.interactive, sendWs]
   );
 
+  const sendRemoteControl = useCallback(
+    (payload: RemoteControlPayload) => {
+      if (!hasRemoteStream) {
+        return;
+      }
+
+      sendWs({
+        type: 'control',
+        payload,
+      });
+    },
+    [hasRemoteStream, sendWs]
+  );
+
   const cleanupViewerPeer = useCallback(() => {
     const peer = viewerPeerRef.current;
     if (peer) {
@@ -368,5 +382,6 @@ export function useWebRTCViewer(
     setHasRemoteStream,
     streamError,
     sendRemoteInput,
+    sendRemoteControl,
   };
 }

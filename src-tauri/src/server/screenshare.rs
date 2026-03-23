@@ -91,11 +91,19 @@ struct SessionInternal {
     input_rate_limit: HashMap<String, u64>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteControlPayload {
+    command: String,
+    value: Option<f64>,
+}
+
 #[derive(Clone)]
 pub struct ScreenShareService {
     internal: Arc<RwLock<SessionInternal>>,
     /// Global broadcast channel for system events and state updates
     broadcast_tx: broadcast::Sender<Arc<str>>,
+    app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
 }
 
 use super::error::{AppError, AppResult};
@@ -111,6 +119,7 @@ impl ScreenShareService {
                 input_rate_limit: HashMap::new(),
             })),
             broadcast_tx,
+            app_handle: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -123,6 +132,10 @@ impl ScreenShareService {
         app_handle: Option<&tauri::AppHandle>,
         request: StartScreenShareRequest,
     ) -> AppResult<ScreenShareSessionState> {
+        if let Some(app) = app_handle {
+            let mut h = self.app_handle.write().await;
+            *h = Some(app.clone());
+        }
         let session_id = uuid::Uuid::new_v4().to_string();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -290,11 +303,86 @@ impl ScreenShareService {
             "join" => self.handle_join(client_id, message).await,
             "signal" => self.handle_signal(client_id, message).await,
             "input" => self.handle_input(client_id, message).await,
+            "control" => self.handle_control(client_id, message).await,
             "ping" => self.handle_ping(client_id).await,
             _ => {
                 self.send_error(client_id, "Unknown signaling message type")
                     .await
             }
+        }
+    }
+
+    async fn handle_control(&self, client_id: &str, message: ClientMessage) {
+        let internal = self.internal.read().await;
+        let Some(client) = internal.clients.get(client_id) else {
+            return;
+        };
+
+        if client.role != "viewer" {
+            drop(internal);
+            let _ = self.send_error(client_id, "Only viewers can send control commands").await;
+            return;
+        }
+
+        if !internal.state.active {
+            return;
+        }
+        drop(internal);
+
+        let Some(raw_payload) = message.payload else {
+            return;
+        };
+        let Ok(control_payload) = serde_json::from_value::<RemoteControlPayload>(raw_payload) else {
+            let _ = self.send_error(client_id, "Invalid control payload").await;
+            return;
+        };
+
+        let app_handle = self.app_handle.read().await;
+        let Some(app) = app_handle.as_ref() else {
+            eprintln!("[screenshare] Control received but app_handle is None!");
+            return;
+        };
+
+        if let Some(window) = app.get_webview_window(SCREEN_SHARE_BROWSER_LABEL) {
+            // Force le focus pour "réveiller" les permissions de lecture
+            let _ = window.set_focus();
+
+            let cmd = control_payload.command.as_str();
+            let val = control_payload.value.unwrap_or(0.0);
+            
+            eprintln!("[screenshare] Executing remote control: {} (val: {:?})", cmd, val);
+
+            let js = match cmd {
+                "play" => "const v = document.querySelector('video'); if(v) v.play(); else document.querySelectorAll('video').forEach(el => el.play());".to_string(),
+                "pause" => "const v = document.querySelector('video'); if(v) v.pause(); else document.querySelectorAll('video').forEach(el => el.pause());".to_string(),
+                "seek" => format!("document.querySelectorAll('video').forEach(v => v.currentTime += {});", val),
+                "volume" => format!("document.querySelectorAll('video').forEach(v => v.volume = {});", val),
+                "mute" => "document.querySelectorAll('video').forEach(v => v.muted = !v.muted);".to_string(),
+                _ => return,
+            };
+
+            // On utilise une version plus simple mais répétée pour être sûr de toucher le bon élément
+            let _ = window.eval(&js);
+            
+            // On tente aussi de toucher les iframes
+            let iframe_js = format!(
+                r#"document.querySelectorAll('iframe').forEach(ifr => {{
+                    try {{
+                        const doc = ifr.contentDocument || ifr.contentWindow.document;
+                        doc.querySelectorAll('video').forEach(v => {{
+                            {}
+                        }});
+                    }} catch(e) {{}}
+                }});"#,
+                match cmd {
+                    "play" => "v.play();",
+                    "pause" => "v.pause();",
+                    "seek" => "v.currentTime += val;", // Note: val n'est pas défini ici en JS pur, on va injecter la valeur
+                    _ => "",
+                }.replace("val", &val.to_string())
+            );
+            
+            let _ = window.eval(&iframe_js);
         }
     }
 

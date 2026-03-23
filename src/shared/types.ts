@@ -172,6 +172,11 @@ export type RemoteInputPayload = {
   deltaY?: number;
 };
 
+export type RemoteControlPayload = {
+  command: 'play' | 'pause' | 'seek' | 'volume' | 'mute';
+  value?: number;
+};
+
 export type WsMessage = {
   type?: string;
   state?: ScreenShareSessionState;
