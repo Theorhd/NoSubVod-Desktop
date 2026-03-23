@@ -369,7 +369,7 @@ export default function ScreenShare() {
 
     if (message.role === 'viewer') {
       if (roleRef.current === 'host') {
-        void createHostPeer(message.clientId);
+        createHostPeer(message.clientId);
       }
       return;
     }
@@ -458,7 +458,7 @@ export default function ScreenShare() {
         }
         return;
       case 'signal':
-        void handleSignalMessage(message);
+        handleSignalMessage(message);
         return;
       case 'control':
         handleControlMessage(message);
@@ -543,9 +543,9 @@ export default function ScreenShare() {
       }
     };
 
-    void load();
+    load();
     const timer = globalThis.setInterval(() => {
-      void load();
+      load();
     }, 3000);
 
     return () => {
@@ -631,9 +631,9 @@ export default function ScreenShare() {
       }
     };
 
-    void loadSnapshot();
+    loadSnapshot();
     const timer = globalThis.setInterval(() => {
-      void loadSnapshot();
+      loadSnapshot();
     }, 450);
 
     return () => {
@@ -913,7 +913,7 @@ export default function ScreenShare() {
               <button
                 className="action-btn cancel"
                 disabled={isStopping}
-                onClick={() => void handleStop()}
+                onClick={() => handleStop()}
                 type="button"
               >
                 {isStopping ? 'Stopping...' : 'Stop session'}
@@ -951,7 +951,7 @@ export default function ScreenShare() {
               <button
                 className="action-btn"
                 disabled={hostStreaming}
-                onClick={() => void startHostWebRtc()}
+                onClick={() => startHostWebRtc()}
                 type="button"
               >
                 {hostStreaming ? 'WebRTC HD active' : 'Activer flux WebRTC HD (60 fps)'}
