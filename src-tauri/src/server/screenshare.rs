@@ -311,7 +311,9 @@ impl ScreenShareService {
 
         if client.role != "viewer" {
             drop(internal);
-            let _ = self.send_error(client_id, "Only viewers can send control commands").await;
+            let _ = self
+                .send_error(client_id, "Only viewers can send control commands")
+                .await;
             return;
         }
 
@@ -332,14 +334,15 @@ impl ScreenShareService {
                 let _ = host_client.sender.send(control_forward);
             }
         }
-        
+
         let is_browser = internal.state.source_type == Some(ScreenShareSourceType::Browser);
         drop(internal);
 
         let Some(raw_payload) = message.payload else {
             return;
         };
-        let Ok(control_payload) = serde_json::from_value::<RemoteControlPayload>(raw_payload) else {
+        let Ok(control_payload) = serde_json::from_value::<RemoteControlPayload>(raw_payload)
+        else {
             let _ = self.send_error(client_id, "Invalid control payload").await;
             return;
         };
@@ -352,7 +355,10 @@ impl ScreenShareService {
 
         let cmd = control_payload.command.as_str();
         let val = control_payload.value.unwrap_or(0.0);
-        eprintln!("[screenshare] Executing remote control: {} (val: {:?})", cmd, val);
+        eprintln!(
+            "[screenshare] Executing remote control: {} (val: {:?})",
+            cmd, val
+        );
 
         let js_direct = match cmd {
             "play" => r#"document.querySelectorAll('video').forEach(v => {
@@ -361,11 +367,20 @@ impl ScreenShareService {
                     v.muted = true; 
                     v.play(); 
                 });
-            });"#.to_string(),
+            });"#
+                .to_string(),
             "pause" => "document.querySelectorAll('video').forEach(v => v.pause());".to_string(),
-            "seek" => format!("document.querySelectorAll('video').forEach(v => v.currentTime += {});", val),
-            "volume" => format!("document.querySelectorAll('video').forEach(v => v.volume = {});", val),
-            "mute" => "document.querySelectorAll('video').forEach(v => v.muted = !v.muted);".to_string(),
+            "seek" => format!(
+                "document.querySelectorAll('video').forEach(v => v.currentTime += {});",
+                val
+            ),
+            "volume" => format!(
+                "document.querySelectorAll('video').forEach(v => v.volume = {});",
+                val
+            ),
+            "mute" => {
+                "document.querySelectorAll('video').forEach(v => v.muted = !v.muted);".to_string()
+            }
             _ => String::new(),
         };
 
@@ -395,16 +410,23 @@ impl ScreenShareService {
                     "volume" => "v.volume = val;",
                     "mute" => "v.muted = !v.muted;",
                     _ => "",
-                }.replace("val", &val.to_string())
+                }
+                .replace("val", &val.to_string())
             )
         } else {
             String::new()
         };
 
         for window in app.webview_windows().values() {
-            if !js_direct.is_empty() { let _ = window.eval(&js_direct); }
-            if !js_iframe.is_empty() { let _ = window.eval(&js_iframe); }
-            if !js_event.is_empty() { let _ = window.eval(&js_event); }
+            if !js_direct.is_empty() {
+                let _ = window.eval(&js_direct);
+            }
+            if !js_iframe.is_empty() {
+                let _ = window.eval(&js_iframe);
+            }
+            if !js_event.is_empty() {
+                let _ = window.eval(&js_event);
+            }
         }
 
         let _ = app.emit("nsv-control", &control_payload);
@@ -414,66 +436,186 @@ impl ScreenShareService {
             if !is_browser {
                 match cmd {
                     "play" | "pause" => {
-                        let _ = self.inject_remote_input(&RemoteInputPayload {
-                            kind: "keyboard".to_string(), action: Some("down".to_string()),
-                            x: None, y: None, button: None, key: Some("MediaPlayPause".to_string()), delta_y: None,
-                        }, is_browser).await;
-                        let _ = self.inject_remote_input(&RemoteInputPayload {
-                            kind: "keyboard".to_string(), action: Some("up".to_string()),
-                            x: None, y: None, button: None, key: Some("MediaPlayPause".to_string()), delta_y: None,
-                        }, is_browser).await;
+                        let _ = self
+                            .inject_remote_input(
+                                &RemoteInputPayload {
+                                    kind: "keyboard".to_string(),
+                                    action: Some("down".to_string()),
+                                    x: None,
+                                    y: None,
+                                    button: None,
+                                    key: Some("MediaPlayPause".to_string()),
+                                    delta_y: None,
+                                },
+                                is_browser,
+                            )
+                            .await;
+                        let _ = self
+                            .inject_remote_input(
+                                &RemoteInputPayload {
+                                    kind: "keyboard".to_string(),
+                                    action: Some("up".to_string()),
+                                    x: None,
+                                    y: None,
+                                    button: None,
+                                    key: Some("MediaPlayPause".to_string()),
+                                    delta_y: None,
+                                },
+                                is_browser,
+                            )
+                            .await;
 
-                        let _ = self.inject_remote_input(&RemoteInputPayload {
-                            kind: "keyboard".to_string(), action: Some("down".to_string()),
-                            x: None, y: None, button: None, key: Some(" ".to_string()), delta_y: None,
-                        }, is_browser).await;
-                        let _ = self.inject_remote_input(&RemoteInputPayload {
-                            kind: "keyboard".to_string(), action: Some("up".to_string()),
-                            x: None, y: None, button: None, key: Some(" ".to_string()), delta_y: None,
-                        }, is_browser).await;
+                        let _ = self
+                            .inject_remote_input(
+                                &RemoteInputPayload {
+                                    kind: "keyboard".to_string(),
+                                    action: Some("down".to_string()),
+                                    x: None,
+                                    y: None,
+                                    button: None,
+                                    key: Some(" ".to_string()),
+                                    delta_y: None,
+                                },
+                                is_browser,
+                            )
+                            .await;
+                        let _ = self
+                            .inject_remote_input(
+                                &RemoteInputPayload {
+                                    kind: "keyboard".to_string(),
+                                    action: Some("up".to_string()),
+                                    x: None,
+                                    y: None,
+                                    button: None,
+                                    key: Some(" ".to_string()),
+                                    delta_y: None,
+                                },
+                                is_browser,
+                            )
+                            .await;
 
-                        let _ = self.inject_remote_input(&RemoteInputPayload {
-                            kind: "keyboard".to_string(), action: Some("down".to_string()),
-                            x: None, y: None, button: None, key: Some("K".to_string()), delta_y: None,
-                        }, is_browser).await;
-                        let _ = self.inject_remote_input(&RemoteInputPayload {
-                            kind: "keyboard".to_string(), action: Some("up".to_string()),
-                            x: None, y: None, button: None, key: Some("K".to_string()), delta_y: None,
-                        }, is_browser).await;
-                    },
+                        let _ = self
+                            .inject_remote_input(
+                                &RemoteInputPayload {
+                                    kind: "keyboard".to_string(),
+                                    action: Some("down".to_string()),
+                                    x: None,
+                                    y: None,
+                                    button: None,
+                                    key: Some("K".to_string()),
+                                    delta_y: None,
+                                },
+                                is_browser,
+                            )
+                            .await;
+                        let _ = self
+                            .inject_remote_input(
+                                &RemoteInputPayload {
+                                    kind: "keyboard".to_string(),
+                                    action: Some("up".to_string()),
+                                    x: None,
+                                    y: None,
+                                    button: None,
+                                    key: Some("K".to_string()),
+                                    delta_y: None,
+                                },
+                                is_browser,
+                            )
+                            .await;
+                    }
                     "seek" => {
                         let key = if val > 0.0 { "ArrowRight" } else { "ArrowLeft" };
-                        let _ = self.inject_remote_input(&RemoteInputPayload {
-                            kind: "keyboard".to_string(), action: Some("down".to_string()),
-                            x: None, y: None, button: None, key: Some(key.to_string()), delta_y: None,
-                        }, is_browser).await;
-                        let _ = self.inject_remote_input(&RemoteInputPayload {
-                            kind: "keyboard".to_string(), action: Some("up".to_string()),
-                            x: None, y: None, button: None, key: Some(key.to_string()), delta_y: None,
-                        }, is_browser).await;
-                    },
+                        let _ = self
+                            .inject_remote_input(
+                                &RemoteInputPayload {
+                                    kind: "keyboard".to_string(),
+                                    action: Some("down".to_string()),
+                                    x: None,
+                                    y: None,
+                                    button: None,
+                                    key: Some(key.to_string()),
+                                    delta_y: None,
+                                },
+                                is_browser,
+                            )
+                            .await;
+                        let _ = self
+                            .inject_remote_input(
+                                &RemoteInputPayload {
+                                    kind: "keyboard".to_string(),
+                                    action: Some("up".to_string()),
+                                    x: None,
+                                    y: None,
+                                    button: None,
+                                    key: Some(key.to_string()),
+                                    delta_y: None,
+                                },
+                                is_browser,
+                            )
+                            .await;
+                    }
                     "mute" => {
-                        let _ = self.inject_remote_input(&RemoteInputPayload {
-                            kind: "keyboard".to_string(), action: Some("down".to_string()),
-                            x: None, y: None, button: None, key: Some("M".to_string()), delta_y: None,
-                        }, is_browser).await;
-                        let _ = self.inject_remote_input(&RemoteInputPayload {
-                            kind: "keyboard".to_string(), action: Some("up".to_string()),
-                            x: None, y: None, button: None, key: Some("M".to_string()), delta_y: None,
-                        }, is_browser).await;
-                    },
+                        let _ = self
+                            .inject_remote_input(
+                                &RemoteInputPayload {
+                                    kind: "keyboard".to_string(),
+                                    action: Some("down".to_string()),
+                                    x: None,
+                                    y: None,
+                                    button: None,
+                                    key: Some("M".to_string()),
+                                    delta_y: None,
+                                },
+                                is_browser,
+                            )
+                            .await;
+                        let _ = self
+                            .inject_remote_input(
+                                &RemoteInputPayload {
+                                    kind: "keyboard".to_string(),
+                                    action: Some("up".to_string()),
+                                    x: None,
+                                    y: None,
+                                    button: None,
+                                    key: Some("M".to_string()),
+                                    delta_y: None,
+                                },
+                                is_browser,
+                            )
+                            .await;
+                    }
                     "volume" => {
                         let key = if val > 0.5 { "ArrowUp" } else { "ArrowDown" };
-                        let _ = self.inject_remote_input(&RemoteInputPayload {
-                            kind: "keyboard".to_string(), action: Some("down".to_string()),
-                            x: None, y: None, button: None, key: Some(key.to_string()), delta_y: None,
-                        }, is_browser).await;
-                        let _ = self.inject_remote_input(&RemoteInputPayload {
-                            kind: "keyboard".to_string(), action: Some("up".to_string()),
-                            x: None, y: None, button: None, key: Some(key.to_string()), delta_y: None,
-                        }, is_browser).await;
-                    },
-                    _ => {},
+                        let _ = self
+                            .inject_remote_input(
+                                &RemoteInputPayload {
+                                    kind: "keyboard".to_string(),
+                                    action: Some("down".to_string()),
+                                    x: None,
+                                    y: None,
+                                    button: None,
+                                    key: Some(key.to_string()),
+                                    delta_y: None,
+                                },
+                                is_browser,
+                            )
+                            .await;
+                        let _ = self
+                            .inject_remote_input(
+                                &RemoteInputPayload {
+                                    kind: "keyboard".to_string(),
+                                    action: Some("up".to_string()),
+                                    x: None,
+                                    y: None,
+                                    button: None,
+                                    key: Some(key.to_string()),
+                                    delta_y: None,
+                                },
+                                is_browser,
+                            )
+                            .await;
+                    }
+                    _ => {}
                 }
             }
         }
@@ -481,7 +623,8 @@ impl ScreenShareService {
 
     async fn handle_join(&self, client_id: &str, message: ClientMessage) {
         let Some(role) = message.role else {
-            self.send_error(client_id, "Missing role in join message").await;
+            self.send_error(client_id, "Missing role in join message")
+                .await;
             return;
         };
 
@@ -491,17 +634,23 @@ impl ScreenShareService {
             if let Some(existing_host) = internal.host_client_id.as_ref() {
                 if existing_host != client_id {
                     drop(internal);
-                    self.send_error(client_id, "A host is already connected").await;
+                    self.send_error(client_id, "A host is already connected")
+                        .await;
                     return;
                 }
             } else {
                 internal.host_client_id = Some(client_id.to_string());
             }
         } else if role == "viewer" {
-            let current_viewers = internal.clients.values().filter(|c| c.role == "viewer").count();
+            let current_viewers = internal
+                .clients
+                .values()
+                .filter(|c| c.role == "viewer")
+                .count();
             if current_viewers >= internal.state.max_viewers as usize {
                 drop(internal);
-                self.send_error(client_id, "Viewer limit reached for this session").await;
+                self.send_error(client_id, "Viewer limit reached for this session")
+                    .await;
                 return;
             }
         }
@@ -517,11 +666,17 @@ impl ScreenShareService {
             .map(|(id, c)| serde_json::json!({ "clientId": id, "role": c.role }))
             .collect();
 
-        let viewer_count = internal.clients.values().filter(|c| c.role == "viewer").count();
+        let viewer_count = internal
+            .clients
+            .values()
+            .filter(|c| c.role == "viewer")
+            .count();
         internal.state.current_viewers = viewer_count as u8;
         let state_snapshot = internal.state.clone();
 
-        let peers_msg: Arc<str> = serde_json::json!({ "type": "peers", "peers": peers }).to_string().into();
+        let peers_msg: Arc<str> = serde_json::json!({ "type": "peers", "peers": peers })
+            .to_string()
+            .into();
         if let Some(c) = internal.clients.get(client_id) {
             let _ = c.sender.send(peers_msg);
         }
@@ -539,7 +694,11 @@ impl ScreenShareService {
         let _ = self.broadcast_tx.send(joined_msg);
         self.broadcast_state(&state_snapshot).await;
 
-        self.send_json(client_id, serde_json::json!({ "type": "joined", "clientId": client_id })).await;
+        self.send_json(
+            client_id,
+            serde_json::json!({ "type": "joined", "clientId": client_id }),
+        )
+        .await;
     }
 
     async fn handle_signal(&self, client_id: &str, message: ClientMessage) {
@@ -571,7 +730,8 @@ impl ScreenShareService {
 
         if client.role != "viewer" {
             drop(internal);
-            self.send_error(client_id, "Only viewers can send remote inputs").await;
+            self.send_error(client_id, "Only viewers can send remote inputs")
+                .await;
             return;
         }
 
@@ -606,7 +766,8 @@ impl ScreenShareService {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        self.send_json(client_id, serde_json::json!({ "type": "pong", "ts": ts })).await;
+        self.send_json(client_id, serde_json::json!({ "type": "pong", "ts": ts }))
+            .await;
     }
 
     async fn unregister_client(&self, client_id: &str) {
@@ -617,7 +778,11 @@ impl ScreenShareService {
         }
         internal.input_rate_limit.remove(client_id);
 
-        let viewer_count = internal.clients.values().filter(|c| c.role == "viewer").count();
+        let viewer_count = internal
+            .clients
+            .values()
+            .filter(|c| c.role == "viewer")
+            .count();
         internal.state.current_viewers = viewer_count as u8;
         let state_snapshot = internal.state.clone();
         drop(internal);
@@ -637,12 +802,16 @@ impl ScreenShareService {
     }
 
     async fn broadcast_state(&self, state: &ScreenShareSessionState) {
-        let msg: Arc<str> = serde_json::json!({ "type": "session-state", "state": state }).to_string().into();
+        let msg: Arc<str> = serde_json::json!({ "type": "session-state", "state": state })
+            .to_string()
+            .into();
         let _ = self.broadcast_tx.send(msg);
     }
 
     async fn broadcast_system_message(&self, message: &str) {
-        let msg: Arc<str> = serde_json::json!({ "type": "system", "message": message }).to_string().into();
+        let msg: Arc<str> = serde_json::json!({ "type": "system", "message": message })
+            .to_string()
+            .into();
         let _ = self.broadcast_tx.send(msg);
     }
 
@@ -712,12 +881,18 @@ impl ScreenShareService {
         true
     }
 
-    async fn inject_remote_input(&self, payload: &RemoteInputPayload, is_browser_mode: bool) -> AppResult<()> {
+    async fn inject_remote_input(
+        &self,
+        payload: &RemoteInputPayload,
+        is_browser_mode: bool,
+    ) -> AppResult<()> {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = payload;
             let _ = is_browser_mode;
-            Err(AppError::BadRequest("Remote input injection is supported on Windows only".to_string()))
+            Err(AppError::BadRequest(
+                "Remote input injection is supported on Windows only".to_string(),
+            ))
         }
 
         #[cfg(target_os = "windows")]
@@ -745,16 +920,21 @@ fn get_target_window(force_internal_browser: bool) -> AppResult<HWND> {
     let foreground = unsafe { GetForegroundWindow() };
 
     if force_internal_browser {
-        let hwnd = internal_hwnd.filter(|h| !h.0.is_null())
-            .ok_or_else(|| AppError::NotFound("Screen share browser window was not found".to_string()))?;
+        let hwnd = internal_hwnd.filter(|h| !h.0.is_null()).ok_or_else(|| {
+            AppError::NotFound("Screen share browser window was not found".to_string())
+        })?;
         if foreground != hwnd {
-            return Err(AppError::BadRequest("Input blocked: target browser window must be focused".to_string()));
+            return Err(AppError::BadRequest(
+                "Input blocked: target browser window must be focused".to_string(),
+            ));
         }
         return Ok(hwnd);
     }
 
     if foreground.0.is_null() {
-        return Err(AppError::NotFound("No active window found for input injection".to_string()));
+        return Err(AppError::NotFound(
+            "No active window found for input injection".to_string(),
+        ));
     }
     Ok(foreground)
 }
@@ -784,7 +964,9 @@ fn emit_mouse(flags: MOUSE_EVENT_FLAGS, data: i32) -> AppResult<()> {
     };
     let sent = unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) };
     if sent == 0 {
-        return Err(AppError::Internal("SendInput mouse injection failed".to_string()));
+        return Err(AppError::Internal(
+            "SendInput mouse injection failed".to_string(),
+        ));
     }
     Ok(())
 }
@@ -797,7 +979,11 @@ fn emit_key(vk: u16, key_up: bool) -> AppResult<()> {
             ki: KEYBDINPUT {
                 wVk: VIRTUAL_KEY(vk),
                 wScan: 0,
-                dwFlags: if key_up { KEYEVENTF_KEYUP } else { Default::default() },
+                dwFlags: if key_up {
+                    KEYEVENTF_KEYUP
+                } else {
+                    Default::default()
+                },
                 time: 0,
                 dwExtraInfo: 0,
             },
@@ -805,7 +991,9 @@ fn emit_key(vk: u16, key_up: bool) -> AppResult<()> {
     };
     let sent = unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) };
     if sent == 0 {
-        return Err(AppError::Internal("SendInput keyboard injection failed".to_string()));
+        return Err(AppError::Internal(
+            "SendInput keyboard injection failed".to_string(),
+        ));
     }
     Ok(())
 }
@@ -841,7 +1029,10 @@ fn map_key_to_vk(key: &str) -> Option<u16> {
 }
 
 #[cfg(target_os = "windows")]
-fn inject_remote_input_windows(payload: &RemoteInputPayload, is_browser_mode: bool) -> AppResult<()> {
+fn inject_remote_input_windows(
+    payload: &RemoteInputPayload,
+    is_browser_mode: bool,
+) -> AppResult<()> {
     let hwnd = get_target_window(is_browser_mode)?;
     let rect = window_rect(hwnd)?;
     let width = (rect.right - rect.left).max(1) as f64;
@@ -877,13 +1068,17 @@ fn inject_remote_input_windows(payload: &RemoteInputPayload, is_browser_mode: bo
                     let delta = payload.delta_y.unwrap_or(0.0).round() as i32;
                     emit_mouse(MOUSEEVENTF_WHEEL, delta)
                 }
-                _ => Err(AppError::BadRequest("Unsupported pointer action".to_string())),
+                _ => Err(AppError::BadRequest(
+                    "Unsupported pointer action".to_string(),
+                )),
             }
         }
         "keyboard" => {
             let action = payload.action.as_deref().unwrap_or("down");
             let Some(key) = payload.key.as_deref() else {
-                return Err(AppError::BadRequest("Keyboard input missing key".to_string()));
+                return Err(AppError::BadRequest(
+                    "Keyboard input missing key".to_string(),
+                ));
             };
             let Some(vk) = map_key_to_vk(key) else {
                 return Err(AppError::BadRequest("Unsupported keyboard key".to_string()));
@@ -891,7 +1086,9 @@ fn inject_remote_input_windows(payload: &RemoteInputPayload, is_browser_mode: bo
             match action {
                 "down" => emit_key(vk, false),
                 "up" => emit_key(vk, true),
-                _ => Err(AppError::BadRequest("Unsupported keyboard action".to_string())),
+                _ => Err(AppError::BadRequest(
+                    "Unsupported keyboard action".to_string(),
+                )),
             }
         }
         _ => Err(AppError::BadRequest("Unsupported input kind".to_string())),

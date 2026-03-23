@@ -127,102 +127,96 @@ const AdblockSection = ({ settings, setSettings, setSuccess, proxies, activeProx
 
   return (
     <div className="card settings-card">
-    <h2>Adblock Proxies</h2>
-    <p className="settings-description">
-      Utilise un proxy tiers pour contourner les pubs Twitch sur les lives et les VODs. Attention:
-      L&apos;utilisation d&apos;un proxy public peut ralentir le flux vidéo ou se bloquer
-      temporairement.
-    </p>
+      <h2>Adblock Proxies</h2>
+      <p className="settings-description">
+        Utilise un proxy tiers pour contourner les pubs Twitch sur les lives et les VODs. Attention:
+        L&apos;utilisation d&apos;un proxy public peut ralentir le flux vidéo ou se bloquer
+        temporairement.
+      </p>
 
-    <div className="toggle-row">
-      <span>
-        <strong>
-          <label htmlFor="adblockEnabled" className="mb-0">
-            Activer le Proxy Adblock
-          </label>
-        </strong>
-        <small>Désactivé par défaut. Activez-le si vous avez trop de pubs.</small>
-      </span>
-      <input
-        id="adblockEnabled"
-        type="checkbox"
-        checked={settings.adblockEnabled}
-        onChange={(e) => {
-          setSettings((prev: any) => ({ ...prev, adblockEnabled: e.target.checked }));
-          setSuccess('');
-        }}
-      />
-    </div>
+      <div className="toggle-row">
+        <span>
+          <strong>
+            <label htmlFor="adblockEnabled" className="mb-0">
+              Activer le Proxy Adblock
+            </label>
+          </strong>
+          <small>Désactivé par défaut. Activez-le si vous avez trop de pubs.</small>
+        </span>
+        <input
+          id="adblockEnabled"
+          type="checkbox"
+          checked={settings.adblockEnabled}
+          onChange={(e) => {
+            setSettings((prev: any) => ({ ...prev, adblockEnabled: e.target.checked }));
+            setSuccess('');
+          }}
+        />
+      </div>
 
-    {settings.adblockEnabled && (
-      <>
-        <div className="settings-group mt-2">
-          <label htmlFor="adblockProxyMode" className="settings-label">
-            Mode de Sélection du Proxy
-          </label>
-          <select
-            id="adblockProxyMode"
-            className="settings-select"
-            value={settings.adblockProxyMode || 'auto'}
-            onChange={(e) => {
-              setSettings((prev: any) => ({ ...prev, adblockProxyMode: e.target.value }));
-              setSuccess('');
-            }}
-          >
-            <option value="auto">Automatique (recommandé - sélectionne le plus rapide)</option>
-            <option value="manual">Manuel (choisir un proxy spécifique)</option>
-          </select>
-        </div>
-
-        {settings.adblockProxyMode === 'manual' && (
+      {settings.adblockEnabled && (
+        <>
           <div className="settings-group mt-2">
-            <label htmlFor="adblockProxy" className="settings-label">
-              Proxy Manuel
+            <label htmlFor="adblockProxyMode" className="settings-label">
+              Mode de Sélection du Proxy
             </label>
             <select
-              id="adblockProxy"
+              id="adblockProxyMode"
               className="settings-select"
-              value={settings.adblockProxy || ''}
+              value={settings.adblockProxyMode || 'auto'}
               onChange={(e) => {
-                setSettings((prev: any) => ({ ...prev, adblockProxy: e.target.value }));
+                setSettings((prev: any) => ({ ...prev, adblockProxyMode: e.target.value }));
                 setSuccess('');
               }}
             >
-              <option value="" disabled>
-                Sélectionnez un proxy
-              </option>
-              {proxies.map((p: any) => (
-                <option key={p.url} value={p.url}>
-                  {p.name} - {p.url}
-                </option>
-              ))}
+              <option value="auto">Automatique (recommandé - sélectionne le plus rapide)</option>
+              <option value="manual">Manuel (choisir un proxy spécifique)</option>
             </select>
           </div>
-        )}
 
-        {activeProxy && (
-          <div className="settings-active-proxy">
-            <strong className="settings-active-proxy-title">
-              Proxy Actif Actuellement :
-            </strong>
-            <div className="settings-active-proxy-row">
-              <span
-                className={`settings-active-proxy-dot${getProxyStatusClass(activeProxy.status)}`}
-              />
-              <span className="settings-active-proxy-name">{activeProxy.name}</span>
+          {settings.adblockProxyMode === 'manual' && (
+            <div className="settings-group mt-2">
+              <label htmlFor="adblockProxy" className="settings-label">
+                Proxy Manuel
+              </label>
+              <select
+                id="adblockProxy"
+                className="settings-select"
+                value={settings.adblockProxy || ''}
+                onChange={(e) => {
+                  setSettings((prev: any) => ({ ...prev, adblockProxy: e.target.value }));
+                  setSuccess('');
+                }}
+              >
+                <option value="" disabled>
+                  Sélectionnez un proxy
+                </option>
+                {proxies.map((p: any) => (
+                  <option key={p.url} value={p.url}>
+                    {p.name} - {p.url}
+                  </option>
+                ))}
+              </select>
             </div>
-            <div className="settings-active-proxy-meta">
-              URL: {activeProxy.url}
-            </div>
-            {activeProxy.ping !== undefined && activeProxy.status === 'success' && (
-              <div className="settings-active-proxy-meta">
-                Ping: {activeProxy.ping}ms
+          )}
+
+          {activeProxy && (
+            <div className="settings-active-proxy">
+              <strong className="settings-active-proxy-title">Proxy Actif Actuellement :</strong>
+              <div className="settings-active-proxy-row">
+                <span
+                  className={`settings-active-proxy-dot${getProxyStatusClass(activeProxy.status)}`}
+                />
+                <span className="settings-active-proxy-name">{activeProxy.name}</span>
               </div>
-            )}
-          </div>
-        )}
-      </>
-    )}
+              <div className="settings-active-proxy-meta">URL: {activeProxy.url}</div>
+              {activeProxy.ping !== undefined && activeProxy.status === 'success' && (
+                <div className="settings-active-proxy-meta">Ping: {activeProxy.ping}ms</div>
+              )}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 };
@@ -430,13 +424,9 @@ const TrustedDevicesSection = ({
               <div className="trusted-device-meta">
                 Première visite: {formatSeen(device.firstSeenAt)}
               </div>
-              {device.lastIp && (
-                <div className="trusted-device-meta">IP: {device.lastIp}</div>
-              )}
+              {device.lastIp && <div className="trusted-device-meta">IP: {device.lastIp}</div>}
               {device.userAgent && (
-                <div className="trusted-device-meta ua">
-                  UA: {device.userAgent}
-                </div>
+                <div className="trusted-device-meta ua">UA: {device.userAgent}</div>
               )}
             </div>
           ))}

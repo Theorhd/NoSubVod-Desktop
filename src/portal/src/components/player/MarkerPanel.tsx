@@ -29,22 +29,32 @@ const MarkerPanel: React.FC<MarkerPanelProps> = ({ markers, onSeek, onClose, cur
         overflow: 'hidden',
         boxShadow: 'var(--shadow-lg)',
         border: '1px solid var(--border)',
-        animation: 'page-fade-in 0.3s ease-out'
+        animation: 'page-fade-in 0.3s ease-out',
       }}
     >
-      <div style={{ 
-        padding: '16px', 
-        borderBottom: '1px solid var(--border)', 
-        display: 'flex', 
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        background: 'rgba(0,0,0,0.3)'
-      }}>
+      <div
+        style={{
+          padding: '16px',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          background: 'rgba(0,0,0,0.3)',
+        }}
+      >
         <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, color: '#fff' }}>Chapitres</h3>
-        <button 
+        <button
           onClick={onClose}
           className="secondary-btn"
-          style={{ width: '32px', height: '32px', padding: 0, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          style={{
+            width: '32px',
+            height: '32px',
+            padding: 0,
+            borderRadius: '50%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
           aria-label="Fermer"
         >
           <X size={18} />
@@ -76,48 +86,58 @@ const MarkerPanel: React.FC<MarkerPanelProps> = ({ markers, onSeek, onClose, cur
                 gap: '12px',
                 alignItems: 'center',
                 transition: 'all 0.2s var(--transition-fast)',
-                color: 'inherit'
+                color: 'inherit',
               }}
             >
-              <div style={{ 
-                width: '44px', 
-                height: '60px', 
-                borderRadius: '6px', 
-                overflow: 'hidden', 
-                background: '#000',
-                flexShrink: 0,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                border: '1px solid rgba(255,255,255,0.1)'
-              }}>
+              <div
+                style={{
+                  width: '44px',
+                  height: '60px',
+                  borderRadius: '6px',
+                  overflow: 'hidden',
+                  background: '#000',
+                  flexShrink: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                }}
+              >
                 {marker.url ? (
-                  <img src={marker.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <img
+                    src={marker.url}
+                    alt=""
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
                 ) : (
                   <Tag size={18} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
                 )}
               </div>
 
               <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ 
-                  color: isActive ? '#fff' : 'var(--text)', 
-                  fontWeight: 700, 
-                  fontSize: '0.85rem',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  marginBottom: '4px'
-                }}>
+                <div
+                  style={{
+                    color: isActive ? '#fff' : 'var(--text)',
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    marginBottom: '4px',
+                  }}
+                >
                   {marker.description}
                 </div>
-                <div style={{ 
-                  color: isActive ? 'var(--primary)' : 'var(--text-muted)', 
-                  fontSize: '0.8rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  fontWeight: 600
-                }}>
+                <div
+                  style={{
+                    color: isActive ? 'var(--primary)' : 'var(--text-muted)',
+                    fontSize: '0.8rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontWeight: 600,
+                  }}
+                >
                   <Play size={12} fill="currentColor" />
                   {formatClock(marker.displayTime)}
                 </div>
@@ -126,7 +146,7 @@ const MarkerPanel: React.FC<MarkerPanelProps> = ({ markers, onSeek, onClose, cur
           );
         })}
       </div>
-      
+
       <style>{`
         .custom-marker-list::-webkit-scrollbar {
           width: 4px;

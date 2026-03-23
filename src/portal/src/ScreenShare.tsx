@@ -398,7 +398,7 @@ export default function ScreenShare() {
 
   const handleControlMessage = (message: WsMessage) => {
     if (roleRef.current !== 'host') return;
-    
+
     const payload = message.payload as unknown as { command: string; value?: number };
     if (!payload) return;
 
@@ -407,18 +407,28 @@ export default function ScreenShare() {
 
     console.log('[ScreenShare] Received remote control:', cmd, val);
 
-    // If we have a local video (preview), we can try to control it, 
+    // If we have a local video (preview), we can try to control it,
     // but usually the host is sharing another tab/window.
     // However, if the host is sharing THIS tab, we can control the video elements.
     const videos = document.querySelectorAll('video');
-    videos.forEach(v => {
+    videos.forEach((v) => {
       try {
         switch (cmd) {
-          case 'play': v.play().catch(() => {}); break;
-          case 'pause': v.pause(); break;
-          case 'seek': v.currentTime += val; break;
-          case 'volume': v.volume = val; break;
-          case 'mute': v.muted = !v.muted; break;
+          case 'play':
+            v.play().catch(() => {});
+            break;
+          case 'pause':
+            v.pause();
+            break;
+          case 'seek':
+            v.currentTime += val;
+            break;
+          case 'volume':
+            v.volume = val;
+            break;
+          case 'mute':
+            v.muted = !v.muted;
+            break;
         }
       } catch (e) {
         console.warn('[ScreenShare] Failed to apply control to video', e);

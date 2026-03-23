@@ -39,16 +39,22 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-html, body, #root {
+html,
+body,
+#root {
   min-height: 100%;
 }
 
 body {
   margin: 0;
   color: var(--text);
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family:
+    'Inter',
+    system-ui,
+    -apple-system,
+    sans-serif;
   background: var(--bg);
-  background-image: 
+  background-image:
     radial-gradient(at 0% 0%, rgba(143, 87, 255, 0.15) 0px, transparent 50%),
     radial-gradient(at 100% 0%, rgba(87, 175, 255, 0.1) 0px, transparent 50%);
   background-attachment: fixed;
@@ -89,8 +95,14 @@ body {
 }
 
 @keyframes page-fade-in {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .container {
@@ -169,13 +181,17 @@ body {
     color: #000 !important;
     box-shadow: 0 8px 24px var(--primary-glow);
   }
-  
+
   .nav-home-btn.active {
     transform: scale(1.1);
-    box-shadow: 0 0 0 4px rgba(143, 87, 255, 0.2), 0 12px 32px var(--primary-glow);
+    box-shadow:
+      0 0 0 4px rgba(143, 87, 255, 0.2),
+      0 12px 32px var(--primary-glow);
   }
 
-  .nav-home-btn .nav-label { display: none; }
+  .nav-home-btn .nav-label {
+    display: none;
+  }
 }
 
 /* Desktop Dock */
@@ -189,7 +205,7 @@ body {
     padding: 8px;
     gap: 8px;
   }
-  
+
   .nav-btn {
     padding: 0 20px;
   }
@@ -348,7 +364,8 @@ body {
   content: '';
 }
 
-.vod-card, .stream-card {
+.vod-card,
+.stream-card {
   position: relative;
   border-radius: var(--radius-md);
   background: var(--surface);
@@ -358,11 +375,14 @@ body {
   cursor: pointer;
 }
 
-.vod-card:hover, .stream-card:hover {
+.vod-card:hover,
+.stream-card:hover {
   transform: translateY(-4px);
   border-color: var(--primary);
   background: var(--surface-hover);
-  box-shadow: var(--shadow-lg), 0 0 0 1px var(--primary-glow);
+  box-shadow:
+    var(--shadow-lg),
+    0 0 0 1px var(--primary-glow);
 }
 
 .vod-thumb-wrap {
@@ -636,7 +656,9 @@ body {
   height: 18px;
   border-radius: 50%;
   background: #f0f4ff;
-  transition: transform var(--transition-fast), background var(--transition-fast);
+  transition:
+    transform var(--transition-fast),
+    background var(--transition-fast);
 }
 
 .toggle-row input[type='checkbox']:checked,
@@ -1352,7 +1374,7 @@ body {
   left: 0;
   right: 0;
   padding: 20px;
-  background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.8), transparent);
   z-index: 10;
   display: flex;
   align-items: center;
@@ -1364,11 +1386,12 @@ body {
   font-weight: 700;
   font-size: 1.1rem;
   flex: 1;
-  text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
 }
 
 /* === Inputs & Controls === */
-input, select {
+input,
+select {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--border);
   color: var(--text);
@@ -1379,7 +1402,8 @@ input, select {
   font-size: 1rem;
 }
 
-input:focus, select:focus {
+input:focus,
+select:focus {
   border-color: var(--primary);
   background: rgba(255, 255, 255, 0.08);
   box-shadow: 0 0 0 4px var(--ring);
@@ -1387,8 +1411,12 @@ input:focus, select:focus {
 
 /* === Animations === */
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .spinning {

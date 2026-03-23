@@ -334,12 +334,28 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
   return (
     <div className="player-container">
       {!isFullscreen && (
-        <div className="top-bar" style={{ position: 'relative', zIndex: 10, background: 'rgba(7, 8, 15, 0.8)' }}>
+        <div
+          className="top-bar"
+          style={{ position: 'relative', zIndex: 10, background: 'rgba(7, 8, 15, 0.8)' }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flex: 1 }}>
-            <button onClick={() => navigate(-1)} className="secondary-btn" style={{ width: '40px', height: '40px', padding: 0, borderRadius: '50%' }}>
+            <button
+              onClick={() => navigate(-1)}
+              className="secondary-btn"
+              style={{ width: '40px', height: '40px', padding: 0, borderRadius: '50%' }}
+            >
               <ArrowLeft size={20} />
             </button>
-            <h2 style={{ fontSize: '1rem', fontWeight: 800, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <h2
+              style={{
+                fontSize: '1rem',
+                fontWeight: 800,
+                margin: 0,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
               {vodInfo?.title || liveInfo?.title || playerTitle}
             </h2>
           </div>
@@ -367,8 +383,25 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
       )}
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflowY: isFullscreen ? 'hidden' : 'auto', background: '#000' }}>
-          <div style={{ width: '100%', position: 'relative', aspectRatio: isFullscreen ? 'auto' : '16/9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            overflowY: isFullscreen ? 'hidden' : 'auto',
+            background: '#000',
+          }}
+        >
+          <div
+            style={{
+              width: '100%',
+              position: 'relative',
+              aspectRatio: isFullscreen ? 'auto' : '16/9',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
             <NSVPlayer
               source={{ src: source.src, type: source.type }}
               streamType={source.streamType}
@@ -426,7 +459,15 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
             )}
 
             {playerError && (
-              <div style={{ marginTop: '16px', color: 'var(--danger)', padding: '16px', borderRadius: 'var(--radius-md)', background: 'rgba(255,107,135,0.1)' }}>
+              <div
+                style={{
+                  marginTop: '16px',
+                  color: 'var(--danger)',
+                  padding: '16px',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'rgba(255,107,135,0.1)',
+                }}
+              >
                 {playerError}
               </div>
             )}
@@ -434,12 +475,29 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
         </div>
 
         {showChat && (
-          <div className="glass" style={{ width: '340px', borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <div
+            className="glass"
+            style={{
+              width: '340px',
+              borderLeft: '1px solid var(--border)',
+              display: 'flex',
+              flexDirection: 'column',
+              height: '100%',
+            }}
+          >
             {liveId ? (
               <LiveChatComponent liveId={liveId} chatScrollRef={chatScrollRef} />
             ) : (
               <>
-                <div style={{ padding: '16px', borderBottom: '1px solid var(--border)', fontWeight: 800, color: 'var(--text)', fontSize: '0.85rem' }}>
+                <div
+                  style={{
+                    padding: '16px',
+                    borderBottom: '1px solid var(--border)',
+                    fontWeight: 800,
+                    color: 'var(--text)',
+                    fontSize: '0.85rem',
+                  }}
+                >
                   STREAM CHAT REPLAY
                 </div>
 
@@ -449,7 +507,13 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
                       key={message.id}
                       style={{ marginBottom: '12px', fontSize: '0.85rem', lineHeight: '1.5' }}
                     >
-                      <span style={{ color: 'var(--text-muted)', marginRight: '8px', fontSize: '0.75rem' }}>
+                      <span
+                        style={{
+                          color: 'var(--text-muted)',
+                          marginRight: '8px',
+                          fontSize: '0.75rem',
+                        }}
+                      >
                         {formatClock(message.contentOffsetSeconds)}
                       </span>
                       <span style={{ fontWeight: 800, color: 'var(--primary)' }}>

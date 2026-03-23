@@ -206,16 +206,26 @@ export default function NSVPlayer({
     const cmd = payload.command;
     const val = payload.value ?? 0;
     console.log('[NSVPlayer] Received Tauri control event:', cmd, val);
-    
+
     const r = remoteRef.current;
     const s = storeRef.current;
 
     switch (cmd) {
-      case 'play': r.play().catch(() => {}); break;
-      case 'pause': r.pause(); break;
-      case 'seek': r.seek(Math.max(0, Math.min(s.duration, (s.currentTime || 0) + val))); break;
-      case 'volume': r.changeVolume(val); break;
-      case 'mute': r.toggleMuted(); break;
+      case 'play':
+        r.play().catch(() => {});
+        break;
+      case 'pause':
+        r.pause();
+        break;
+      case 'seek':
+        r.seek(Math.max(0, Math.min(s.duration, (s.currentTime || 0) + val)));
+        break;
+      case 'volume':
+        r.changeVolume(val);
+        break;
+      case 'mute':
+        r.toggleMuted();
+        break;
     }
   }, []);
 

@@ -85,11 +85,7 @@ export default function Downloads() {
 
   const getActiveThumbnail = (dl: any) => {
     return (
-      dl.previewThumbnailURL ||
-      dl.previewImageURL ||
-      dl.preview_image_url ||
-      dl.thumbnail ||
-      null
+      dl.previewThumbnailURL || dl.previewImageURL || dl.preview_image_url || dl.thumbnail || null
     );
   };
 
@@ -244,90 +240,87 @@ export default function Downloads() {
           <div className="download-section-head">
             <h2>Local Storage</h2>
           </div>
-        {(() => {
-          if (loading && files.length === 0) {
-            return <div className="status-line">Chargement des fichiers...</div>;
-          }
-          if (files.length === 0) {
-            return <div className="status-line">Aucun fichier téléchargé trouvé.</div>;
-          }
-          return (
-            <div className="download-library-grid">
-              {files.map((file) => (
-                <article
-                  key={file.name}
-                  className="download-library-card"
-                >
-                  <button
-                    type="button"
-                    className="download-library-thumb-btn"
-                    onClick={() => {
-                      setPlaybackError(null);
-                      setPlayingFile(file);
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                  >
-                    <div className="download-library-thumb-wrap">
-                      {file.metadata?.previewThumbnailURL ? (
-                        <img
-                          src={file.metadata.previewThumbnailURL}
-                          alt={file.metadata?.title || file.name}
-                          className="download-library-thumb"
-                        />
-                      ) : (
-                        <div className="download-library-thumb-placeholder">
-                          <DownloadIcon size={22} />
-                        </div>
-                      )}
-                      <span className="download-complete-chip">
-                        <CheckCircle2 size={12} />
-                        COMPLETED
-                      </span>
-                    </div>
-                  </button>
+          {(() => {
+            if (loading && files.length === 0) {
+              return <div className="status-line">Chargement des fichiers...</div>;
+            }
+            if (files.length === 0) {
+              return <div className="status-line">Aucun fichier téléchargé trouvé.</div>;
+            }
+            return (
+              <div className="download-library-grid">
+                {files.map((file) => (
+                  <article key={file.name} className="download-library-card">
+                    <button
+                      type="button"
+                      className="download-library-thumb-btn"
+                      onClick={() => {
+                        setPlaybackError(null);
+                        setPlayingFile(file);
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      }}
+                    >
+                      <div className="download-library-thumb-wrap">
+                        {file.metadata?.previewThumbnailURL ? (
+                          <img
+                            src={file.metadata.previewThumbnailURL}
+                            alt={file.metadata?.title || file.name}
+                            className="download-library-thumb"
+                          />
+                        ) : (
+                          <div className="download-library-thumb-placeholder">
+                            <DownloadIcon size={22} />
+                          </div>
+                        )}
+                        <span className="download-complete-chip">
+                          <CheckCircle2 size={12} />
+                          COMPLETED
+                        </span>
+                      </div>
+                    </button>
 
-                  <div className="download-library-body">
-                    <h3 className="download-file-title">{file.metadata?.title || file.name}</h3>
-                    <div className="download-meta-row">
-                      <span>
-                        {file.metadata?.owner?.displayName ||
-                          file.metadata?.owner?.login ||
-                          'Unknown channel'}
-                      </span>
-                      {file.metadata?.game?.name && <span>{file.metadata.game.name}</span>}
+                    <div className="download-library-body">
+                      <h3 className="download-file-title">{file.metadata?.title || file.name}</h3>
+                      <div className="download-meta-row">
+                        <span>
+                          {file.metadata?.owner?.displayName ||
+                            file.metadata?.owner?.login ||
+                            'Unknown channel'}
+                        </span>
+                        {file.metadata?.game?.name && <span>{file.metadata.game.name}</span>}
+                      </div>
+                      <div className="download-meta-row muted">
+                        <span>Size: {formatSize(file.size)}</span>
+                        <span>Date: {formatDate(file.metadata?.createdAt)}</span>
+                      </div>
+                      <div className="download-card-actions">
+                        <button
+                          onClick={() => {
+                            setPlaybackError(null);
+                            setPlayingFile(file);
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="download-card-btn primary"
+                          type="button"
+                        >
+                          <Play size={14} />
+                          Lire
+                        </button>
+                        <a
+                          href={resolveDownloadUrl(file.url)}
+                          download={file.name}
+                          className="download-card-btn secondary"
+                        >
+                          <DownloadIcon size={14} />
+                          Télécharger
+                        </a>
+                      </div>
                     </div>
-                    <div className="download-meta-row muted">
-                      <span>Size: {formatSize(file.size)}</span>
-                      <span>Date: {formatDate(file.metadata?.createdAt)}</span>
-                    </div>
-                    <div className="download-card-actions">
-                      <button
-                        onClick={() => {
-                          setPlaybackError(null);
-                          setPlayingFile(file);
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }}
-                        className="download-card-btn primary"
-                        type="button"
-                      >
-                        <Play size={14} />
-                        Lire
-                      </button>
-                      <a
-                        href={resolveDownloadUrl(file.url)}
-                        download={file.name}
-                        className="download-card-btn secondary"
-                      >
-                        <DownloadIcon size={14} />
-                        Télécharger
-                      </a>
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          );
-        })()}
+                  </article>
+                ))}
+              </div>
+            );
+          })()}
         </section>
       </div>
     </>

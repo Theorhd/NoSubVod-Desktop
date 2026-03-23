@@ -21,33 +21,52 @@ export default function WatchlistPreview({
   return (
     <div style={{ marginBottom: '32px' }}>
       <div className="section-header">
-        <h2><Bookmark size={20} /> Watch Later</h2>
+        <h2>
+          <Bookmark size={20} /> Watch Later
+        </h2>
       </div>
 
-      <div className="vod-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
+      <div
+        className="vod-grid"
+        style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}
+      >
         {watchlist.map((vod) => (
-          <div 
-            key={vod.vodId} 
-            className="vod-card glass-hover" 
-            style={{ position: 'relative' }}
-          >
+          <div key={vod.vodId} className="vod-card glass-hover" style={{ position: 'relative' }}>
             <div className="vod-thumb-wrap">
               <img src={vod.previewThumbnailURL} alt={vod.title} className="vod-thumb" />
-              <div className="vod-play-overlay" style={{
-                position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'rgba(143, 87, 255, 0.2)', opacity: 0, transition: 'opacity 0.3s ease',
-                pointerEvents: 'none', zIndex: 2
-              }}>
-                <div style={{
-                  width: '40px', height: '40px', borderRadius: '50%', background: 'var(--primary)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#000',
-                  boxShadow: '0 0 16px var(--primary-glow)'
-                }}>
+              <div
+                className="vod-play-overlay"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: 'rgba(143, 87, 255, 0.2)',
+                  opacity: 0,
+                  transition: 'opacity 0.3s ease',
+                  pointerEvents: 'none',
+                  zIndex: 2,
+                }}
+              >
+                <div
+                  style={{
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '50%',
+                    background: 'var(--primary)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#000',
+                    boxShadow: '0 0 16px var(--primary-glow)',
+                  }}
+                >
                   <Play size={20} fill="currentColor" />
                 </div>
               </div>
 
-              <button 
+              <button
                 className="stretched-link"
                 aria-label={`Regarder ${vod.title}`}
                 onClick={() => navigate(`/player?vod=${vod.vodId}`)}
@@ -58,10 +77,17 @@ export default function WatchlistPreview({
                 type="button"
                 className="secondary-btn"
                 aria-label={`Supprimer ${vod.title} de la liste`}
-                style={{ 
-                  position: 'absolute', top: '8px', right: '8px', width: '28px', height: '28px', 
-                  padding: 0, borderRadius: '50%', background: 'rgba(0,0,0,0.5)', border: 'none',
-                  zIndex: 5
+                style={{
+                  position: 'absolute',
+                  top: '8px',
+                  right: '8px',
+                  width: '28px',
+                  height: '28px',
+                  padding: 0,
+                  borderRadius: '50%',
+                  background: 'rgba(0,0,0,0.5)',
+                  border: 'none',
+                  zIndex: 5,
                 }}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -72,14 +98,20 @@ export default function WatchlistPreview({
               </button>
             </div>
             <div className="vod-body" style={{ padding: '10px', position: 'relative', zIndex: 1 }}>
-              <div style={{ 
-                fontWeight: 600, fontSize: '0.85rem', whiteSpace: 'nowrap', 
-                overflow: 'hidden', textOverflow: 'ellipsis' 
-              }} title={vod.title}>
+              <div
+                style={{
+                  fontWeight: 600,
+                  fontSize: '0.85rem',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+                title={vod.title}
+              >
                 {vod.title}
               </div>
             </div>
-            
+
             <style>{`
               .vod-card:hover .vod-play-overlay { opacity: 1 !important; }
             `}</style>

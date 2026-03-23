@@ -21,11 +21,11 @@ export function TopBar({
     <div className="top-bar">
       <div className="bar-main" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
         {(mode === 'back' || mode === 'home') && (
-          <button 
-            onClick={() => mode === 'back' ? navigate(-1) : navigate('/')} 
-            className="secondary-btn" 
+          <button
+            onClick={() => (mode === 'back' ? navigate(-1) : navigate('/'))}
+            className="secondary-btn"
             style={{ width: '40px', height: '40px', padding: 0, borderRadius: '50%' }}
-            aria-label="Back" 
+            aria-label="Back"
             type="button"
           >
             <ArrowLeft size={20} />
@@ -33,25 +33,32 @@ export function TopBar({
         )}
 
         {mode === 'logo' ? (
-          <button 
+          <button
             onClick={onLogoClick || (() => navigate('/'))}
-            style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '10px', 
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
               cursor: 'pointer',
               background: 'none',
               border: 'none',
               padding: 0,
               textAlign: 'left',
               color: 'inherit',
-              font: 'inherit'
+              font: 'inherit',
             }}
             type="button"
             aria-label="Home"
           >
             <img src="/icon.png" alt="NoSubVod" style={{ width: '28px', height: '28px' }} />
-            <h1 style={{ background: 'linear-gradient(to right, #fff, #8f57ff)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', margin: 0 }}>
+            <h1
+              style={{
+                background: 'linear-gradient(to right, #fff, #8f57ff)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                margin: 0,
+              }}
+            >
               {title}
             </h1>
           </button>
@@ -60,7 +67,11 @@ export function TopBar({
         )}
       </div>
 
-      {actions && <div className="top-actions" style={{ display: 'flex', gap: '8px' }}>{actions}</div>}
+      {actions && (
+        <div className="top-actions" style={{ display: 'flex', gap: '8px' }}>
+          {actions}
+        </div>
+      )}
     </div>
   );
 }

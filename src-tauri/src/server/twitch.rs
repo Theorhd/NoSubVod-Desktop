@@ -2004,7 +2004,8 @@ impl TwitchService {
         let mut all_markers = Vec::new();
 
         // 1) Game changes from momentsConnection.
-        if let Some(edges) = moments_data["data"]["video"]["momentsConnection"]["edges"].as_array() {
+        if let Some(edges) = moments_data["data"]["video"]["momentsConnection"]["edges"].as_array()
+        {
             for edge in edges {
                 let node = &edge["node"];
                 if node.is_null() {
@@ -2063,7 +2064,9 @@ impl TwitchService {
 
         // Dedup markers too close in time to avoid duplicates between moments and markers.
         all_markers.dedup_by(|a, b| {
-            (a["displayTime"].as_f64().unwrap_or(0.0) - b["displayTime"].as_f64().unwrap_or(0.0)).abs() < 1.0
+            (a["displayTime"].as_f64().unwrap_or(0.0) - b["displayTime"].as_f64().unwrap_or(0.0))
+                .abs()
+                < 1.0
         });
 
         Ok(Value::Array(all_markers))
