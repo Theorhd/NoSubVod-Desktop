@@ -200,6 +200,25 @@ export default function NSVPlayer({
     remote.changeQuality(-1);
   }, [minQuality, preferredQuality, remote, store.canSetQuality, store.qualities]);
 
+  // Stable handler for remote control events to keep useEffect clean
+  const handleRemoteControl = useCallback((event: any) => {
+    const payload = event.payload;
+    const cmd = payload.command;
+    const val = payload.value ?? 0;
+    console.log('[NSVPlayer] Received Tauri control event:', cmd, val);
+    
+    const r = remoteRef.current;
+    const s = storeRef.current;
+
+    switch (cmd) {
+      case 'play': r.play().catch(() => {}); break;
+      case 'pause': r.pause(); break;
+      case 'seek': r.seek(Math.max(0, Math.min(s.duration, (s.currentTime || 0) + val))); break;
+      case 'volume': r.changeVolume(val); break;
+      case 'mute': r.toggleMuted(); break;
+    }
+  }, []);
+
   useEffect(() => {
     const onPlay = () => remoteRef.current.play().catch(() => {});
     const onPause = () => remoteRef.current.pause();
@@ -211,55 +230,38 @@ export default function NSVPlayer({
     const onVolume = (e: any) => remoteRef.current.changeVolume(e.detail?.value ?? 1);
     const onMute = () => remoteRef.current.toggleMuted();
 
-    window.addEventListener('nsv-remote-play', onPlay);
-    window.addEventListener('nsv-remote-pause', onPause);
-    window.addEventListener('nsv-remote-seek', onSeek);
-    window.addEventListener('nsv-remote-volume', onVolume);
-    window.addEventListener('nsv-remote-mute', onMute);
+    globalThis.addEventListener('nsv-remote-play', onPlay);
+    globalThis.addEventListener('nsv-remote-pause', onPause);
+    globalThis.addEventListener('nsv-remote-seek', onSeek);
+    globalThis.addEventListener('nsv-remote-volume', onVolume);
+    globalThis.addEventListener('nsv-remote-mute', onMute);
 
     // native tauri event
     let unlisten: (() => void) | undefined;
-    if ((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__) {
-      console.log('[NSVPlayer] Tauri environment detected, setting up remote control listener...');
-      import('@tauri-apps/api/event').then(({ listen }) => {
-        listen('nsv-control', (event: any) => {
-          const payload = event.payload;
-          const cmd = payload.command;
-          const val = payload.value ?? 0;
-          console.log('[NSVPlayer] Received Tauri control event:', cmd, val);
-          
-          const r = remoteRef.current;
-          const s = storeRef.current;
+    const isTauri = (globalThis as any).__TAURI_INTERNALS__ || (globalThis as any).__TAURI__;
 
-          try {
-            switch (cmd) {
-              case 'play': r.play().catch(() => {}); break;
-              case 'pause': r.pause(); break;
-              case 'seek': r.seek(Math.max(0, Math.min(s.duration, (s.currentTime || 0) + val))); break;
-              case 'volume': r.changeVolume(val); break;
-              case 'mute': r.toggleMuted(); break;
-            }
-          } catch (e) {
-            console.error('[NSVPlayer] Failed to execute remote command:', e);
-          }
-        }).then(unsub => { 
-          unlisten = unsub;
+    if (isTauri) {
+      const setupTauriListener = async () => {
+        try {
+          const { listen } = await import('@tauri-apps/api/event');
+          unlisten = await listen('nsv-control', handleRemoteControl);
           console.log('[NSVPlayer] Remote control listener registered.');
-        });
-      }).catch(err => {
-        console.error('[NSVPlayer] Failed to load Tauri event API:', err);
-      });
+        } catch (err) {
+          console.error('[NSVPlayer] Failed to load Tauri event API:', err);
+        }
+      };
+      setupTauriListener();
     }
 
     return () => {
-      window.removeEventListener('nsv-remote-play', onPlay);
-      window.removeEventListener('nsv-remote-pause', onPause);
-      window.removeEventListener('nsv-remote-seek', onSeek);
-      window.removeEventListener('nsv-remote-volume', onVolume);
-      window.removeEventListener('nsv-remote-mute', onMute);
+      globalThis.removeEventListener('nsv-remote-play', onPlay);
+      globalThis.removeEventListener('nsv-remote-pause', onPause);
+      globalThis.removeEventListener('nsv-remote-seek', onSeek);
+      globalThis.removeEventListener('nsv-remote-volume', onVolume);
+      globalThis.removeEventListener('nsv-remote-mute', onMute);
       if (unlisten) unlisten();
     };
-  }, []); // Only once, refs are used inside
+  }, [handleRemoteControl]); // Only once, refs are used inside
 
   return (
     <MediaPlayer
