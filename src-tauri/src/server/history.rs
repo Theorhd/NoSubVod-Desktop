@@ -330,6 +330,7 @@ impl HistoryStore {
         download_local_path: Option<Option<String>>,
         download_network_shared_path: Option<Option<String>>,
         launch_at_login: Option<bool>,
+        auto_update: Option<bool>,
         enabled_extensions: Option<Vec<String>>,
     ) -> AppResult<ExperienceSettings> {
         {
@@ -360,6 +361,9 @@ impl HistoryStore {
             }
             if let Some(v) = launch_at_login {
                 data.settings.launch_at_login = v;
+            }
+            if let Some(v) = auto_update {
+                data.settings.auto_update = v;
             }
             if let Some(v) = enabled_extensions {
                 data.settings.enabled_extensions = v;

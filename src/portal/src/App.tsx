@@ -11,7 +11,9 @@ import {
   X,
 } from 'lucide-react';
 import { listen } from '@tauri-apps/api/event';
-import { ScreenShareSessionState } from '../../shared/types';
+import { check } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
+import { ScreenShareSessionState, ExperienceSettings } from '../../shared/types';
 import Login from './Login';
 import { useAuth } from '../../shared/hooks/useAuth';
 import { useScreenShareState } from '../../shared/hooks/useScreenShareState';
@@ -70,6 +72,35 @@ const NotificationToast = ({
   );
 };
 
+const UpdateNotification = ({
+  updateInfo,
+  onRestart,
+}: {
+  updateInfo: { version: string };
+  onRestart: () => void;
+}) => {
+  return (
+    <div className="toast-container" style={{ bottom: '80px', zIndex: 1000 }}>
+      <div className="toast update-toast">
+        <div className="toast-icon">
+          <Bell size={18} />
+        </div>
+        <div className="toast-content">
+          <div className="toast-title">Mise à jour installée (v{updateInfo.version})</div>
+          <div className="toast-msg">Une nouvelle version a été installée avec succès.</div>
+        </div>
+        <button
+          className="action-btn"
+          onClick={onRestart}
+          style={{ marginLeft: '12px', flexShrink: 0, padding: '4px 12px', fontSize: '0.85rem' }}
+        >
+          Restart
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const BottomNav = React.memo(({ items }: Readonly<{ items: NavItem[] }>) => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -106,10 +137,50 @@ function AppContent() {
   const { isAuthenticated } = useAuth();
   const { contributions } = useExtensions();
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [installedUpdate, setInstalledUpdate] = useState<{ version: string } | null>(null);
 
   const removeNotification = useCallback((id: string) => {
     setNotifications((prev) => prev.filter((n) => n.id !== id));
   }, []);
+
+  const handleRestart = useCallback(async () => {
+    try {
+      await relaunch();
+    } catch (err) {
+      console.error('Failed to relaunch:', err);
+      globalThis.location.reload();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const checkUpdate = async () => {
+      try {
+        const settingsRes = await fetch('/api/settings');
+        if (!settingsRes.ok) return;
+        const settings = (await settingsRes.json()) as ExperienceSettings;
+
+        if (!settings.autoUpdate) return;
+
+        // @ts-expect-error Tauri internals are injected at runtime
+        if (!globalThis.__TAURI_INTERNALS__) return;
+
+        const update = await check();
+        if (update) {
+          console.log(`Found update ${update.version}`);
+          await update.downloadAndInstall();
+          console.log('Update installed');
+          setInstalledUpdate({ version: update.version });
+        }
+      } catch (err) {
+        console.error('Failed to check for updates:', err);
+      }
+    };
+
+    const timer = setTimeout(checkUpdate, 5000);
+    return () => clearTimeout(timer);
+  }, [isAuthenticated]);
 
   const handleNotification = useCallback(
     (event: { payload: { title: string; message: string } }) => {
@@ -230,6 +301,9 @@ function AppContent() {
           </Suspense>
           <BottomNav items={navItems} />
           <NotificationToast notifications={notifications} onClose={removeNotification} />
+          {installedUpdate && (
+            <UpdateNotification updateInfo={installedUpdate} onRestart={handleRestart} />
+          )}
         </div>
       </ErrorBoundary>
     </Router>

@@ -2138,6 +2138,17 @@ button {
   color: #fff;
 }
 
+.update-toast {
+  border-color: var(--primary) !important;
+  background: linear-gradient(135deg, rgba(20, 26, 45, 0.95), rgba(35, 45, 80, 0.95)) !important;
+  box-shadow: 0 8px 32px var(--primary-glow) !important;
+  min-width: 380px;
+}
+
+.update-toast .toast-icon {
+  color: var(--primary);
+}
+
 @keyframes toast-in {
   from {
     transform: translateX(100%);

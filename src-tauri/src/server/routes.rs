@@ -441,6 +441,7 @@ async fn handle_update_settings(
                 patch.download_local_path,
                 patch.download_network_shared_path,
                 patch.launch_at_login,
+                patch.auto_update,
                 patch.enabled_extensions,
             )
             .await?,

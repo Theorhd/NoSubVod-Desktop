@@ -25,7 +25,13 @@
       "csp": "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://static-cdn.jtvnw.net https://clips-media-assets2.twitch.tv; media-src 'self' blob:; connect-src 'self' https://cdn.jsdelivr.net ws://127.0.0.1:23455 ws://localhost:23455 wss://127.0.0.1:23456 wss://localhost:23456; font-src 'self'; worker-src 'self' blob:; frame-src 'none'; object-src 'none'; base-uri 'self'"
     }
   },
-  "plugins": {},
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Theorhd/NoSubVod-Desktop/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

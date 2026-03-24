@@ -482,6 +482,33 @@ const TrustedDevicesSection = React.memo(({ devices, pendingDeviceId, onToggleTr
 ));
 TrustedDevicesSection.displayName = 'TrustedDevicesSection';
 
+const UpdaterSection = React.memo(({ settings, setSettings, setSuccess }: SectionProps) => (
+  <div className="card settings-card">
+    <h2>Mises à jour</h2>
+    <p className="settings-description">Contrôlez la façon dont NoSubVOD se met à jour.</p>
+    <div className="toggle-row">
+      <span>
+        <strong>
+          <label htmlFor="autoUpdateToggle" className="mb-0">
+            Mise à jour automatique
+          </label>
+        </strong>
+        <small>Vérifier, télécharger et installer automatiquement les nouvelles versions</small>
+      </span>
+      <input
+        id="autoUpdateToggle"
+        type="checkbox"
+        checked={settings.autoUpdate || false}
+        onChange={(e) => {
+          setSettings((prev) => ({ ...prev, autoUpdate: e.target.checked }));
+          setSuccess('');
+        }}
+      />
+    </div>
+  </div>
+));
+UpdaterSection.displayName = 'UpdaterSection';
+
 export default function Settings() {
   const [settings, setSettings] = useState<ExperienceSettings>(defaultSettings);
   const [loading, setLoading] = useState(true);
@@ -681,6 +708,7 @@ export default function Settings() {
           pendingDeviceId={trustedDevicePendingId}
           onToggleTrusted={onToggleTrusted}
         />
+        <UpdaterSection settings={settings} setSettings={setSettings} setSuccess={setSuccess} />
         <div className="card settings-card settings-footer-card">
           {error && <div className="error-text">{error}</div>}
           {success && <div className="success-text">{success}</div>}

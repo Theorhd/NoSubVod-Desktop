@@ -109,6 +109,7 @@ export interface ExperienceSettings {
   downloadNetworkSharedPath?: string;
   twitchImportFollows?: boolean;
   launchAtLogin?: boolean;
+  autoUpdate?: boolean;
   enabledExtensions?: string[];
 }
 
