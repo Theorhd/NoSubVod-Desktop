@@ -7,6 +7,7 @@ import {
   Radio,
   Download,
   MonitorSmartphone,
+  Monitor,
   Bell,
   X,
 } from 'lucide-react';
@@ -22,13 +23,13 @@ import { ExtensionProvider, useExtensions } from './ExtensionContext';
 
 const Home = lazy(() => import('./Home'));
 const Channel = lazy(() => import('./Channel'));
-const Player = lazy(() => import('./Player'));
 const Trends = lazy(() => import('./Trends'));
 const Search = lazy(() => import('./Search'));
 const Live = lazy(() => import('./Live'));
 const Settings = lazy(() => import('./Settings'));
 const History = lazy(() => import('./History'));
 const Downloads = lazy(() => import('./Downloads'));
+const MultiView = lazy(() => import('./MultiView'));
 const ScreenShare = lazy(() => import('./ScreenShare.tsx'));
 
 type NavItem = {
@@ -240,6 +241,7 @@ function AppContent() {
     () => [
       { path: '/trends', label: 'Trends', Icon: TrendingUp },
       { path: '/live', label: 'Live', Icon: Radio },
+      { path: '/multi-view', label: 'Multi-View', Icon: Monitor },
       { path: '/', label: 'Home', Icon: HomeIcon, isHome: true },
       ...(screenShareState.active
         ? [{ path: '/screen-share', label: 'Screen Share', Icon: MonitorSmartphone }]
@@ -283,7 +285,8 @@ function AppContent() {
                 <Route path="/history" element={<History />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/channel" element={<Channel />} />
-                <Route path="/player" element={<Player />} />
+                <Route path="/search" element={<Search />} />
+                <Route path="/multi-view" element={<MultiView />} />
                 <Route path="/downloads" element={<Downloads />} />
                 <Route path="/screen-share" element={<ScreenShare />} />
                 {/* Contribution Routes */}

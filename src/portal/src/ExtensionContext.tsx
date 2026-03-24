@@ -145,6 +145,41 @@ export function ExtensionProvider({ children }: Readonly<{ children: React.React
     // Expose Global API for extensions
     (globalThis as any).NSV = {
       registerContribution,
+      // Ecosystem: Intercept chat messages
+      onChatMessage: (callback: (msg: any) => void) => {
+        const handler = (event: any) => callback(event.detail);
+        globalThis.addEventListener('nsv-chat-message', handler);
+        return () => globalThis.removeEventListener('nsv-chat-message', handler);
+      },
+      // Ecosystem: Inject global CSS
+      injectCSS: (css: string) => {
+        const style = document.createElement('style');
+        style.textContent = css;
+        document.head.appendChild(style);
+        return () => document.head.removeChild(style);
+      },
+      // Ecosystem: Custom actions (like Clip It)
+      registerAction: (id: string, callback: (payload: any) => void) => {
+        const handler = (event: any) => {
+          if (event.detail?.id === id) callback(event.detail.payload);
+        };
+        globalThis.addEventListener('nsv-action', handler);
+        return () => globalThis.removeEventListener('nsv-action', handler);
+      },
+      // Specific Clip It API
+      clipCurrentVod: async (vodId: string, startTime: number, endTime: number, title?: string) => {
+        return fetch('/api/download/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            vodId,
+            title: title || `Clip ${vodId}`,
+            quality: 'best',
+            startTime,
+            endTime,
+          }),
+        });
+      },
     };
 
     loadExtensions();

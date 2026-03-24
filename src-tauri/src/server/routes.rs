@@ -223,6 +223,17 @@ async fn handle_vod_chat(
     if !is_valid_id(&vod_id) {
         return Err(AppError::BadRequest("Invalid VOD ID".to_string()));
     }
+
+    if let Some(keyword) = q.keyword {
+        if !keyword.trim().is_empty() {
+            let data = state
+                .twitch
+                .search_video_chat(&vod_id, &keyword, 50)
+                .await?;
+            return Ok(Json(data).into_response());
+        }
+    }
+
     let offset = q.offset.unwrap_or(0.0);
     let data = state.twitch.fetch_video_chat(&vod_id, offset).await?;
     Ok(Json(data).into_response())

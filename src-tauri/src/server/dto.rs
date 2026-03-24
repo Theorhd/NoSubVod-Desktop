@@ -6,6 +6,7 @@ use serde_json::Value;
 #[derive(Deserialize)]
 pub struct ChatQuery {
     pub offset: Option<f64>,
+    pub keyword: Option<String>,
 }
 
 #[derive(Deserialize)]

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Search, X } from 'lucide-react';
 import { ChatMessage, ExperienceSettings, LiveStream, VideoMarker, VOD } from '../../shared/types';
 import NSVPlayer from './components/NSVPlayer';
 import LiveChatComponent from './components/player/LiveChatComponent';
@@ -45,6 +45,140 @@ function parseMarkersPayload(payload: unknown): VideoMarker[] {
   return [];
 }
 
+const ChatSearch = ({
+  vodId,
+  onSeek,
+  onClose,
+}: {
+  vodId: string;
+  onSeek: (time: number) => void;
+  onClose: () => void;
+}) => {
+  const [keyword, setKeyword] = useState('');
+  const [results, setResults] = useState<any[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  const handleSearch = async () => {
+    if (!keyword.trim()) return;
+    setSearching(true);
+    try {
+      const res = await fetch(`/api/vod/${vodId}/chat?keyword=${encodeURIComponent(keyword)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setResults(data.results || []);
+      }
+    } catch (err) {
+      console.error('Search failed', err);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: '0',
+        right: '0',
+        width: '100%',
+        height: '100%',
+        zIndex: 20,
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'rgba(7, 8, 15, 0.95)',
+        borderLeft: '1px solid var(--border)',
+      }}
+    >
+      <div
+        style={{
+          padding: '16px',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex',
+          gap: '8px',
+          alignItems: 'center',
+        }}
+      >
+        <div style={{ position: 'relative', flex: 1 }}>
+          <input
+            autoFocus
+            type="text"
+            className="search-input"
+            placeholder="Rechercher dans le chat..."
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+            style={{ width: '100%', margin: 0, paddingRight: '40px' }}
+          />
+          <Search
+            size={18}
+            style={{
+              position: 'absolute',
+              right: '12px',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              color: 'var(--text-muted)',
+              pointerEvents: 'none',
+            }}
+          />
+        </div>
+        <button
+          className="secondary-btn"
+          onClick={onClose}
+          style={{ width: '40px', height: '40px', padding: 0, borderRadius: '50%' }}
+        >
+          <X size={18} />
+        </button>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+        {results.length === 0 && !searching && keyword && (
+          <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginTop: '20px' }}>
+            Aucun résultat trouvé pour &quot;{keyword}&quot;
+          </div>
+        )}
+        {results.map((res: any) => (
+          <div
+            key={res.id}
+            onClick={() => onSeek(res.contentOffsetSeconds)}
+            style={{
+              padding: '12px',
+              borderBottom: '1px solid var(--border)',
+              cursor: 'pointer',
+              borderRadius: '8px',
+              transition: '0.2s',
+              marginBottom: '4px',
+            }}
+            className="hover-card"
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                marginBottom: '4px',
+                alignItems: 'center',
+              }}
+            >
+              <span style={{ fontWeight: 800, color: 'var(--primary)', fontSize: '0.8rem' }}>
+                {res.commenter?.displayName}
+              </span>
+              <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                {formatClock(res.contentOffsetSeconds)}
+              </span>
+            </div>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text)', lineHeight: '1.4' }}>
+              {res.message}
+            </div>
+          </div>
+        ))}
+        {searching && (
+          <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginTop: '20px' }}>
+            Recherche en cours...
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export default function Player() {
   const [searchParams] = useSearchParams();
   const vodId = searchParams.get('vod');
@@ -73,6 +207,7 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
   const lastChatOffsetRef = useRef(-1);
 
   const [showChat, setShowChat] = useState(window.innerWidth > 1024);
+  const [showChatSearch, setShowChatSearch] = useState(false);
   const [showMarkers, setShowMarkers] = useState(false);
   const [markers, setMarkers] = useState<VideoMarker[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -133,10 +268,26 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
   const visibleChat = useMemo(() => {
     return chatMessages.filter(
       (message) =>
+        message.id &&
         message.contentOffsetSeconds <= currentTime &&
         message.contentOffsetSeconds > currentTime - 60
     );
   }, [chatMessages, currentTime]);
+
+  const dispatchedChatIds = useRef(new Set<string>());
+  useEffect(() => {
+    if (liveId) return;
+    for (const msg of visibleChat) {
+      if (!dispatchedChatIds.current.has(msg.id)) {
+        dispatchedChatIds.current.add(msg.id);
+        globalThis.dispatchEvent(new CustomEvent('nsv-chat-message', { detail: msg }));
+      }
+    }
+    // Limit set size
+    if (dispatchedChatIds.current.size > 1000) {
+      dispatchedChatIds.current.clear();
+    }
+  }, [visibleChat, liveId]);
 
   const fetchVodChatChunk = useCallback(
     async (offset: number) => {
@@ -363,6 +514,25 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
           <div style={{ display: 'flex', gap: '8px' }}>
             {!liveId && (
               <button
+                onClick={() => setShowChatSearch((v) => !v)}
+                className="secondary-btn"
+                style={{
+                  width: '40px',
+                  height: '40px',
+                  padding: 0,
+                  borderRadius: '50%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                title="Rechercher dans le chat"
+              >
+                <Search size={18} />
+              </button>
+            )}
+
+            {!liveId && (
+              <button
                 onClick={() => setShowMarkers((v) => !v)}
                 className="secondary-btn"
                 style={{ fontSize: '0.8rem', padding: '6px 12px' }}
@@ -483,8 +653,19 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
               display: 'flex',
               flexDirection: 'column',
               height: '100%',
+              position: 'relative',
             }}
           >
+            {!liveId && showChatSearch && vodId && (
+              <ChatSearch
+                vodId={vodId}
+                onSeek={(time) => {
+                  setSeekTo(time);
+                  setShowChatSearch(false);
+                }}
+                onClose={() => setShowChatSearch(false)}
+              />
+            )}
             {liveId ? (
               <LiveChatComponent liveId={liveId} chatScrollRef={chatScrollRef} />
             ) : (
