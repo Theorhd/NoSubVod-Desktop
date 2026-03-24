@@ -471,8 +471,8 @@ export default function ScreenShare() {
 
     const connect = () => {
       if (disposed) return;
-      const authQuery = getAuthQuery();
-      const wsUrl = `${protocol}://${host}/api/screenshare/ws${authQuery ? `?${authQuery}` : ''}`;
+      const authQueryString = authQuery ? `?${authQuery}` : '';
+      const wsUrl = `${protocol}://${host}/api/screenshare/ws${authQueryString}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 

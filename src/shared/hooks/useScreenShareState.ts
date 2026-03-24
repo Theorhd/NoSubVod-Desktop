@@ -17,7 +17,7 @@ export const DEFAULT_SCREEN_SHARE_STATE: ScreenShareSessionState = {
 
 export function useScreenShareState(
   fetcher: () => Promise<ScreenShareSessionState>,
-  pollingInterval = 3000
+  pollingInterval: number | null = 3000
 ) {
   const [state, setState] = useState<ScreenShareSessionState>(DEFAULT_SCREEN_SHARE_STATE);
   const [loading, setLoading] = useState(true);

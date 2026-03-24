@@ -50,7 +50,7 @@ export class ErrorBoundary extends Component<Props, State> {
             The application encountered an unexpected error.
           </p>
           <button
-            onClick={() => window.location.reload()}
+            onClick={() => globalThis.location.reload()}
             style={{
               background: '#9146ff',
               color: 'white',
