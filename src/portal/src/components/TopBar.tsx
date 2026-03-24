@@ -1,6 +1,6 @@
 import React, { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Monitor } from 'lucide-react';
 
 export interface TopBarProps {
   title?: ReactNode;
@@ -63,8 +63,23 @@ export const TopBar = React.memo(
           )}
         </div>
 
-        {actions && (
-          <div className="top-actions" style={{ display: 'flex', gap: '8px' }}>
+        {(actions || mode === 'logo') && (
+          <div
+            className="top-actions"
+            style={{ display: 'flex', gap: '8px', alignItems: 'center' }}
+          >
+            {mode === 'logo' && (
+              <button
+                onClick={() => navigate('/multi-view')}
+                className="secondary-btn"
+                style={{ width: '40px', height: '40px', padding: 0, borderRadius: '50%' }}
+                aria-label="Multi-View"
+                title="Multi-View"
+                type="button"
+              >
+                <Monitor size={20} />
+              </button>
+            )}
             {actions}
           </div>
         )}

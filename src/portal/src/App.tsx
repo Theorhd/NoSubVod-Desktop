@@ -7,7 +7,6 @@ import {
   Radio,
   Download,
   MonitorSmartphone,
-  Monitor,
   Bell,
   X,
 } from 'lucide-react';
@@ -241,7 +240,6 @@ function AppContent() {
     () => [
       { path: '/trends', label: 'Trends', Icon: TrendingUp },
       { path: '/live', label: 'Live', Icon: Radio },
-      { path: '/multi-view', label: 'Multi-View', Icon: Monitor },
       { path: '/', label: 'Home', Icon: HomeIcon, isHome: true },
       ...(screenShareState.active
         ? [{ path: '/screen-share', label: 'Screen Share', Icon: MonitorSmartphone }]

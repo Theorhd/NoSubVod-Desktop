@@ -27,6 +27,7 @@
   },
   "plugins": {
     "updater": {
+      "pubkey": "dW51c2VkX3BsYWNlaG9sZGVyX3B1YmtleV9mb3JfZGV2ZWxvcG1lbnQ=",
       "endpoints": [
         "https://github.com/Theorhd/NoSubVod-Desktop/releases/latest/download/latest.json"
       ]
