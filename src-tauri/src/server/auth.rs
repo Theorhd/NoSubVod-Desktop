@@ -14,7 +14,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tracing::{info, instrument};
 
-use super::routes::ApiState;
+use super::state::ApiState;
 use super::types::SubEntry;
 
 // ── CONFIGURE YOUR TWITCH APP HERE ─────────────────────────────────────────────
@@ -557,4 +557,66 @@ pub async fn import_followed_channels(
     }
 
     total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_random_string() {
+        let s1 = random_string(32);
+        let s2 = random_string(32);
+        assert_eq!(s1.len(), 32);
+        assert_eq!(s2.len(), 32);
+        assert_ne!(s1, s2);
+    }
+
+    #[test]
+    fn test_pkce_challenge() {
+        let verifier = "test_verifier_string_that_is_long_enough_for_pkce";
+        let challenge = pkce_challenge(verifier);
+        // Sha256 of "test_verifier_string_that_is_long_enough_for_pkce" is:
+        // f6c7b9...
+        // base64url encoded should not contain + or / or =
+        assert!(!challenge.contains('+'));
+        assert!(!challenge.contains('/'));
+        assert!(!challenge.contains('='));
+        assert!(!challenge.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_oauth_state_cleanup() {
+        let store = OAuthStateStore::new();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        {
+            let mut pending = store.pending.write().await;
+            // Valid entry (1 min old)
+            pending.insert(
+                "valid".to_string(),
+                PendingOAuth {
+                    code_verifier: "v1".to_string(),
+                    created_at: now - 60,
+                },
+            );
+            // Expired entry (11 mins old)
+            pending.insert(
+                "expired".to_string(),
+                PendingOAuth {
+                    code_verifier: "v2".to_string(),
+                    created_at: now - 660,
+                },
+            );
+        }
+
+        store.cleanup_expired().await;
+
+        let pending = store.pending.read().await;
+        assert!(pending.contains_key("valid"));
+        assert!(!pending.contains_key("expired"));
+    }
 }

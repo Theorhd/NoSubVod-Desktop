@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -11,47 +11,22 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import type { RemoteControlPayload } from '../../shared/types';
+import type { RemoteControlPayload, ScreenShareSessionState } from '../../shared/types';
 import { useResponsive } from './hooks/useResponsive';
-import { useScreenShareState } from './hooks/useScreenShareState';
+import { useScreenShareState } from '../../shared/hooks/useScreenShareState';
 import { useWebRTCViewer } from './hooks/useWebRTCViewer';
 import { usePlayerControls } from './hooks/usePlayerControls';
-
-function formatStartedAt(startedAt: number | null): string {
-  if (!startedAt) return 'Not started';
-  const date = new Date(startedAt);
-  return date.toLocaleString();
-}
-
-const pointerButtonFromMouseEvent = (button: number): 'left' | 'middle' | 'right' => {
-  if (button === 1) return 'middle';
-  if (button === 2) return 'right';
-  return 'left';
-};
-
-const normalizedPointerPosition = (
-  event: React.MouseEvent<HTMLButtonElement>,
-  surface: HTMLButtonElement | null
-) => {
-  if (!surface) {
-    return { x: 0.5, y: 0.5 };
-  }
-
-  const rect = surface.getBoundingClientRect();
-  const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)));
-  const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / Math.max(1, rect.height)));
-
-  return {
-    x: Number.isFinite(x) ? x : 0.5,
-    y: Number.isFinite(y) ? y : 0.5,
-  };
-};
+import {
+  formatStartedAt,
+  pointerButtonFromMouseEvent,
+  normalizedPointerPosition,
+} from '../../shared/utils/player';
 
 interface RemoteControlPanelProps {
   sendRemoteControl: (payload: RemoteControlPayload) => void;
 }
 
-const RemoteControlPanel = ({ sendRemoteControl }: RemoteControlPanelProps) => (
+const RemoteControlPanel = React.memo(({ sendRemoteControl }: RemoteControlPanelProps) => (
   <div
     style={{
       display: 'flex',
@@ -75,12 +50,7 @@ const RemoteControlPanel = ({ sendRemoteControl }: RemoteControlPanelProps) => (
       </button>
       <button
         className="action-btn"
-        style={{
-          width: '80px',
-          height: '80px',
-          borderRadius: '50%',
-          background: 'var(--primary)',
-        }}
+        style={{ width: '80px', height: '80px', borderRadius: '50%', background: 'var(--primary)' }}
         onClick={() => sendRemoteControl({ command: 'play' })}
       >
         <Play size={32} fill="currentColor" />
@@ -107,13 +77,7 @@ const RemoteControlPanel = ({ sendRemoteControl }: RemoteControlPanelProps) => (
     </div>
 
     <div style={{ width: '100%', padding: '0 20px', marginTop: '12px' }}>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          marginBottom: '8px',
-        }}
-      >
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
         <Volume2 size={18} />
         <span style={{ fontSize: '0.8rem', fontWeight: 700 }}>Host Volume</span>
       </div>
@@ -132,12 +96,7 @@ const RemoteControlPanel = ({ sendRemoteControl }: RemoteControlPanelProps) => (
 
     <button
       className="secondary-btn"
-      style={{
-        width: '100%',
-        padding: '14px',
-        borderRadius: 'var(--radius-md)',
-        fontWeight: 700,
-      }}
+      style={{ width: '100%', padding: '14px', borderRadius: 'var(--radius-md)', fontWeight: 700 }}
       onClick={() => sendRemoteControl({ command: 'mute' })}
     >
       Mute / Unmute Host
@@ -154,14 +113,16 @@ const RemoteControlPanel = ({ sendRemoteControl }: RemoteControlPanelProps) => (
       Ces commandes contrôlent directement le lecteur vidéo sur la machine hôte.
     </p>
   </div>
-);
+));
+
+RemoteControlPanel.displayName = 'RemoteControlPanel';
 
 interface SessionInfoPanelProps {
   state: any;
   signalStatus: string;
 }
 
-const SessionInfoPanel = ({ state, signalStatus }: SessionInfoPanelProps) => (
+const SessionInfoPanel = React.memo(({ state, signalStatus }: SessionInfoPanelProps) => (
   <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
     <section>
       <div
@@ -234,12 +195,7 @@ const SessionInfoPanel = ({ state, signalStatus }: SessionInfoPanelProps) => (
 
     <div
       className="card glass"
-      style={{
-        marginTop: 'auto',
-        padding: '12px',
-        fontSize: '0.8rem',
-        color: 'var(--text-muted)',
-      }}
+      style={{ marginTop: 'auto', padding: '12px', fontSize: '0.8rem', color: 'var(--text-muted)' }}
     >
       <Activity size={14} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
       {state.interactive
@@ -247,7 +203,9 @@ const SessionInfoPanel = ({ state, signalStatus }: SessionInfoPanelProps) => (
         : 'Remote interaction is disabled.'}
     </div>
   </div>
-);
+));
+
+SessionInfoPanel.displayName = 'SessionInfoPanel';
 
 interface PlayerRTCTopBarProps {
   onBack: () => void;
@@ -256,45 +214,49 @@ interface PlayerRTCTopBarProps {
   rtcStatus: string;
 }
 
-const PlayerRTCTopBar = ({ onBack, active, statusLabel, rtcStatus }: PlayerRTCTopBarProps) => (
-  <div className="top-bar glass">
-    <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flex: 1 }}>
-      <button
-        onClick={onBack}
-        className="secondary-btn"
-        style={{ width: '40px', height: '40px', padding: 0, borderRadius: '50%' }}
-      >
-        <ArrowLeft size={20} />
-      </button>
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <h2 style={{ fontSize: '1rem', fontWeight: 800, margin: 0 }}>Screen Share</h2>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            fontSize: '0.75rem',
-            color: 'var(--text-muted)',
-          }}
+const PlayerRTCTopBar = React.memo(
+  ({ onBack, active, statusLabel, rtcStatus }: PlayerRTCTopBarProps) => (
+    <div className="top-bar glass">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flex: 1 }}>
+        <button
+          onClick={onBack}
+          className="secondary-btn"
+          style={{ width: '40px', height: '40px', padding: 0, borderRadius: '50%' }}
         >
-          <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <div
-              style={{
-                width: '6px',
-                height: '6px',
-                borderRadius: '50%',
-                background: active ? 'var(--success)' : 'var(--text-muted)',
-              }}
-            />
-            {statusLabel}
-          </span>
-          <span>•</span>
-          <span>{rtcStatus}</span>
+          <ArrowLeft size={20} />
+        </button>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <h2 style={{ fontSize: '1rem', fontWeight: 800, margin: 0 }}>Screen Share</h2>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              fontSize: '0.75rem',
+              color: 'var(--text-muted)',
+            }}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <div
+                style={{
+                  width: '6px',
+                  height: '6px',
+                  borderRadius: '50%',
+                  background: active ? 'var(--success)' : 'var(--text-muted)',
+                }}
+              />
+              {statusLabel}
+            </span>
+            <span>•</span>
+            <span>{rtcStatus}</span>
+          </div>
         </div>
       </div>
     </div>
-  </div>
+  )
 );
+
+PlayerRTCTopBar.displayName = 'PlayerRTCTopBar';
 
 interface PlayerControlsOverlayProps {
   volume: number;
@@ -305,55 +267,59 @@ interface PlayerControlsOverlayProps {
   toggleFullscreen: () => void;
 }
 
-const PlayerControlsOverlay = ({
-  volume,
-  isMuted,
-  isFullscreen,
-  toggleMute,
-  handleVolumeChange,
-  toggleFullscreen,
-}: PlayerControlsOverlayProps) => (
-  <div
-    style={{
-      position: 'absolute',
-      bottom: '24px',
-      left: '50%',
-      transform: 'translateX(-50%)',
-      display: 'flex',
-      gap: '12px',
-      padding: '12px',
-      borderRadius: 'var(--radius-lg)',
-      background: 'rgba(7, 8, 15, 0.8)',
-      backdropFilter: 'blur(12px)',
-      border: '1px solid var(--border)',
-      zIndex: 100,
-    }}
-  >
-    <button
-      onClick={toggleMute}
-      className="secondary-btn"
-      style={{ width: '40px', height: '40px', padding: 0 }}
+const PlayerControlsOverlay = React.memo(
+  ({
+    volume,
+    isMuted,
+    isFullscreen,
+    toggleMute,
+    handleVolumeChange,
+    toggleFullscreen,
+  }: PlayerControlsOverlayProps) => (
+    <div
+      style={{
+        position: 'absolute',
+        bottom: '24px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        display: 'flex',
+        gap: '12px',
+        padding: '12px',
+        borderRadius: 'var(--radius-lg)',
+        background: 'rgba(7, 8, 15, 0.8)',
+        backdropFilter: 'blur(12px)',
+        border: '1px solid var(--border)',
+        zIndex: 100,
+      }}
     >
-      {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
-    </button>
-    <input
-      type="range"
-      min={0}
-      max={1}
-      step={0.01}
-      value={isMuted ? 0 : volume}
-      onChange={handleVolumeChange}
-      style={{ width: '120px' }}
-    />
-    <button
-      onClick={() => toggleFullscreen()}
-      className="action-btn"
-      style={{ fontSize: '0.85rem' }}
-    >
-      {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-    </button>
-  </div>
+      <button
+        onClick={toggleMute}
+        className="secondary-btn"
+        style={{ width: '40px', height: '40px', padding: 0 }}
+      >
+        {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+      </button>
+      <input
+        type="range"
+        min={0}
+        max={1}
+        step={0.01}
+        value={isMuted ? 0 : volume}
+        onChange={handleVolumeChange}
+        style={{ width: '120px' }}
+      />
+      <button
+        onClick={() => toggleFullscreen()}
+        className="action-btn"
+        style={{ fontSize: '0.85rem' }}
+      >
+        {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+      </button>
+    </div>
+  )
 );
+
+PlayerControlsOverlay.displayName = 'PlayerControlsOverlay';
 
 export default function PlayerRTC() {
   const navigate = useNavigate();
@@ -361,7 +327,14 @@ export default function PlayerRTC() {
   const sessionIdParam = searchParams.get('sessionId');
 
   const { isMobileLayout, isTouchDevice } = useResponsive();
-  const { state, setState } = useScreenShareState();
+
+  const fetchScreenShareState = useCallback(async () => {
+    const response = await fetch('/api/screenshare/state');
+    if (!response.ok) throw new Error('Failed to fetch state');
+    return (await response.json()) as ScreenShareSessionState;
+  }, []);
+
+  const { state, setState } = useScreenShareState(fetchScreenShareState, 3000);
 
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const viewerSurfaceRef = useRef<HTMLButtonElement | null>(null);
@@ -390,7 +363,6 @@ export default function PlayerRTC() {
     revealControls,
   } = usePlayerControls(hasRemoteStream, remoteVideoRef, playerFrameRef);
 
-  // Synchronisation lecture/pause avec l'hôte
   useEffect(() => {
     const video = remoteVideoRef.current;
     if (!video || !hasRemoteStream) return;
@@ -430,78 +402,96 @@ export default function PlayerRTC() {
 
   const useNativeMobilePlayer = isMobileLayout || isTouchDevice;
 
-  const handleViewerMouseMove = (event: React.MouseEvent<HTMLButtonElement>) => {
-    revealControls();
-    const now = performance.now();
-    if (now - lastPointerMoveRef.current < 8) return;
-    lastPointerMoveRef.current = now;
+  const handleViewerMouseMove = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      revealControls();
+      const now = performance.now();
+      if (now - lastPointerMoveRef.current < 8) return;
+      lastPointerMoveRef.current = now;
 
-    const pos = normalizedPointerPosition(event, viewerSurfaceRef.current);
-    sendRemoteInput({ kind: 'pointer', action: 'move', x: pos.x, y: pos.y });
-  };
+      const pos = normalizedPointerPosition(event, viewerSurfaceRef.current);
+      sendRemoteInput({ kind: 'pointer', action: 'move', x: pos.x, y: pos.y });
+    },
+    [revealControls, sendRemoteInput]
+  );
 
-  const handleViewerMouseDown = (event: React.MouseEvent<HTMLButtonElement>) => {
-    revealControls();
-    const pos = normalizedPointerPosition(event, viewerSurfaceRef.current);
-    sendRemoteInput({
-      kind: 'pointer',
-      action: 'down',
-      button: pointerButtonFromMouseEvent(event.button),
-      x: pos.x,
-      y: pos.y,
-    });
-  };
+  const handleViewerMouseDown = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      revealControls();
+      const pos = normalizedPointerPosition(event, viewerSurfaceRef.current);
+      sendRemoteInput({
+        kind: 'pointer',
+        action: 'down',
+        button: pointerButtonFromMouseEvent(event.button),
+        x: pos.x,
+        y: pos.y,
+      });
+    },
+    [revealControls, sendRemoteInput]
+  );
 
-  const handleViewerMouseUp = (event: React.MouseEvent<HTMLButtonElement>) => {
-    revealControls();
-    const pos = normalizedPointerPosition(event, viewerSurfaceRef.current);
-    sendRemoteInput({
-      kind: 'pointer',
-      action: 'up',
-      button: pointerButtonFromMouseEvent(event.button),
-      x: pos.x,
-      y: pos.y,
-    });
-  };
+  const handleViewerMouseUp = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      revealControls();
+      const pos = normalizedPointerPosition(event, viewerSurfaceRef.current);
+      sendRemoteInput({
+        kind: 'pointer',
+        action: 'up',
+        button: pointerButtonFromMouseEvent(event.button),
+        x: pos.x,
+        y: pos.y,
+      });
+    },
+    [revealControls, sendRemoteInput]
+  );
 
-  const handleViewerWheel = (event: React.WheelEvent<HTMLButtonElement>) => {
-    revealControls();
-    const surface = viewerSurfaceRef.current;
-    const rect = surface?.getBoundingClientRect();
-    const x = rect
-      ? Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)))
-      : 0.5;
-    const y = rect
-      ? Math.min(1, Math.max(0, (event.clientY - rect.top) / Math.max(1, rect.height)))
-      : 0.5;
-    sendRemoteInput({
-      kind: 'pointer',
-      action: 'wheel',
-      x,
-      y,
-      deltaX: event.deltaX,
-      deltaY: event.deltaY,
-    });
-  };
+  const handleViewerWheel = useCallback(
+    (event: React.WheelEvent<HTMLButtonElement>) => {
+      revealControls();
+      const surface = viewerSurfaceRef.current;
+      const rect = surface?.getBoundingClientRect();
+      const x = rect
+        ? Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)))
+        : 0.5;
+      const y = rect
+        ? Math.min(1, Math.max(0, (event.clientY - rect.top) / Math.max(1, rect.height)))
+        : 0.5;
+      sendRemoteInput({
+        kind: 'pointer',
+        action: 'wheel',
+        x,
+        y,
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+      });
+    },
+    [revealControls, sendRemoteInput]
+  );
 
-  const handleViewerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    revealControls();
-    if (event.repeat) return;
-    sendRemoteInput({ kind: 'keyboard', action: 'down', key: event.key });
-  };
+  const handleViewerKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      revealControls();
+      if (event.repeat) return;
+      sendRemoteInput({ kind: 'keyboard', action: 'down', key: event.key });
+    },
+    [revealControls, sendRemoteInput]
+  );
 
-  const handleViewerKeyUp = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    revealControls();
-    sendRemoteInput({ kind: 'keyboard', action: 'up', key: event.key });
-  };
+  const handleViewerKeyUp = useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      revealControls();
+      sendRemoteInput({ kind: 'keyboard', action: 'up', key: event.key });
+    },
+    [revealControls, sendRemoteInput]
+  );
 
-  const handleBack = () => {
+  const handleBack = useCallback(() => {
     if (globalThis.history.length > 1) {
       navigate(-1);
     } else {
       navigate('/screen-share');
     }
-  };
+  }, [navigate]);
 
   const renderPlayerFeed = () => {
     if (!hasRemoteStream) {

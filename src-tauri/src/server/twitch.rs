@@ -1956,6 +1956,78 @@ impl TwitchService {
         }))
     }
 
+    pub async fn search_video_chat(
+        &self,
+        vod_id: &str,
+        keyword: &str,
+        max_messages: usize,
+    ) -> AppResult<Value> {
+        let keyword_lower = keyword.to_lowercase();
+        let mut results = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut total_checked = 0;
+        let max_to_check = 1000; // Limit total messages scanned to prevent timeout
+
+        loop {
+            let cursor_str = cursor
+                .as_ref()
+                .map(|c| format!(", cursor: \"{}\"", c))
+                .unwrap_or_default();
+            let body = format!(
+                r#"{{"query":"query {{ video(id: \"{}\") {{ comments{} {{ edges {{ node {{ id, commenter {{ displayName, login, profileImageURL(width: 50) }}, message {{ fragments {{ text }} }}, contentOffsetSeconds }} }}, pageInfo {{ hasNextPage, endCursor }} }} }} }}"}}"#,
+                gql_escape(vod_id),
+                cursor_str
+            );
+
+            let data = self.gql_post(&body).await?;
+            let comments = &data["data"]["video"]["comments"];
+            if comments.is_null() {
+                break;
+            }
+
+            if let Some(edges) = comments["edges"].as_array() {
+                for edge in edges {
+                    total_checked += 1;
+                    let node = &edge["node"];
+                    let message_text = node["message"]["fragments"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|f| f["text"].as_str())
+                                .collect::<String>()
+                        })
+                        .unwrap_or_default();
+
+                    if message_text.to_lowercase().contains(&keyword_lower) {
+                        results.push(serde_json::json!({
+                            "id": node["id"],
+                            "commenter": node["commenter"],
+                            "message": message_text,
+                            "contentOffsetSeconds": node["contentOffsetSeconds"]
+                        }));
+                    }
+
+                    if results.len() >= max_messages || total_checked >= max_to_check {
+                        break;
+                    }
+                }
+            }
+
+            let page_info = &comments["pageInfo"];
+            let has_next = page_info["hasNextPage"].as_bool().unwrap_or(false);
+            cursor = page_info["endCursor"].as_str().map(|s| s.to_string());
+
+            if !has_next || results.len() >= max_messages || total_checked >= max_to_check {
+                break;
+            }
+        }
+
+        Ok(serde_json::json!({
+            "results": results,
+            "totalChecked": total_checked
+        }))
+    }
+
     pub async fn fetch_video_markers(&self, vod_id: &str) -> AppResult<Value> {
         let escaped_vod_id = gql_escape(vod_id);
 

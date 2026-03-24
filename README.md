@@ -2,6 +2,18 @@
 
 NoSubVOD Desktop est une application locale pour regarder des VODs et des lives Twitch depuis n’importe quel appareil du réseau local (mobile, tablette, TV, PC), avec historique, watchlist et portail web intégré.
 
+## 🆕 v0.3.5 — Extensions, Multi-View, Chat Search et Auto-Update
+
+La version 0.3.5 introduit un système d'extensions intégré, une première extension DevTool Explorer, le mode Multi-View avec recherche chat, ainsi que l'intégration des mises à jour automatiques de l'application.
+
+### Points clés v0.3.5
+
+- **Système d'extensions** : architecture d'extensions complète (manager, contexte, API), activation/désactivation dans les settings.
+- **DevTool Explorer** : nouvelle extension intégrée pour le monitoring avec UI/UX améliorée.
+- **Multi-View + Chat Search** : navigation enrichie avec vue multiple et recherche chat intégrée.
+- **Auto-Update** : plugin updater intégré avec configuration de clé publique pour les releases desktop.
+- **Qualité & CI** : améliorations backend/tests et exclusion de `extensions/**` des checks CI/CodeQL.
+
 ## 🆕 v0.3.4 — Remote Control, qualité player renforcée et Screen Share Windows amélioré
 
 La version 0.3.4 améliore le pilotage à distance du player, la stabilité de lecture HLS, la sélection de qualité vidéo, et la robustesse du mode Screen Share sur Windows.
@@ -79,7 +91,12 @@ Résultat: démarrage plus rapide, binaire bien plus léger et meilleure stabili
 
 - Serveur local accessible sur le LAN.
 - QR code affiché côté desktop pour ouverture rapide du portail.
-- Navigation: Home, Live, Search, Trends, Channel, Player, History, Settings.
+- Navigation: Home, Live, Search, Trends, Channel, Player, Multi-View, History, Settings.
+
+### 🧩 Extensions
+
+- Système d'extensions local intégré avec activation/désactivation depuis les settings.
+- Extension DevTool Explorer incluse pour le monitoring et l'exploration d'outils.
 
 ### 🖥️ Screen Share local
 
@@ -99,6 +116,10 @@ Résultat: démarrage plus rapide, binaire bien plus léger et meilleure stabili
 - Watchlist.
 - Synchronisation locale optionnelle (OneSync).
 - Paramètres serveur persistants (dont adblock proxy/mode).
+
+### ⬆️ Mise à jour application
+
+- Intégration d'un mécanisme d'auto-update desktop via plugin updater.
 
 ---
 

@@ -1,6 +1,6 @@
 {
   "name": "nosubvod-desktop",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Bypass sub-only VODs and stream to local network with streamer subscriptions",
   "author": "Theorhd",
   "scripts": {
@@ -26,7 +26,9 @@
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-shell": "^2",
+    "@tauri-apps/plugin-updater": "^2.10.0",
     "@vidstack/react": "^1.12.13",
     "hls.js": "^1.6.15",
     "html5-qrcode": "^2.3.8",

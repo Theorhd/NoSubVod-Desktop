@@ -344,8 +344,8 @@ fn best_variant_url(master: &str, origin: &str, master_url: &str) -> Option<Stri
 
 /// Parse BANDWIDTH= from an EXT-X-STREAM-INF tag line.
 fn parse_bandwidth(tag: &str) -> u64 {
-    tag.split(',')
-        .find(|p| p.trim_start().starts_with("BANDWIDTH="))
+    tag.split([',', ':'])
+        .find(|p| p.trim().starts_with("BANDWIDTH="))
         .and_then(|p| p.split('=').nth(1))
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(0)
@@ -429,5 +429,97 @@ async fn set_error(downloads: &ActiveDownloads, vod_id: &Arc<str>, msg: String) 
     if let Some(p_arc) = lock.get(vod_id) {
         let mut p = p_arc.write().await;
         p.status = DownloadStatus::Error(msg);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_bandwidth() {
+        assert_eq!(
+            parse_bandwidth("#EXT-X-STREAM-INF:BANDWIDTH=1280000,CODECS=\"avc1.42e01e\""),
+            1280000
+        );
+        assert_eq!(
+            parse_bandwidth("#EXT-X-STREAM-INF:CODECS=\"avc1\",BANDWIDTH=500"),
+            500
+        );
+        assert_eq!(parse_bandwidth("#EXT-X-STREAM-INF:NOBANDWIDTH"), 0);
+    }
+
+    #[test]
+    fn test_best_variant_url() {
+        let master = r#"#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=1000
+low.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=5000
+high.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=2500
+mid.m3u8
+"#;
+        let best = best_variant_url(master, "http://localhost", "http://localhost/master.m3u8");
+        assert_eq!(best, Some("http://localhost/high.m3u8".to_string()));
+    }
+
+    #[test]
+    fn test_parse_segments() {
+        let variant = r#"#EXTM3U
+#EXTINF:10.0,
+seg1.ts
+#EXT-X-TWITCH-AD-START
+#EXTINF:5.0,
+ad.ts
+#EXT-X-TWITCH-CONTENT-TYPE:live
+#EXTINF:10.0,
+seg2.ts
+"#;
+        let segments = parse_segments(variant, "http://localhost", "http://localhost/variant.m3u8");
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].duration, 10.0);
+        assert!(segments[0].url.contains("seg1.ts"));
+        assert_eq!(segments[1].duration, 10.0);
+        assert!(segments[1].url.contains("seg2.ts"));
+    }
+
+    #[test]
+    fn test_filter_segments_by_time() {
+        let segs = vec![
+            Segment {
+                url: Arc::from("s1"),
+                duration: 10.0,
+            },
+            Segment {
+                url: Arc::from("s2"),
+                duration: 10.0,
+            },
+            Segment {
+                url: Arc::from("s3"),
+                duration: 10.0,
+            },
+        ];
+
+        // [0-10], [10-20], [20-30]
+
+        // Keep all
+        assert_eq!(filter_segments_by_time(&segs, None, None).len(), 3);
+
+        // Clip [5, 15] -> should keep s1 (ends at 10) and s2 (starts at 10)
+        let filtered = filter_segments_by_time(&segs, Some(5.0), Some(15.0));
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0].url.as_ref(), "s1");
+        assert_eq!(filtered[1].url.as_ref(), "s2");
+
+        // Clip [15, 25] -> should keep s2 and s3
+        let filtered = filter_segments_by_time(&segs, Some(15.0), Some(25.0));
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0].url.as_ref(), "s2");
+        assert_eq!(filtered[1].url.as_ref(), "s3");
+
+        // Clip [25, 35] -> should keep s3
+        let filtered = filter_segments_by_time(&segs, Some(25.0), Some(35.0));
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].url.as_ref(), "s3");
     }
 }

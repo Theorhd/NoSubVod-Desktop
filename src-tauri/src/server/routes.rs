@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 #[cfg(debug_assertions)]
 use axum::response::Redirect;
 use axum::{
@@ -11,7 +9,10 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
+use tauri::Emitter;
 use tauri_plugin_autostart::ManagerExt;
 #[cfg(target_os = "windows")]
 use tokio::process::Command;
@@ -22,8 +23,6 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
 use super::{
-    auth::OAuthStateStore,
-    download::DownloadManager,
     download_paths::{
         build_master_m3u8_url, build_output_file_base_path, build_output_file_path,
         resolve_download_output_dir,
@@ -34,11 +33,9 @@ use super::{
         SearchCategoryQuery, SearchQuery, SettingsPatch, TrustedDevicePatch, VariantProxyQuery,
     },
     error::{AppError, AppResult},
-    history::HistoryStore,
     middleware::{auth_middleware, security_headers_middleware},
-    screenshare::ScreenShareService,
     screenshare::StartScreenShareRequest,
-    twitch::TwitchService,
+    state::ApiState,
     types::{SubEntry, WatchlistEntry},
     validation::{
         filter_hevc_variants_for_ios, is_ios_family_request, is_valid_id, is_valid_login,
@@ -47,20 +44,35 @@ use super::{
 use moka::future::Cache;
 use std::time::Duration;
 
-// ── Application state shared across all routes ─────────────────────────────────
+async fn handle_get_extensions(State(state): State<ApiState>) -> impl IntoResponse {
+    Json(state.extensions.list().await)
+}
 
-#[derive(Clone)]
-pub struct ApiState {
-    pub twitch: Arc<TwitchService>,
-    pub history: Arc<HistoryStore>,
-    pub download: Arc<DownloadManager>,
-    pub screenshare: Arc<ScreenShareService>,
-    pub oauth: Arc<OAuthStateStore>,
-    /// Per-session token required for API access (prevents unauthorized LAN access).
-    pub server_token: String,
-    pub app_handle: Option<tauri::AppHandle>,
-    /// Cache for the downloads list (short TTL to avoid frequent disk scans)
-    pub download_cache: Cache<String, Vec<DownloadedFile>>,
+async fn handle_extension_files(
+    Path((id, file_path)): Path<(String, String)>,
+    State(state): State<ApiState>,
+    req: axum::extract::Request,
+) -> AppResult<Response> {
+    let Some(base_path) = state.extensions.get_extension_path(&id).await else {
+        return Err(AppError::NotFound("Extension not found".to_string()));
+    };
+
+    // Treat the extension directory as the base path.
+    let base_dir = std::path::Path::new(&base_path);
+
+    // Reject absolute paths in the user-supplied segment to avoid replacing the base.
+    let requested_path = std::path::Path::new(&file_path);
+    if requested_path.is_absolute() || file_path.contains("..") {
+        return Err(AppError::BadRequest("Invalid path".to_string()));
+    }
+
+    // Join the base directory with the requested relative path
+    let full_path = base_dir.join(requested_path);
+
+    match ServeFile::new(&full_path).oneshot(req).await {
+        Ok(res) => Ok(res.into_response()),
+        Err(_) => Err(AppError::NotFound("File not found".to_string())),
+    }
 }
 
 async fn handle_get_screenshare_state(State(state): State<ApiState>) -> impl IntoResponse {
@@ -211,6 +223,17 @@ async fn handle_vod_chat(
     if !is_valid_id(&vod_id) {
         return Err(AppError::BadRequest("Invalid VOD ID".to_string()));
     }
+
+    if let Some(keyword) = q.keyword {
+        if !keyword.trim().is_empty() {
+            let data = state
+                .twitch
+                .search_video_chat(&vod_id, &keyword, 50)
+                .await?;
+            return Ok(Json(data).into_response());
+        }
+    }
+
     let offset = q.offset.unwrap_or(0.0);
     let data = state.twitch.fetch_video_chat(&vod_id, offset).await?;
     Ok(Json(data).into_response())
@@ -429,6 +452,8 @@ async fn handle_update_settings(
                 patch.download_local_path,
                 patch.download_network_shared_path,
                 patch.launch_at_login,
+                patch.auto_update,
+                patch.enabled_extensions,
             )
             .await?,
     )
@@ -1071,6 +1096,70 @@ async fn handle_start_download(
     Ok(Json(serde_json::json!({ "message": "Download started" })).into_response())
 }
 
+async fn handle_dev_sysinfo() -> impl IntoResponse {
+    let mut sys = System::new_with_specifics(
+        RefreshKind::new()
+            .with_cpu(CpuRefreshKind::everything())
+            .with_memory(MemoryRefreshKind::everything()),
+    );
+    // Need some wait for CPU stats to be valid
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    sys.refresh_all();
+
+    let cpu_load = sys.global_cpu_usage();
+    let memory_used = sys.used_memory();
+    let memory_total = sys.total_memory();
+
+    Json(serde_json::json!({
+        "cpuLoad": cpu_load,
+        "memoryUsed": memory_used,
+        "memoryTotal": memory_total,
+        "osName": System::name(),
+        "osVersion": System::os_version(),
+    }))
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+struct DevNotifyBody {
+    title: String,
+    message: String,
+}
+
+async fn handle_dev_notify(
+    State(state): State<ApiState>,
+    Json(body): Json<DevNotifyBody>,
+) -> AppResult<Response> {
+    if let Some(app) = state.app_handle {
+        app.emit("nsv-notification", &body)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(Json(serde_json::json!({ "success": true })).into_response())
+    } else {
+        Err(AppError::Internal("App handle unavailable".to_string()))
+    }
+}
+
+#[derive(Deserialize)]
+struct DevLogBody {
+    level: String,
+    message: String,
+    extension_id: String,
+}
+
+async fn handle_dev_log(Json(body): Json<DevLogBody>) -> impl IntoResponse {
+    let level = body.level.to_lowercase();
+    let msg = format!("[Extension:{}] {}", body.extension_id, body.message);
+
+    match level.as_str() {
+        "error" => tracing::error!("{}", msg),
+        "warn" => tracing::warn!("{}", msg),
+        "info" => tracing::info!("{}", msg),
+        "debug" => tracing::debug!("{}", msg),
+        _ => tracing::info!("{}", msg),
+    }
+
+    Json(serde_json::json!({ "success": true }))
+}
+
 // ── Router factory ────────────────────────────────────────────────────────────
 
 pub fn build_router(mut state: ApiState, portal_dist: Option<std::path::PathBuf>) -> Router {
@@ -1201,6 +1290,9 @@ pub fn build_router(mut state: ApiState, portal_dist: Option<std::path::PathBuf>
         )
         .route("/history/list", get(handle_get_history_list))
         .route("/history/:vod_id", get(handle_get_history_vod))
+        // Extensions
+        .route("/extensions", get(handle_get_extensions))
+        .route("/extensions/:id/*file", get(handle_extension_files))
         // User
         .route("/user/:username", get(handle_get_user))
         .route("/user/:username/vods", get(handle_get_user_vods))
@@ -1212,9 +1304,20 @@ pub fn build_router(mut state: ApiState, portal_dist: Option<std::path::PathBuf>
         ))
         .with_state(state.clone());
 
+    let dev = Router::new()
+        .route("/sysinfo", get(handle_dev_sysinfo))
+        .route("/notify", post(handle_dev_notify))
+        .route("/log", post(handle_dev_log))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
+        .with_state(state.clone());
+
     let mut router = Router::new()
         .nest("/api", auth_callback)
         .nest("/api", api)
+        .nest("/api/dev", dev)
         .layer(middleware::from_fn(security_headers_middleware))
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())
@@ -1252,20 +1355,29 @@ mod tests {
         let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&temp_dir).unwrap();
 
-        let history = Arc::new(crate::server::history::HistoryStore::load(temp_dir).unwrap());
+        let history =
+            Arc::new(crate::server::history::HistoryStore::load(temp_dir.clone()).unwrap());
         let twitch = Arc::new(TwitchService::new());
         let download = Arc::new(DownloadManager::new());
         let screenshare = Arc::new(ScreenShareService::new());
         let oauth = Arc::new(crate::server::auth::OAuthStateStore::new());
+        let extensions = Arc::new(crate::server::extensions::ExtensionManager::new(temp_dir));
+
+        let download_cache = moka::future::Cache::builder()
+            .time_to_live(std::time::Duration::from_secs(5))
+            .max_capacity(1)
+            .build();
 
         ApiState {
             twitch,
             history,
             download,
             screenshare,
+            extensions,
             oauth,
             server_token: "test_token".to_string(),
             app_handle: None,
+            download_cache,
         }
     }
 

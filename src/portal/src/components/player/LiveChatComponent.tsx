@@ -97,6 +97,8 @@ const LiveChatComponent: React.FC<LiveChatComponentProps> = ({ liveId, chatScrol
 
         setMessages((prev) => {
           const next = [...prev, data];
+          // Dispatch for extensions
+          globalThis.dispatchEvent(new CustomEvent('nsv-chat-message', { detail: data }));
           return next.length > 150 ? next.slice(-150) : next;
         });
 

@@ -6,6 +6,7 @@ use serde_json::Value;
 #[derive(Deserialize)]
 pub struct ChatQuery {
     pub offset: Option<f64>,
+    pub keyword: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -91,6 +92,10 @@ pub struct SettingsPatch {
     pub download_network_shared_path: Option<Option<String>>,
     #[serde(rename = "launchAtLogin")]
     pub launch_at_login: Option<bool>,
+    #[serde(rename = "autoUpdate")]
+    pub auto_update: Option<bool>,
+    #[serde(rename = "enabledExtensions")]
+    pub enabled_extensions: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
