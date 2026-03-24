@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { ExperienceSettings, ProxyInfo, TrustedDevice, TwitchStatus } from '../../shared/types';
 import { TopBar } from './components/TopBar';
+import { useExtensions } from './ExtensionContext';
 
 const defaultSettings: ExperienceSettings = {
   oneSync: false,
@@ -10,6 +11,7 @@ const defaultSettings: ExperienceSettings = {
   minVideoQuality: 'none',
   preferredVideoQuality: 'auto',
   launchAtLogin: false,
+  enabledExtensions: [],
 };
 
 interface SectionProps {
@@ -74,6 +76,64 @@ const ServerExperienceSection = React.memo(
   )
 );
 ServerExperienceSection.displayName = 'ServerExperienceSection';
+
+const ExtensionsSection = React.memo(() => {
+  const { extensions, enabledExtensions, toggleExtension, isLoading } = useExtensions();
+
+  if (isLoading) {
+    return (
+      <div className="card settings-card">
+        <h2>Extensions</h2>
+        <div className="trusted-devices-empty">Chargement des extensions...</div>
+      </div>
+    );
+  }
+
+  if (extensions.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="card settings-card">
+      <h2>Extensions</h2>
+      <p className="settings-description">Activez ou désactivez vos extensions installées.</p>
+      <div className="trusted-devices-list">
+        {extensions.map((ext) => {
+          const isEnabled = enabledExtensions.includes(ext.manifest.id);
+          return (
+            <div key={ext.manifest.id} className="trusted-device-item">
+              <div className="trusted-device-header">
+                <div className="trusted-device-id">
+                  <strong>{ext.manifest.name}</strong>
+                  <div style={{ fontSize: '0.75rem', opacity: 0.7 }}>
+                    v{ext.manifest.version} par {ext.manifest.author || 'Inconnu'}
+                  </div>
+                </div>
+                <label className="trusted-device-toggle">
+                  <span className="trusted-device-toggle-label">
+                    {isEnabled ? 'Active' : 'Inactive'}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={isEnabled}
+                    onChange={(e) => toggleExtension(ext.manifest.id, e.target.checked)}
+                  />
+                </label>
+              </div>
+              {ext.manifest.description && (
+                <div className="trusted-device-meta">{ext.manifest.description}</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p className="help-text mt-2" style={{ fontStyle: 'italic' }}>
+        Note: Désactiver une extension peut nécessiter un rechargement de l&apos;application.
+      </p>
+    </div>
+  );
+});
+ExtensionsSection.displayName = 'ExtensionsSection';
 
 const VideoPlayerSection = React.memo(({ settings, setSettings, setSuccess }: SectionProps) => (
   <div className="card settings-card">
@@ -592,6 +652,7 @@ export default function Settings() {
           setSettings={setSettings}
           setSuccess={setSuccess}
         />
+        <ExtensionsSection />
         <VideoPlayerSection settings={settings} setSettings={setSettings} setSuccess={setSuccess} />
         <AdblockSection
           settings={settings}

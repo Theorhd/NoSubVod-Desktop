@@ -32,7 +32,8 @@ const ScreenShare = lazy(() => import('./ScreenShare.tsx'));
 type NavItem = {
   path: string;
   label: string;
-  Icon: React.ComponentType<{ size?: number }>;
+  Icon: React.ComponentType<any>;
+  IconProps?: any;
   isHome?: boolean;
 };
 
@@ -90,7 +91,7 @@ const BottomNav = React.memo(({ items }: Readonly<{ items: NavItem[] }>) => {
             onClick={() => navigate(item.path)}
             type="button"
           >
-            <item.Icon size={item.isHome ? 28 : 22} />
+            <item.Icon size={item.isHome ? 28 : 22} {...item.IconProps} />
             <span className="nav-label">{item.label}</span>
           </button>
         );
@@ -181,6 +182,7 @@ function AppContent() {
           path: c.path || '',
           label: c.label || '',
           Icon: c.component,
+          IconProps: c.componentProps,
         })),
     ],
     [screenShareState.active, contributions]
@@ -217,7 +219,11 @@ function AppContent() {
                 {contributions
                   .filter((c) => c.type === 'route')
                   .map((c) => (
-                    <Route key={c.id} path={c.path} element={<c.component />} />
+                    <Route
+                      key={c.id}
+                      path={c.path}
+                      element={<c.component {...c.componentProps} />}
+                    />
                   ))}
               </Routes>
             </div>

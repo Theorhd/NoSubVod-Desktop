@@ -47,6 +47,7 @@ export interface ExtensionContribution {
   path?: string;
   icon?: string;
   component: React.ComponentType<any>;
+  componentProps?: any;
 }
 
 export interface ServerInfo {
@@ -108,6 +109,7 @@ export interface ExperienceSettings {
   downloadNetworkSharedPath?: string;
   twitchImportFollows?: boolean;
   launchAtLogin?: boolean;
+  enabledExtensions?: string[];
 }
 
 export interface TwitchStatus {

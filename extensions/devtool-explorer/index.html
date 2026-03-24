@@ -188,6 +188,25 @@ Ceci est un message envoyé depuis l'extension explorer !</textarea
     </main>
 
     <script type="module">
+      // Auto-inject auth token from localStorage for same-origin API calls
+      (function patchFetch() {
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = function (input, init) {
+          let url = typeof input === 'string' ? input : input.url;
+          if (url.startsWith('/api/') || url.startsWith('api/')) {
+            const token = localStorage.getItem('nsv_token');
+            if (token) {
+              const headers = new Headers(init?.headers);
+              if (!headers.has('x-nsv-token')) {
+                headers.set('x-nsv-token', token);
+              }
+              init = { ...init, headers };
+            }
+          }
+          return originalFetch.call(globalThis, input, init);
+        };
+      })();
+
       // Tab Management
       function showTab(id, target) {
         document.querySelectorAll('section').forEach((s) => s.classList.add('hidden'));

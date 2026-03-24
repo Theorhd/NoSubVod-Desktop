@@ -239,6 +239,8 @@ pub struct ExperienceSettings {
     pub twitch_import_follows: bool,
     #[serde(rename = "launchAtLogin", default)]
     pub launch_at_login: bool,
+    #[serde(rename = "enabledExtensions", default)]
+    pub enabled_extensions: Vec<String>,
 }
 
 /// Root of the persisted JSON file.
