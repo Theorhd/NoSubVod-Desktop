@@ -51,6 +51,8 @@ export default function MultiView() {
     setSlots((prev) => prev.filter((s) => s.id !== id));
   };
 
+  const gridColumns = slots.length >= 2 ? '1fr 1fr' : '1fr';
+
   return (
     <div className="player-container" style={{ display: 'flex', flexDirection: 'column' }}>
       <div
@@ -98,8 +100,7 @@ export default function MultiView() {
         style={{
           flex: 1,
           display: 'grid',
-          gridTemplateColumns:
-            slots.length > 2 ? '1fr 1fr' : slots.length === 2 ? '1fr 1fr' : '1fr',
+          gridTemplateColumns: gridColumns,
           gridTemplateRows: slots.length > 2 ? '1fr 1fr' : '1fr',
           gap: '2px',
           background: '#111',

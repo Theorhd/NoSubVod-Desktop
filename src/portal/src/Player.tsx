@@ -136,16 +136,21 @@ const ChatSearch = ({
           </div>
         )}
         {results.map((res: any) => (
-          <div
+          <button
             key={res.id}
             onClick={() => onSeek(res.contentOffsetSeconds)}
             style={{
+              width: '100%',
+              textAlign: 'left',
               padding: '12px',
               borderBottom: '1px solid var(--border)',
               cursor: 'pointer',
               borderRadius: '8px',
               transition: '0.2s',
               marginBottom: '4px',
+              background: 'transparent',
+              border: 'none',
+              display: 'block',
             }}
             className="hover-card"
           >
@@ -167,7 +172,7 @@ const ChatSearch = ({
             <div style={{ fontSize: '0.85rem', color: 'var(--text)', lineHeight: '1.4' }}>
               {res.message}
             </div>
-          </div>
+          </button>
         ))}
         {searching && (
           <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginTop: '20px' }}>

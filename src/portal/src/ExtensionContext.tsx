@@ -156,7 +156,7 @@ export function ExtensionProvider({ children }: Readonly<{ children: React.React
         const style = document.createElement('style');
         style.textContent = css;
         document.head.appendChild(style);
-        return () => document.head.removeChild(style);
+        return () => style.remove();
       },
       // Ecosystem: Custom actions (like Clip It)
       registerAction: (id: string, callback: (payload: any) => void) => {
