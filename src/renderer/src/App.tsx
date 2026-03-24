@@ -282,12 +282,12 @@ export default function App() {
       }
 
       if (message.payload.sdp?.type === 'answer') {
-        void peer.setRemoteDescription(new RTCSessionDescription(message.payload.sdp));
+        peer.setRemoteDescription(new RTCSessionDescription(message.payload.sdp));
         setHostRtcStatus('WebRTC live');
       }
 
       if (message.payload.candidate) {
-        void peer.addIceCandidate(new RTCIceCandidate(message.payload.candidate));
+        peer.addIceCandidate(new RTCIceCandidate(message.payload.candidate));
       }
     };
 
@@ -298,13 +298,13 @@ export default function App() {
           return;
         case 'peer-joined':
           if (message.role === 'viewer' && message.clientId) {
-            void createHostPeer(message.clientId);
+            createHostPeer(message.clientId);
           }
           return;
         case 'peers':
           for (const peer of message.peers || []) {
             if (peer.role === 'viewer' && peer.clientId) {
-              void createHostPeer(peer.clientId);
+              createHostPeer(peer.clientId);
             }
           }
           return;
@@ -480,7 +480,7 @@ export default function App() {
                 ...(isBusy || screenShare.active ? styles.disabledButton : {}),
               }}
               disabled={isBusy || screenShare.active}
-              onClick={() => void startShare('browser')}
+              onClick={() => startShare('browser')}
               type="button"
             >
               Ouvrir le navigateur
@@ -491,7 +491,7 @@ export default function App() {
                 ...(isBusy || screenShare.active ? styles.disabledButton : {}),
               }}
               disabled={isBusy || screenShare.active}
-              onClick={() => void startShare('application')}
+              onClick={() => startShare('application')}
               type="button"
             >
               Streamer une fenetre
@@ -502,7 +502,7 @@ export default function App() {
                 ...(isBusy || !screenShare.active ? styles.disabledButton : {}),
               }}
               disabled={isBusy || !screenShare.active}
-              onClick={() => void stopShare()}
+              onClick={() => stopShare()}
               type="button"
             >
               Stop diffusion

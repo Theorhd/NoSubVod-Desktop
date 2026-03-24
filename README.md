@@ -2,6 +2,18 @@
 
 NoSubVOD Desktop est une application locale pour regarder des VODs et des lives Twitch depuis n’importe quel appareil du réseau local (mobile, tablette, TV, PC), avec historique, watchlist et portail web intégré.
 
+## 🆕 v0.3.4 — Remote Control, qualité player renforcée et Screen Share Windows amélioré
+
+La version 0.3.4 améliore le pilotage à distance du player, la stabilité de lecture HLS, la sélection de qualité vidéo, et la robustesse du mode Screen Share sur Windows.
+
+### Points clés v0.3.4
+
+- **Contrôle distant playback** : ajout des commandes Play/Pause/Seek/Volume/Mute et d'un panneau de contrôle avec infos de session.
+- **Player plus stable** : gestion des événements distants fiabilisée dans NSVPlayer pour un comportement plus constant.
+- **Qualité vidéo optimisée** : tri/sélection des qualités amélioré avec configuration HLS orientée stabilité.
+- **Screen Share Windows renforcé** : compatibilité améliorée côté service + ajustements CSS responsives.
+- **Maintenance** : refactors structurels, nettoyage de styles et bump de version global vers 0.3.4.
+
 ## 🆕 v0.3.3 — Fiabilite streaming, optimisations Rust et backend durci
 
 La version 0.3.3 se concentre sur la stabilite de lecture VOD/Live, l'optimisation du backend Rust et l'amelioration de la maintenabilite globale.

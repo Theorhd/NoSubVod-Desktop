@@ -1,8 +1,44 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { MediaPlayer, MediaProvider, useMediaRemote, useMediaStore } from '@vidstack/react';
 import { defaultLayoutIcons, DefaultVideoLayout } from '@vidstack/react/player/layouts/default';
 import Hls from 'hls.js';
 import { safeStorageGet } from '../utils/storage.ts';
+
+const HLS_STABILITY_CONFIG = {
+  enableWorker: true,
+  lowLatencyMode: false,
+  startLevel: -1,
+  capLevelToPlayerSize: false,
+  maxBufferLength: 60,
+  maxMaxBufferLength: 120,
+  backBufferLength: 30,
+  maxBufferHole: 0.5,
+  manifestLoadingTimeOut: 20000,
+  levelLoadingTimeOut: 20000,
+  fragLoadingTimeOut: 25000,
+  nudgeMaxRetry: 8,
+  abrEwmaDefaultEstimate: 8_000_000,
+};
+
+type QualityEntry = {
+  idx: number;
+  height: number;
+};
+
+function parseHeight(value: string | undefined): number | null {
+  const parsed = Number.parseInt(value || '', 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function sortedQualitiesByHeightDesc(qualities: any[]): QualityEntry[] {
+  return qualities
+    .map((q, idx) => ({
+      idx,
+      height: Number((q as { height?: number }).height || 0),
+    }))
+    .filter((q) => q.height > 0)
+    .sort((a, b) => b.height - a.height);
+}
 
 export type NSVMediaSource = {
   src: string;
@@ -58,6 +94,12 @@ function withAuthQuery(url: string): string {
 function onProviderChange(provider: any) {
   if (provider?.type === 'hls') {
     provider.library = Hls;
+    provider.config = provider.config
+      ? {
+          ...provider.config,
+          ...HLS_STABILITY_CONFIG,
+        }
+      : HLS_STABILITY_CONFIG;
   }
 }
 
@@ -82,6 +124,14 @@ export default function NSVPlayer({
   const playerRef = useRef<any>(null);
   const store = useMediaStore(playerRef);
   const remote = useMediaRemote(playerRef);
+
+  // Stable references to avoid re-subscribing every second when store.currentTime changes
+  const remoteRef = useRef(remote);
+  const storeRef = useRef(store);
+  useEffect(() => {
+    remoteRef.current = remote;
+    storeRef.current = store;
+  }, [remote, store]);
 
   const didSeekOnStartRef = useRef(false);
   const lastExternalSeekRef = useRef<number | null>(null);
@@ -131,6 +181,10 @@ export default function NSVPlayer({
   }, [src.src]);
 
   useEffect(() => {
+    didApplyPreferredQualityRef.current = false;
+  }, [preferredQuality, minQuality, streamType]);
+
+  useEffect(() => {
     if (!Number.isFinite(seekTo)) return;
     if (!store.canSeek || store.duration <= 0) return;
 
@@ -153,44 +207,131 @@ export default function NSVPlayer({
 
     didApplyPreferredQualityRef.current = true;
 
+    const sorted = sortedQualitiesByHeightDesc(store.qualities as any[]);
+    if (sorted.length === 0) {
+      remote.changeQuality(-1);
+      return;
+    }
+
+    const minHeight = parseHeight(minQuality || undefined);
+    const allowed =
+      minHeight === null ? sorted : sorted.filter((quality) => quality.height >= minHeight);
+
+    if (allowed.length === 0) {
+      remote.changeQuality(-1);
+      return;
+    }
+
     if (!preferredQuality || preferredQuality === 'auto') {
-      const minHeight = Number.parseInt(minQuality || 'none', 10);
-      if (!Number.isNaN(minHeight)) {
-        const minIndex = (store.qualities as any[])
-          .map((q, idx) => ({
-            idx,
-            height: Number((q as { height?: number }).height || 0),
-          }))
-          .filter((q) => q.height >= minHeight)
-          .sort((a, b) => a.height - b.height)[0]?.idx;
-
-        if (typeof minIndex === 'number') {
-          remote.changeQuality(minIndex);
-          return;
-        }
+      // For VOD we prioritize max available quality, while still respecting a minimum floor.
+      if (streamType === 'on-demand' || minHeight !== null) {
+        remote.changeQuality(allowed[0].idx);
+      } else {
+        remote.changeQuality(-1);
       }
+      return;
+    }
 
+    const preferredHeight = parseHeight(preferredQuality);
+    if (preferredHeight === null) {
       remote.changeQuality(-1);
       return;
     }
 
-    const preferredHeight = Number.parseInt(preferredQuality, 10);
-    if (Number.isNaN(preferredHeight)) {
-      remote.changeQuality(-1);
+    const exact = allowed.find((q) => q.height === preferredHeight);
+    if (exact) {
+      remote.changeQuality(exact.idx);
       return;
     }
 
-    const qualityIndex = (store.qualities as any[]).findIndex(
-      (q) => Number((q as { height?: number }).height) === preferredHeight
-    );
+    // Pick the closest available quality to the user's preferred setting.
+    const closestBelow = allowed.find((q) => q.height < preferredHeight);
+    if (closestBelow) {
+      remote.changeQuality(closestBelow.idx);
+      return;
+    }
 
-    if (qualityIndex >= 0) {
-      remote.changeQuality(qualityIndex);
+    const closestAbove = [...allowed].reverse().find((q) => q.height > preferredHeight);
+    if (closestAbove) {
+      remote.changeQuality(closestAbove.idx);
       return;
     }
 
     remote.changeQuality(-1);
-  }, [minQuality, preferredQuality, remote, store.canSetQuality, store.qualities]);
+  }, [minQuality, preferredQuality, remote, store.canSetQuality, store.qualities, streamType]);
+
+  // Stable handler for remote control events to keep useEffect clean
+  const handleRemoteControl = useCallback((event: any) => {
+    const payload = event.payload;
+    const cmd = payload.command;
+    const val = payload.value ?? 0;
+    console.log('[NSVPlayer] Received Tauri control event:', cmd, val);
+
+    const r = remoteRef.current;
+    const s = storeRef.current;
+
+    switch (cmd) {
+      case 'play':
+        r.play();
+        break;
+      case 'pause':
+        r.pause();
+        break;
+      case 'seek':
+        r.seek(Math.max(0, Math.min(s.duration, (s.currentTime || 0) + val)));
+        break;
+      case 'volume':
+        r.changeVolume(val);
+        break;
+      case 'mute':
+        r.toggleMuted();
+        break;
+    }
+  }, []);
+
+  useEffect(() => {
+    const onPlay = () => remoteRef.current.play();
+    const onPause = () => remoteRef.current.pause();
+    const onSeek = (e: any) => {
+      const val = e.detail?.value || 0;
+      const s = storeRef.current;
+      remoteRef.current.seek(Math.max(0, Math.min(s.duration, (s.currentTime || 0) + val)));
+    };
+    const onVolume = (e: any) => remoteRef.current.changeVolume(e.detail?.value ?? 1);
+    const onMute = () => remoteRef.current.toggleMuted();
+
+    globalThis.addEventListener('nsv-remote-play', onPlay);
+    globalThis.addEventListener('nsv-remote-pause', onPause);
+    globalThis.addEventListener('nsv-remote-seek', onSeek);
+    globalThis.addEventListener('nsv-remote-volume', onVolume);
+    globalThis.addEventListener('nsv-remote-mute', onMute);
+
+    // native tauri event
+    let unlisten: (() => void) | undefined;
+    const isTauri = (globalThis as any).__TAURI_INTERNALS__ || (globalThis as any).__TAURI__;
+
+    if (isTauri) {
+      const setupTauriListener = async () => {
+        try {
+          const { listen } = await import('@tauri-apps/api/event');
+          unlisten = await listen('nsv-control', handleRemoteControl);
+          console.log('[NSVPlayer] Remote control listener registered.');
+        } catch (err) {
+          console.error('[NSVPlayer] Failed to load Tauri event API:', err);
+        }
+      };
+      setupTauriListener();
+    }
+
+    return () => {
+      globalThis.removeEventListener('nsv-remote-play', onPlay);
+      globalThis.removeEventListener('nsv-remote-pause', onPause);
+      globalThis.removeEventListener('nsv-remote-seek', onSeek);
+      globalThis.removeEventListener('nsv-remote-volume', onVolume);
+      globalThis.removeEventListener('nsv-remote-mute', onMute);
+      if (unlisten) unlisten();
+    };
+  }, [handleRemoteControl]); // Only once, refs are used inside
 
   return (
     <MediaPlayer
@@ -202,7 +343,8 @@ export default function NSVPlayer({
       viewType="video"
       poster={poster}
       streamType={streamType}
-      load="visible"
+      load={streamType === 'on-demand' ? 'eager' : 'visible'}
+      preload="auto"
       autoPlay={autoPlay}
       muted={muted}
       playsInline
