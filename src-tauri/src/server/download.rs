@@ -344,7 +344,7 @@ fn best_variant_url(master: &str, origin: &str, master_url: &str) -> Option<Stri
 
 /// Parse BANDWIDTH= from an EXT-X-STREAM-INF tag line.
 fn parse_bandwidth(tag: &str) -> u64 {
-    tag.split(|c| c == ',' || c == ':')
+    tag.split([',', ':'])
         .find(|p| p.trim().starts_with("BANDWIDTH="))
         .and_then(|p| p.split('=').nth(1))
         .and_then(|v| v.parse::<u64>().ok())
