@@ -330,6 +330,7 @@ impl HistoryStore {
         download_local_path: Option<Option<String>>,
         download_network_shared_path: Option<Option<String>>,
         launch_at_login: Option<bool>,
+        enabled_extensions: Option<Vec<String>>,
     ) -> AppResult<ExperienceSettings> {
         {
             let mut data = self.data.write().await;
@@ -359,6 +360,9 @@ impl HistoryStore {
             }
             if let Some(v) = launch_at_login {
                 data.settings.launch_at_login = v;
+            }
+            if let Some(v) = enabled_extensions {
+                data.settings.enabled_extensions = v;
             }
         }
         self.schedule_save();

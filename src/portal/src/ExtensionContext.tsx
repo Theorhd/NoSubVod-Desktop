@@ -70,7 +70,7 @@ export function ExtensionProvider({ children }: Readonly<{ children: React.React
         if (!enabledIds.includes(ext.manifest.id)) continue;
 
         const entry = ext.manifest.entry;
-        const entryUrl = `/api/extensions/${ext.manifest.id}/${entry}${authSuffix}`;
+        const entryUrl = `${globalThis.location.origin}/api/extensions/${ext.manifest.id}/${entry}${authSuffix}`;
 
         if (entry.endsWith('.html')) {
           // Automatically register a route for HTML-based extensions

@@ -91,6 +91,8 @@ pub struct SettingsPatch {
     pub download_network_shared_path: Option<Option<String>>,
     #[serde(rename = "launchAtLogin")]
     pub launch_at_login: Option<bool>,
+    #[serde(rename = "enabledExtensions")]
+    pub enabled_extensions: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
