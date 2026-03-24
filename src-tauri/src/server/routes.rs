@@ -1285,14 +1285,20 @@ pub fn build_router(mut state: ApiState, portal_dist: Option<std::path::PathBuf>
         .route("/user/:username/vods", get(handle_get_user_vods))
         .route("/user/:username/live", get(handle_get_user_live))
         // Auth middleware protects all these routes
-        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
         .with_state(state.clone());
 
     let dev = Router::new()
         .route("/sysinfo", get(handle_dev_sysinfo))
         .route("/notify", post(handle_dev_notify))
         .route("/log", post(handle_dev_log))
-        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
         .with_state(state.clone());
 
     let mut router = Router::new()

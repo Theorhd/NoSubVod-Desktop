@@ -1,273 +1,299 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="fr">
-<head>
-    <meta charset="UTF-8">
+  <head>
+    <meta charset="UTF-8" />
     <title>NSV DevTool Explorer</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        :root {
-            --bg: #0e0e10;
-            --card: #18181b;
-            --accent: #9147ff;
-            --text: #efeff1;
-            --muted: #adadb8;
-            --border: #2e2e35;
-        }
-        body {
-            background: var(--bg);
-            color: var(--text);
-            font-family: 'Inter', system-ui, sans-serif;
-            margin: 0;
-            display: grid;
-            grid-template-columns: 280px 1fr;
-            height: 100vh;
-        }
-        aside {
-            background: var(--card);
-            border-right: 1px solid var(--border);
-            padding: 20px;
-        }
-        main {
-            padding: 30px;
-            overflow-y: auto;
-        }
-        .nav-item {
-            display: block;
-            width: 100%;
-            text-align: left;
-            background: none;
-            border: none;
-            font-size: 1rem;
-            font-family: inherit;
-            padding: 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            margin-bottom: 5px;
-            color: var(--muted);
-            transition: 0.2s;
-        }
-        .nav-item:hover, .nav-item.active {
-            background: #26262c;
-            color: var(--text);
-        }
-        .card {
-            background: var(--card);
-            border-radius: 12px;
-            padding: 24px;
-            border: 1px solid var(--border);
-            margin-bottom: 24px;
-        }
-        h1, h2 { color: var(--accent); margin-top: 0; }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-        .input-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; color: var(--muted); font-size: 0.8rem; }
-        input, select, textarea {
-            width: 100%;
-            background: var(--bg);
-            border: 1px solid var(--border);
-            color: var(--text);
-            padding: 10px;
-            border-radius: 6px;
-            box-sizing: border-box;
-        }
-        .btn {
-            background: var(--accent);
-            color: white;
-            border: none;
-            padding: 10px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 600;
-        }
-        .btn:hover { filter: brightness(1.1); }
-        .hidden { display: none; }
-        .console {
-            background: black;
-            color: #00ff00;
-            font-family: monospace;
-            padding: 15px;
-            border-radius: 8px;
-            height: 150px;
-            overflow-y: auto;
-            font-size: 0.85rem;
-        }
+      :root {
+        --bg: #0e0e10;
+        --card: #18181b;
+        --accent: #9147ff;
+        --text: #efeff1;
+        --muted: #adadb8;
+        --border: #2e2e35;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'Inter', system-ui, sans-serif;
+        margin: 0;
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        height: 100vh;
+      }
+      aside {
+        background: var(--card);
+        border-right: 1px solid var(--border);
+        padding: 20px;
+      }
+      main {
+        padding: 30px;
+        overflow-y: auto;
+      }
+      .nav-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        background: none;
+        border: none;
+        font-size: 1rem;
+        font-family: inherit;
+        padding: 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        margin-bottom: 5px;
+        color: var(--muted);
+        transition: 0.2s;
+      }
+      .nav-item:hover,
+      .nav-item.active {
+        background: #26262c;
+        color: var(--text);
+      }
+      .card {
+        background: var(--card);
+        border-radius: 12px;
+        padding: 24px;
+        border: 1px solid var(--border);
+        margin-bottom: 24px;
+      }
+      h1,
+      h2 {
+        color: var(--accent);
+        margin-top: 0;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+      }
+      .input-group {
+        margin-bottom: 15px;
+      }
+      label {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        color: var(--text);
+        padding: 10px;
+        border-radius: 6px;
+        box-sizing: border-box;
+      }
+      .btn {
+        background: var(--accent);
+        color: white;
+        border: none;
+        padding: 10px 16px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .btn:hover {
+        filter: brightness(1.1);
+      }
+      .hidden {
+        display: none;
+      }
+      .console {
+        background: black;
+        color: #00ff00;
+        font-family: monospace;
+        padding: 15px;
+        border-radius: 8px;
+        height: 150px;
+        overflow-y: auto;
+        font-size: 0.85rem;
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <aside>
-        <h2>DevTool Explorer</h2>
-        <button class="nav-item active" data-tab="dashboard">Tableau de bord</button>
-        <button class="nav-item" data-tab="notify">Notifications</button>
-        <button class="nav-item" data-tab="logs">Journalisation</button>
+      <h2>DevTool Explorer</h2>
+      <button class="nav-item active" data-tab="dashboard">Tableau de bord</button>
+      <button class="nav-item" data-tab="notify">Notifications</button>
+      <button class="nav-item" data-tab="logs">Journalisation</button>
     </aside>
 
     <main>
-        <!-- DASHBOARD -->
-        <section id="tab-dashboard">
-            <h1>Système en temps réel</h1>
-            <div class="grid">
-                <div class="card">
-                    <h2>CPU Usage (%)</h2>
-                    <canvas id="cpuChart"></canvas>
-                </div>
-                <div class="card">
-                    <h2>RAM Usage (MB)</h2>
-                    <canvas id="ramChart"></canvas>
-                </div>
-            </div>
-            <div class="card">
-                <h2>Infos OS</h2>
-                <div id="os-info" class="muted">Récupération...</div>
-            </div>
-        </section>
+      <!-- DASHBOARD -->
+      <section id="tab-dashboard">
+        <h1>Système en temps réel</h1>
+        <div class="grid">
+          <div class="card">
+            <h2>CPU Usage (%)</h2>
+            <canvas id="cpuChart"></canvas>
+          </div>
+          <div class="card">
+            <h2>RAM Usage (MB)</h2>
+            <canvas id="ramChart"></canvas>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Infos OS</h2>
+          <div id="os-info" class="muted">Récupération...</div>
+        </div>
+      </section>
 
-        <!-- NOTIFY -->
-        <section id="tab-notify" class="hidden">
-            <h1>Envoyer une Notification</h1>
-            <div class="card">
-                <div class="input-group">
-                    <label for="notif-title">Titre</label>
-                    <input type="text" id="notif-title" value="Alerte Extension">
-                </div>
-                <div class="input-group">
-                    <label for="notif-msg">Message</label>
-                    <textarea id="notif-msg">Ceci est un message envoyé depuis l'extension explorer !</textarea>
-                </div>
-                <button class="btn" id="btn-notify">Envoyer via Tauri</button>
-            </div>
-        </section>
+      <!-- NOTIFY -->
+      <section id="tab-notify" class="hidden">
+        <h1>Envoyer une Notification</h1>
+        <div class="card">
+          <div class="input-group">
+            <label for="notif-title">Titre</label>
+            <input type="text" id="notif-title" value="Alerte Extension" />
+          </div>
+          <div class="input-group">
+            <label for="notif-msg">Message</label>
+            <textarea id="notif-msg">
+Ceci est un message envoyé depuis l'extension explorer !</textarea
+            >
+          </div>
+          <button class="btn" id="btn-notify">Envoyer via Tauri</button>
+        </div>
+      </section>
 
-        <!-- LOGS -->
-        <section id="tab-logs" class="hidden">
-            <h1>Journalisation Backend</h1>
-            <p class="muted">Envoyez des logs directement dans la console NoSubVOD du backend.</p>
-            <div class="card">
-                <div class="grid">
-                    <div class="input-group">
-                        <label for="log-level">Niveau</label>
-                        <select id="log-level">
-                            <option value="info">INFO</option>
-                            <option value="warn">WARN</option>
-                            <option value="error">ERROR</option>
-                            <option value="debug">DEBUG</option>
-                        </select>
-                    </div>
-                    <div class="input-group">
-                        <label for="log-msg">Message</label>
-                        <input type="text" id="log-msg" placeholder="Message à logguer...">
-                    </div>
-                </div>
-                <button class="btn" id="btn-log">Loguer maintenant</button>
+      <!-- LOGS -->
+      <section id="tab-logs" class="hidden">
+        <h1>Journalisation Backend</h1>
+        <p class="muted">Envoyez des logs directement dans la console NoSubVOD du backend.</p>
+        <div class="card">
+          <div class="grid">
+            <div class="input-group">
+              <label for="log-level">Niveau</label>
+              <select id="log-level">
+                <option value="info">INFO</option>
+                <option value="warn">WARN</option>
+                <option value="error">ERROR</option>
+                <option value="debug">DEBUG</option>
+              </select>
             </div>
-            <div class="console" id="mini-console">
-                > Console prête...
+            <div class="input-group">
+              <label for="log-msg">Message</label>
+              <input type="text" id="log-msg" placeholder="Message à logguer..." />
             </div>
-        </section>
+          </div>
+          <button class="btn" id="btn-log">Loguer maintenant</button>
+        </div>
+        <div class="console" id="mini-console">> Console prête...</div>
+      </section>
     </main>
 
     <script type="module">
-        // Tab Management
-        function showTab(id, target) {
-            document.querySelectorAll('section').forEach(s => s.classList.add('hidden'));
-            document.getElementById('tab-' + id).classList.remove('hidden');
-            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-            target.classList.add('active');
-        }
+      // Tab Management
+      function showTab(id, target) {
+        document.querySelectorAll('section').forEach((s) => s.classList.add('hidden'));
+        document.getElementById('tab-' + id).classList.remove('hidden');
+        document.querySelectorAll('.nav-item').forEach((n) => n.classList.remove('active'));
+        target.classList.add('active');
+      }
 
-        document.querySelectorAll('.nav-item').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                showTab(e.currentTarget.dataset.tab, e.currentTarget);
-            });
+      document.querySelectorAll('.nav-item').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          showTab(e.currentTarget.dataset.tab, e.currentTarget);
         });
+      });
 
-        // System Monitoring
-        const cpuCtx = document.getElementById('cpuChart').getContext('2d');
-        const ramCtx = document.getElementById('ramChart').getContext('2d');
-        
-        const chartConfig = (label, color) => ({
-            type: 'line',
-            data: {
-                labels: new Array(20).fill(''),
-                datasets: [{
-                    label,
-                    borderColor: color,
-                    data: new Array(20).fill(0),
-                    fill: false,
-                    tension: 0.4
-                }]
+      // System Monitoring
+      const cpuCtx = document.getElementById('cpuChart').getContext('2d');
+      const ramCtx = document.getElementById('ramChart').getContext('2d');
+
+      const chartConfig = (label, color) => ({
+        type: 'line',
+        data: {
+          labels: new Array(20).fill(''),
+          datasets: [
+            {
+              label,
+              borderColor: color,
+              data: new Array(20).fill(0),
+              fill: false,
+              tension: 0.4,
             },
-            options: {
-                responsive: true,
-                scales: { y: { beginAtZero: true } },
-                animation: false
-            }
+          ],
+        },
+        options: {
+          responsive: true,
+          scales: { y: { beginAtZero: true } },
+          animation: false,
+        },
+      });
+
+      const cpuChart = new Chart(cpuCtx, chartConfig('CPU %', '#9147ff'));
+      const ramChart = new Chart(ramCtx, chartConfig('RAM MB', '#ff4a4a'));
+
+      async function updateStats() {
+        try {
+          const res = await fetch('/api/dev/sysinfo');
+          const data = await res.json();
+
+          // OS Info
+          document.getElementById('os-info').innerText = `${data.osName} version ${data.osVersion}`;
+
+          // Update Charts
+          cpuChart.data.datasets[0].data.push(data.cpuLoad);
+          cpuChart.data.datasets[0].data.shift();
+          cpuChart.update();
+
+          const usedMb = Math.round(data.memoryUsed / 1024 / 1024);
+          ramChart.data.datasets[0].data.push(usedMb);
+          ramChart.data.datasets[0].data.shift();
+          ramChart.update();
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      setInterval(updateStats, 2000);
+      await updateStats();
+
+      // Notification Feature
+      async function sendNotification() {
+        const title = document.getElementById('notif-title').value;
+        const message = document.getElementById('notif-msg').value;
+
+        await fetch('/api/dev/notify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, message }),
         });
+        logConsole(`Notification envoyée: ${title}`);
+      }
 
-        const cpuChart = new Chart(cpuCtx, chartConfig('CPU %', '#9147ff'));
-        const ramChart = new Chart(ramCtx, chartConfig('RAM MB', '#ff4a4a'));
+      document.getElementById('btn-notify').addEventListener('click', sendNotification);
 
-        async function updateStats() {
-            try {
-                const res = await fetch('/api/dev/sysinfo');
-                const data = await res.json();
-                
-                // OS Info
-                document.getElementById('os-info').innerText = `${data.osName} version ${data.osVersion}`;
+      // Logging Feature
+      async function sendLog() {
+        const level = document.getElementById('log-level').value;
+        const message = document.getElementById('log-msg').value || 'Test log message';
 
-                // Update Charts
-                cpuChart.data.datasets[0].data.push(data.cpuLoad);
-                cpuChart.data.datasets[0].data.shift();
-                cpuChart.update();
+        await fetch('/api/dev/log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            level,
+            message,
+            extension_id: 'devtool-explorer',
+          }),
+        });
+        logConsole(`Log [${level.toUpperCase()}] envoyé au backend`);
+      }
 
-                const usedMb = Math.round(data.memoryUsed / 1024 / 1024);
-                ramChart.data.datasets[0].data.push(usedMb);
-                ramChart.data.datasets[0].data.shift();
-                ramChart.update();
-            } catch (e) { console.error(e); }
-        }
+      document.getElementById('btn-log').addEventListener('click', sendLog);
 
-        setInterval(updateStats, 2000);
-        await updateStats();
-
-        // Notification Feature
-        async function sendNotification() {
-            const title = document.getElementById('notif-title').value;
-            const message = document.getElementById('notif-msg').value;
-
-            await fetch('/api/dev/notify', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title, message })
-            });
-            logConsole(`Notification envoyée: ${title}`);
-        }
-
-        document.getElementById('btn-notify').addEventListener('click', sendNotification);
-
-        // Logging Feature
-        async function sendLog() {
-            const level = document.getElementById('log-level').value;
-            const message = document.getElementById('log-msg').value || "Test log message";
-
-            await fetch('/api/dev/log', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    level, 
-                    message, 
-                    extension_id: "devtool-explorer" 
-                })
-            });
-            logConsole(`Log [${level.toUpperCase()}] envoyé au backend`);
-        }
-
-        document.getElementById('btn-log').addEventListener('click', sendLog);
-
-        function logConsole(msg) {
-            const con = document.getElementById('mini-console');
-            con.innerHTML += `<br>> [${new Date().toLocaleTimeString()}] ${msg}`;
-            con.scrollTop = con.scrollHeight;
-        }
+      function logConsole(msg) {
+        const con = document.getElementById('mini-console');
+        con.innerHTML += `<br>> [${new Date().toLocaleTimeString()}] ${msg}`;
+        con.scrollTop = con.scrollHeight;
+      }
     </script>
-</body>
+  </body>
 </html>
