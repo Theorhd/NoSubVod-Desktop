@@ -64,6 +64,7 @@ export interface VideoMarker {
   displayTime: number;
   description: string;
   type: string;
+  url?: string | null;
 }
 
 export interface WatchlistEntry {
@@ -169,6 +170,11 @@ export type RemoteInputPayload = {
   key?: string;
   deltaX?: number;
   deltaY?: number;
+};
+
+export type RemoteControlPayload = {
+  command: 'play' | 'pause' | 'seek' | 'volume' | 'mute';
+  value?: number;
 };
 
 export type WsMessage = {

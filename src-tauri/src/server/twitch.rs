@@ -552,6 +552,41 @@ fn clamp(value: f64, min: f64, max: f64) -> f64 {
     value.max(min).min(max)
 }
 
+fn parse_timecode_seconds(value: &Value) -> Option<f64> {
+    if let Some(v) = value.as_f64() {
+        return Some(v);
+    }
+
+    if let Some(v) = value.as_i64() {
+        return Some(v as f64);
+    }
+
+    let raw = value.as_str()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    if let Ok(v) = raw.parse::<f64>() {
+        return Some(v);
+    }
+
+    let parts: Vec<&str> = raw.split(':').collect();
+    if parts.is_empty() {
+        return None;
+    }
+
+    let mut total = 0.0;
+    for (idx, part) in parts.iter().rev().enumerate() {
+        let Ok(unit) = part.trim().parse::<f64>() else {
+            return None;
+        };
+        let mul = 60_f64.powi(idx as i32);
+        total += unit * mul;
+    }
+
+    Some(total)
+}
+
 fn normalize_language(language: Option<&str>) -> String {
     language.unwrap_or("").trim().to_lowercase()
 }
@@ -1922,17 +1957,119 @@ impl TwitchService {
     }
 
     pub async fn fetch_video_markers(&self, vod_id: &str) -> AppResult<Value> {
-        let body = format!(
-            r#"{{"query":"query {{ video(id: \"{}\") {{ markers {{ id, displayTime, description, type }} }} }}"}}"#,
-            gql_escape(vod_id)
+        let escaped_vod_id = gql_escape(vod_id);
+
+        // Query 1: game-change moments (stable source for chapter-like entries).
+        let moments_body = format!(
+            r#"{{"query":"query {{ video(id: \"{}\") {{ momentsConnection {{ edges {{ node {{ id, type, positionMilliseconds, details {{ ... on GameChangeMomentDetails {{ game {{ id, displayName, boxArtURL(width: 150, height: 200) }} }} }} }} }} }} }} }}"}}"#,
+            escaped_vod_id
         );
 
-        let data = self.gql_post(&body).await?;
-        let markers = &data["data"]["video"]["markers"];
-        if markers.is_null() {
-            return Ok(Value::Array(vec![]));
+        // Query 2: legacy stream markers (can be missing depending on schema/VOD).
+        let markers_body = format!(
+            r#"{{"query":"query {{ video(id: \"{}\") {{ markers {{ id, displayTime, description, type }} }} }}"}}"#,
+            escaped_vod_id
+        );
+
+        let client = self
+            .android_tv_client
+            .post("https://gql.twitch.tv/gql")
+            .header("Client-Id", "kimne78kx3ncx6brgo4mv6wki5h1ko")
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json");
+
+        let moments_data = client
+            .try_clone()
+            .ok_or_else(|| AppError::Internal("Failed to clone GQL request builder".to_string()))?
+            .body(moments_body)
+            .send()
+            .await?
+            .json::<Value>()
+            .await?;
+
+        let markers_data = client
+            .body(markers_body)
+            .send()
+            .await?
+            .json::<Value>()
+            .await?;
+
+        if let Some(errors) = moments_data["errors"].as_array() {
+            debug!("momentsConnection returned {} GraphQL errors", errors.len());
         }
-        Ok(markers.clone())
+        if let Some(errors) = markers_data["errors"].as_array() {
+            debug!("markers returned {} GraphQL errors", errors.len());
+        }
+
+        let mut all_markers = Vec::new();
+
+        // 1) Game changes from momentsConnection.
+        if let Some(edges) = moments_data["data"]["video"]["momentsConnection"]["edges"].as_array()
+        {
+            for edge in edges {
+                let node = &edge["node"];
+                if node.is_null() {
+                    continue;
+                }
+
+                let marker_type = node["type"].as_str().unwrap_or("MOMENT");
+                let pos_ms = parse_timecode_seconds(&node["positionMilliseconds"]).unwrap_or(0.0);
+                let pos_seconds = pos_ms / 1000.0;
+                if !pos_seconds.is_finite() || pos_seconds < 0.0 {
+                    continue;
+                }
+
+                let game = &node["details"]["game"];
+                let description = game["displayName"]
+                    .as_str()
+                    .or_else(|| node["description"].as_str())
+                    .unwrap_or("Chapitre");
+
+                all_markers.push(serde_json::json!({
+                    "id": node["id"],
+                    "displayTime": pos_seconds,
+                    "description": description,
+                    "type": marker_type,
+                    "url": game["boxArtURL"].as_str(),
+                }));
+            }
+        }
+
+        // 2) Legacy markers (displayTime can be number OR time string).
+        if let Some(markers) = markers_data["data"]["video"]["markers"].as_array() {
+            for marker in markers {
+                let Some(display_time) = parse_timecode_seconds(&marker["displayTime"]) else {
+                    continue;
+                };
+
+                if !display_time.is_finite() || display_time < 0.0 {
+                    continue;
+                }
+
+                all_markers.push(serde_json::json!({
+                    "id": marker["id"],
+                    "displayTime": display_time,
+                    "description": marker["description"].as_str().unwrap_or("Marqueur"),
+                    "type": marker["type"].as_str().unwrap_or("MARKER"),
+                    "url": Value::Null,
+                }));
+            }
+        }
+
+        all_markers.sort_by(|a, b| {
+            let ta = a["displayTime"].as_f64().unwrap_or(0.0);
+            let tb = b["displayTime"].as_f64().unwrap_or(0.0);
+            ta.partial_cmp(&tb).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // Dedup markers too close in time to avoid duplicates between moments and markers.
+        all_markers.dedup_by(|a, b| {
+            (a["displayTime"].as_f64().unwrap_or(0.0) - b["displayTime"].as_f64().unwrap_or(0.0))
+                .abs()
+                < 1.0
+        });
+
+        Ok(Value::Array(all_markers))
     }
 
     pub async fn fetch_live_streams(

@@ -1,5 +1,6 @@
 import React, { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
 
 export interface TopBarProps {
   title?: ReactNode;
@@ -18,40 +19,59 @@ export function TopBar({
 
   return (
     <div className="top-bar">
-      <div className="bar-main">
-        {mode === 'back' && (
-          <button onClick={() => navigate(-1)} className="back-btn" aria-label="Back" type="button">
-            &larr;
-          </button>
-        )}
-        {mode === 'home' && (
+      <div className="bar-main" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        {(mode === 'back' || mode === 'home') && (
           <button
-            onClick={() => navigate('/')}
-            className="back-btn"
-            aria-label="Back to Home"
+            onClick={() => (mode === 'back' ? navigate(-1) : navigate('/'))}
+            className="secondary-btn"
+            style={{ width: '40px', height: '40px', padding: 0, borderRadius: '50%' }}
+            aria-label="Back"
             type="button"
           >
-            &larr;
+            <ArrowLeft size={20} />
           </button>
         )}
 
         {mode === 'logo' ? (
-          <h1>
-            <button
-              className="logo-btn"
-              onClick={onLogoClick || (() => navigate('/'))}
-              aria-label="Home"
-              type="button"
+          <button
+            onClick={onLogoClick || (() => navigate('/'))}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              cursor: 'pointer',
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              textAlign: 'left',
+              color: 'inherit',
+              font: 'inherit',
+            }}
+            type="button"
+            aria-label="Home"
+          >
+            <img src="/icon.png" alt="NoSubVod" style={{ width: '28px', height: '28px' }} />
+            <h1
+              style={{
+                background: 'linear-gradient(to right, #fff, #8f57ff)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                margin: 0,
+              }}
             >
               {title}
-            </button>
-          </h1>
+            </h1>
+          </button>
         ) : (
-          <h1>{title}</h1>
+          <h1 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0 }}>{title}</h1>
         )}
       </div>
 
-      {actions && <div className="top-actions">{actions}</div>}
+      {actions && (
+        <div className="top-actions" style={{ display: 'flex', gap: '8px' }}>
+          {actions}
+        </div>
+      )}
     </div>
   );
 }

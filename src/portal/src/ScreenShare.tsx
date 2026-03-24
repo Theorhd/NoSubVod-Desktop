@@ -369,7 +369,7 @@ export default function ScreenShare() {
 
     if (message.role === 'viewer') {
       if (roleRef.current === 'host') {
-        void createHostPeer(message.clientId);
+        createHostPeer(message.clientId);
       }
       return;
     }
@@ -396,6 +396,46 @@ export default function ScreenShare() {
     }
   };
 
+  const handleControlMessage = (message: WsMessage) => {
+    if (roleRef.current !== 'host') return;
+
+    const payload = message.payload as unknown as { command: string; value?: number };
+    if (!payload) return;
+
+    const cmd = payload.command;
+    const val = payload.value ?? 0;
+
+    console.log('[ScreenShare] Received remote control:', cmd, val);
+
+    // If we have a local video (preview), we can try to control it,
+    // but usually the host is sharing another tab/window.
+    // However, if the host is sharing THIS tab, we can control the video elements.
+    const videos = document.querySelectorAll('video');
+    videos.forEach((v) => {
+      try {
+        switch (cmd) {
+          case 'play':
+            v.play().catch(() => {});
+            break;
+          case 'pause':
+            v.pause();
+            break;
+          case 'seek':
+            v.currentTime += val;
+            break;
+          case 'volume':
+            v.volume = val;
+            break;
+          case 'mute':
+            v.muted = !v.muted;
+            break;
+        }
+      } catch (e) {
+        console.warn('[ScreenShare] Failed to apply control to video', e);
+      }
+    });
+  };
+
   const applyWsMessage = (message: WsMessage) => {
     switch (message.type) {
       case 'welcome':
@@ -418,7 +458,10 @@ export default function ScreenShare() {
         }
         return;
       case 'signal':
-        void handleSignalMessage(message);
+        handleSignalMessage(message);
+        return;
+      case 'control':
+        handleControlMessage(message);
         return;
       case 'error':
         if (message.message) {
@@ -500,9 +543,9 @@ export default function ScreenShare() {
       }
     };
 
-    void load();
+    load();
     const timer = globalThis.setInterval(() => {
-      void load();
+      load();
     }, 3000);
 
     return () => {
@@ -588,9 +631,9 @@ export default function ScreenShare() {
       }
     };
 
-    void loadSnapshot();
+    loadSnapshot();
     const timer = globalThis.setInterval(() => {
-      void loadSnapshot();
+      loadSnapshot();
     }, 450);
 
     return () => {
@@ -870,7 +913,7 @@ export default function ScreenShare() {
               <button
                 className="action-btn cancel"
                 disabled={isStopping}
-                onClick={() => void handleStop()}
+                onClick={() => handleStop()}
                 type="button"
               >
                 {isStopping ? 'Stopping...' : 'Stop session'}
@@ -908,7 +951,7 @@ export default function ScreenShare() {
               <button
                 className="action-btn"
                 disabled={hostStreaming}
-                onClick={() => void startHostWebRtc()}
+                onClick={() => startHostWebRtc()}
                 type="button"
               >
                 {hostStreaming ? 'WebRTC HD active' : 'Activer flux WebRTC HD (60 fps)'}

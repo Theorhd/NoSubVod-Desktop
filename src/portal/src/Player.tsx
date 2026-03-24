@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
 import { ChatMessage, ExperienceSettings, LiveStream, VideoMarker, VOD } from '../../shared/types';
 import NSVPlayer from './components/NSVPlayer';
 import LiveChatComponent from './components/player/LiveChatComponent';
@@ -19,6 +20,29 @@ function resolvePlayerTitle(vodId: string | null, liveId: string | null): string
   if (vodId) return `VOD: ${vodId}`;
   if (liveId) return `Live: ${liveId}`;
   return 'Player';
+}
+
+function buildAuthSuffix(token: string | null, deviceId: string | null): string {
+  const query = new URLSearchParams();
+  if (token) query.set('t', token);
+  if (deviceId) query.set('d', deviceId);
+  const qs = query.toString();
+  return qs ? `?${qs}` : '';
+}
+
+function parseMarkersPayload(payload: unknown): VideoMarker[] {
+  if (Array.isArray(payload)) {
+    return payload as VideoMarker[];
+  }
+
+  if (payload && typeof payload === 'object') {
+    const maybeMarkers = (payload as { markers?: unknown }).markers;
+    if (Array.isArray(maybeMarkers)) {
+      return maybeMarkers as VideoMarker[];
+    }
+  }
+
+  return [];
 }
 
 export default function Player() {
@@ -68,7 +92,6 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
   const durationRef = useRef(0);
   const isPlayingRef = useRef(false);
 
-  // Sync refs when states change
   useEffect(() => {
     currentTimeRef.current = currentTime;
   }, [currentTime]);
@@ -189,11 +212,16 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
       if (!vodId) return;
 
       try {
+        // On récupère les tokens pour l'auth
+        const token = localStorage.getItem('nsv_token') || sessionStorage.getItem('nsv_token');
+        const deviceId = localStorage.getItem('nsv_device_id');
+        const authSuffix = buildAuthSuffix(token, deviceId);
+
         const [historyRes, markersRes, infoRes, settingsRes] = await Promise.all([
-          fetch(`/api/history/${vodId}`),
-          fetch(`/api/vod/${vodId}/markers`),
-          fetch(`/api/vod/${vodId}/info`),
-          fetch('/api/settings'),
+          fetch(`/api/history/${vodId}${authSuffix}`),
+          fetch(`/api/vod/${vodId}/markers${authSuffix}`),
+          fetch(`/api/vod/${vodId}/info${authSuffix}`),
+          fetch(`/api/settings${authSuffix}`),
         ]);
 
         if (!disposed && historyRes.ok) {
@@ -203,7 +231,14 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
         }
 
         if (!disposed && markersRes.ok) {
-          setMarkers(await markersRes.json());
+          const data = await markersRes.json();
+          setMarkers(parseMarkersPayload(data));
+        } else if (!disposed) {
+          console.warn('[Player] markers request failed', {
+            status: markersRes.status,
+            statusText: markersRes.statusText,
+            vodId,
+          });
         }
 
         if (!disposed && infoRes.ok) {
@@ -288,103 +323,62 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
 
   if (!source) {
     return (
-      <div
-        style={{
-          padding: '24px',
-          color: '#efeff1',
-          backgroundColor: '#07080f',
-          minHeight: '100vh',
-        }}
-      >
-        Missing player source. Please provide vod or live query parameter.
+      <div className="container" style={{ textAlign: 'center', padding: '100px' }}>
+        <div className="card glass">
+          Missing player source. Please provide vod or live query parameter.
+        </div>
       </div>
     );
   }
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        position: 'fixed',
-        inset: 0,
-        width: '100%',
-        height: '100dvh',
-        backgroundColor: '#07080f',
-        overflow: 'hidden',
-        overscrollBehavior: 'none',
-      }}
-    >
+    <div className="player-container">
       {!isFullscreen && (
         <div
-          style={{
-            backgroundColor: '#18181b',
-            padding: '10px 20px',
-            display: 'flex',
-            alignItems: 'center',
-            borderBottom: '1px solid #3a3a3d',
-            zIndex: 10,
-            flexShrink: 0,
-            gap: '10px',
-          }}
+          className="top-bar"
+          style={{ position: 'relative', zIndex: 10, background: 'rgba(7, 8, 15, 0.8)' }}
         >
-          <button
-            onClick={() => navigate(-1)}
-            style={{
-              color: '#efeff1',
-              fontSize: '14px',
-              fontWeight: 'bold',
-              padding: '5px 10px',
-              backgroundColor: '#3a3a3d',
-              borderRadius: '4px',
-              border: 'none',
-              cursor: 'pointer',
-            }}
-          >
-            Back
-          </button>
-
-          <h2
-            style={{
-              color: 'white',
-              fontSize: '14px',
-              margin: 0,
-              flexGrow: 1,
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
-            {playerTitle}
-          </h2>
-
-          {!liveId && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flex: 1 }}>
             <button
-              onClick={() => setShowMarkers((v) => !v)}
+              onClick={() => navigate(-1)}
+              className="secondary-btn"
+              style={{ width: '40px', height: '40px', padding: 0, borderRadius: '50%' }}
+            >
+              <ArrowLeft size={20} />
+            </button>
+            <h2
               style={{
-                background: 'none',
-                border: 'none',
-                color: '#9146ff',
-                cursor: 'pointer',
-                fontWeight: 'bold',
+                fontSize: '1rem',
+                fontWeight: 800,
+                margin: 0,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
               }}
             >
-              Chapters ({markers.length})
-            </button>
-          )}
+              {vodInfo?.title || liveInfo?.title || playerTitle}
+            </h2>
+          </div>
 
-          <button
-            onClick={() => setShowChat((v) => !v)}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#9146ff',
-              cursor: 'pointer',
-              fontWeight: 'bold',
-            }}
-          >
-            {showChat ? 'Hide Chat' : 'Show Chat'}
-          </button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {!liveId && (
+              <button
+                onClick={() => setShowMarkers((v) => !v)}
+                className="secondary-btn"
+                style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+              >
+                Chapters ({markers.length})
+              </button>
+            )}
+
+            <button
+              onClick={() => setShowChat((v) => !v)}
+              className="action-btn"
+              style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+            >
+              {showChat ? 'Hide Chat' : 'Show Chat'}
+            </button>
+          </div>
         </div>
       )}
 
@@ -395,19 +389,17 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
             display: 'flex',
             flexDirection: 'column',
             overflowY: isFullscreen ? 'hidden' : 'auto',
+            background: '#000',
           }}
         >
           <div
             style={{
               width: '100%',
-              backgroundColor: '#000',
               position: 'relative',
+              aspectRatio: isFullscreen ? 'auto' : '16/9',
               display: 'flex',
-              justifyContent: 'center',
               alignItems: 'center',
-              flexShrink: 0,
-              aspectRatio: isFullscreen ? 'auto' : '16 / 9',
-              maxHeight: isFullscreen ? 'none' : 'calc(100vh - 140px)',
+              justifyContent: 'center',
             }}
           >
             <NSVPlayer
@@ -429,6 +421,7 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
             {!liveId && showMarkers && markers.length > 0 && (
               <MarkerPanel
                 markers={markers}
+                currentTime={currentTime}
                 onSeek={(time) => {
                   setSeekTo(time);
                   setShowMarkers(false);
@@ -438,48 +431,58 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
             )}
           </div>
 
-          {downloadMode && vodId && (
-            <ClipMode
-              duration={duration}
-              clipStart={clipStart}
-              clipEnd={clipEnd}
-              vodId={vodId}
-              vodInfo={vodInfo}
-              onSetStart={() => setClipStart(currentTime)}
-              onSetEnd={() => setClipEnd(currentTime)}
-              onDownloadStart={() => {
-                setClipStart(null);
-                setClipEnd(null);
-              }}
-            />
-          )}
+          <div className="container" style={{ paddingBottom: '100px' }}>
+            {downloadMode && vodId && (
+              <ClipMode
+                duration={duration}
+                clipStart={clipStart}
+                clipEnd={clipEnd}
+                vodId={vodId}
+                vodInfo={vodInfo}
+                onSetStart={() => setClipStart(currentTime)}
+                onSetEnd={() => setClipEnd(currentTime)}
+                onDownloadStart={() => {
+                  setClipStart(null);
+                  setClipEnd(null);
+                }}
+              />
+            )}
 
-          {!isFullscreen && (vodInfo || liveInfo) && (
-            <PlayerInfo
-              vodInfo={vodInfo}
-              liveInfo={liveInfo}
-              duration={duration}
-              showDownloadMenu={showDownloadMenu}
-              onDownloadMenuToggle={(show) => setShowDownloadMenu(show)}
-            />
-          )}
+            {!isFullscreen && (vodInfo || liveInfo) && (
+              <PlayerInfo
+                vodInfo={vodInfo}
+                liveInfo={liveInfo}
+                duration={duration}
+                showDownloadMenu={showDownloadMenu}
+                onDownloadMenuToggle={(show) => setShowDownloadMenu(show)}
+              />
+            )}
 
-          {playerError && (
-            <div style={{ margin: '0 16px 16px', color: '#ff9c9c', fontSize: '0.9rem' }}>
-              {playerError}
-            </div>
-          )}
+            {playerError && (
+              <div
+                style={{
+                  marginTop: '16px',
+                  color: 'var(--danger)',
+                  padding: '16px',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'rgba(255,107,135,0.1)',
+                }}
+              >
+                {playerError}
+              </div>
+            )}
+          </div>
         </div>
 
         {showChat && (
           <div
+            className="glass"
             style={{
               width: '340px',
-              backgroundColor: '#0e0e10',
-              borderLeft: '1px solid #3a3a3d',
+              borderLeft: '1px solid var(--border)',
               display: 'flex',
               flexDirection: 'column',
-              flexShrink: 0,
+              height: '100%',
             }}
           >
             {liveId ? (
@@ -488,29 +491,35 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
               <>
                 <div
                   style={{
-                    padding: '15px',
-                    borderBottom: '1px solid #3a3a3d',
-                    fontWeight: 'bold',
-                    color: '#efeff1',
-                    fontSize: '0.9rem',
+                    padding: '16px',
+                    borderBottom: '1px solid var(--border)',
+                    fontWeight: 800,
+                    color: 'var(--text)',
+                    fontSize: '0.85rem',
                   }}
                 >
                   STREAM CHAT REPLAY
                 </div>
 
-                <div ref={chatScrollRef} style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
+                <div ref={chatScrollRef} style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
                   {visibleChat.map((message) => (
                     <div
                       key={message.id}
-                      style={{ marginBottom: '8px', fontSize: '0.85rem', lineHeight: '1.4' }}
+                      style={{ marginBottom: '12px', fontSize: '0.85rem', lineHeight: '1.5' }}
                     >
-                      <span style={{ color: '#adadb8', marginRight: '8px', fontSize: '0.75rem' }}>
+                      <span
+                        style={{
+                          color: 'var(--text-muted)',
+                          marginRight: '8px',
+                          fontSize: '0.75rem',
+                        }}
+                      >
                         {formatClock(message.contentOffsetSeconds)}
                       </span>
-                      <span style={{ fontWeight: 'bold', color: '#efeff1' }}>
+                      <span style={{ fontWeight: 800, color: 'var(--primary)' }}>
                         {message.commenter?.displayName || 'Unknown'}:{' '}
                       </span>
-                      <span style={{ color: '#efeff1' }}>
+                      <span style={{ color: 'var(--text)' }}>
                         {message.message?.fragments?.map((fragment) => fragment.text).join('') ||
                           ''}
                       </span>

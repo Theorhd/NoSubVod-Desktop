@@ -14,16 +14,16 @@ const defaultSettings: ExperienceSettings = {
 
 const ServerExperienceSection = ({ settings, loading, setSettings, setSuccess }: any) => (
   <div className="card settings-card">
-    <h2 style={{ marginTop: 0 }}>Server Experience</h2>
+    <h2>Server Experience</h2>
     <p className="settings-description">Gérez le comportement global de votre serveur NoSubVOD.</p>
     {loading ? (
-      <div style={{ color: 'var(--text-muted)' }}>Loading settings...</div>
+      <div className="trusted-devices-empty">Loading settings...</div>
     ) : (
       <>
         <div className="toggle-row">
           <span>
             <strong>
-              <label htmlFor="oneSyncToggle" style={{ marginBottom: 0 }}>
+              <label htmlFor="oneSyncToggle" className="mb-0">
                 OneSync
               </label>
             </strong>
@@ -40,10 +40,10 @@ const ServerExperienceSection = ({ settings, loading, setSettings, setSuccess }:
           />
         </div>
 
-        <div className="toggle-row" style={{ marginTop: '16px' }}>
+        <div className="toggle-row mt-2">
           <span>
             <strong>
-              <label htmlFor="launchAtLoginToggle" style={{ marginBottom: 0 }}>
+              <label htmlFor="launchAtLoginToggle" className="mb-0">
                 Lancer avec l&apos;OS
               </label>
             </strong>
@@ -66,7 +66,7 @@ const ServerExperienceSection = ({ settings, loading, setSettings, setSuccess }:
 
 const VideoPlayerSection = ({ settings, setSettings, setSuccess }: any) => (
   <div className="card settings-card">
-    <h2 style={{ marginTop: 0 }}>Video Player</h2>
+    <h2>Video Player</h2>
     <p className="settings-description">Configure la qualité par défaut du lecteur vidéo.</p>
 
     <div className="settings-group">
@@ -87,13 +87,13 @@ const VideoPlayerSection = ({ settings, setSettings, setSuccess }: any) => (
         <option value="720">720p</option>
         <option value="1080">1080p</option>
       </select>
-      <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: '6px' }}>
+      <small className="help-text">
         Les résolutions inférieures seront masquées du lecteur. Si la connexion est mauvaise, cela
         peut causer des coupures.
       </small>
     </div>
 
-    <div className="settings-group" style={{ marginTop: '16px' }}>
+    <div className="settings-group mt-2">
       <label htmlFor="preferredVideoQuality" className="settings-label">
         Qualité Préférée au Lancement
       </label>
@@ -111,137 +111,119 @@ const VideoPlayerSection = ({ settings, setSettings, setSuccess }: any) => (
         <option value="720">720p</option>
         <option value="1080">1080p</option>
       </select>
-      <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: '6px' }}>
+      <small className="help-text">
         La vidéo tentera de démarrer avec cette résolution si elle est disponible.
       </small>
     </div>
   </div>
 );
 
-const AdblockSection = ({ settings, setSettings, setSuccess, proxies, activeProxy }: any) => (
-  <div className="card settings-card">
-    <h2 style={{ marginTop: 0 }}>Adblock Proxies</h2>
-    <p className="settings-description">
-      Utilise un proxy tiers pour contourner les pubs Twitch sur les lives et les VODs. Attention:
-      L&apos;utilisation d&apos;un proxy public peut ralentir le flux vidéo ou se bloquer
-      temporairement.
-    </p>
+const AdblockSection = ({ settings, setSettings, setSuccess, proxies, activeProxy }: any) => {
+  const getProxyStatusClass = (status?: string) => {
+    if (status === 'success') return ' status-success';
+    if (status === 'error') return ' status-error';
+    return '';
+  };
 
-    <div className="toggle-row">
-      <span>
-        <strong>
-          <label htmlFor="adblockEnabled" style={{ marginBottom: 0 }}>
-            Activer le Proxy Adblock
-          </label>
-        </strong>
-        <small>Désactivé par défaut. Activez-le si vous avez trop de pubs.</small>
-      </span>
-      <input
-        id="adblockEnabled"
-        type="checkbox"
-        checked={settings.adblockEnabled}
-        onChange={(e) => {
-          setSettings((prev: any) => ({ ...prev, adblockEnabled: e.target.checked }));
-          setSuccess('');
-        }}
-      />
-    </div>
+  return (
+    <div className="card settings-card">
+      <h2>Adblock Proxies</h2>
+      <p className="settings-description">
+        Utilise un proxy tiers pour contourner les pubs Twitch sur les lives et les VODs. Attention:
+        L&apos;utilisation d&apos;un proxy public peut ralentir le flux vidéo ou se bloquer
+        temporairement.
+      </p>
 
-    {settings.adblockEnabled && (
-      <>
-        <div className="settings-group" style={{ marginTop: '16px' }}>
-          <label htmlFor="adblockProxyMode" className="settings-label">
-            Mode de Sélection du Proxy
-          </label>
-          <select
-            id="adblockProxyMode"
-            className="settings-select"
-            value={settings.adblockProxyMode || 'auto'}
-            onChange={(e) => {
-              setSettings((prev: any) => ({ ...prev, adblockProxyMode: e.target.value }));
-              setSuccess('');
-            }}
-          >
-            <option value="auto">Automatique (recommandé - sélectionne le plus rapide)</option>
-            <option value="manual">Manuel (choisir un proxy spécifique)</option>
-          </select>
-        </div>
+      <div className="toggle-row">
+        <span>
+          <strong>
+            <label htmlFor="adblockEnabled" className="mb-0">
+              Activer le Proxy Adblock
+            </label>
+          </strong>
+          <small>Désactivé par défaut. Activez-le si vous avez trop de pubs.</small>
+        </span>
+        <input
+          id="adblockEnabled"
+          type="checkbox"
+          checked={settings.adblockEnabled}
+          onChange={(e) => {
+            setSettings((prev: any) => ({ ...prev, adblockEnabled: e.target.checked }));
+            setSuccess('');
+          }}
+        />
+      </div>
 
-        {settings.adblockProxyMode === 'manual' && (
-          <div className="settings-group" style={{ marginTop: '16px' }}>
-            <label htmlFor="adblockProxy" className="settings-label">
-              Proxy Manuel
+      {settings.adblockEnabled && (
+        <>
+          <div className="settings-group mt-2">
+            <label htmlFor="adblockProxyMode" className="settings-label">
+              Mode de Sélection du Proxy
             </label>
             <select
-              id="adblockProxy"
+              id="adblockProxyMode"
               className="settings-select"
-              value={settings.adblockProxy || ''}
+              value={settings.adblockProxyMode || 'auto'}
               onChange={(e) => {
-                setSettings((prev: any) => ({ ...prev, adblockProxy: e.target.value }));
+                setSettings((prev: any) => ({ ...prev, adblockProxyMode: e.target.value }));
                 setSuccess('');
               }}
             >
-              <option value="" disabled>
-                Sélectionnez un proxy
-              </option>
-              {proxies.map((p: any) => (
-                <option key={p.url} value={p.url}>
-                  {p.name} - {p.url}
-                </option>
-              ))}
+              <option value="auto">Automatique (recommandé - sélectionne le plus rapide)</option>
+              <option value="manual">Manuel (choisir un proxy spécifique)</option>
             </select>
           </div>
-        )}
 
-        {activeProxy && (
-          <div
-            style={{
-              marginTop: '16px',
-              padding: '12px',
-              backgroundColor: 'var(--bg)',
-              borderRadius: '8px',
-              border: '1px solid var(--border)',
-            }}
-          >
-            <strong style={{ display: 'block', marginBottom: '8px', color: 'var(--text)' }}>
-              Proxy Actif Actuellement :
-            </strong>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-              {(() => {
-                let dotColor = '#facc15';
-                if (activeProxy.status === 'success') dotColor = '#4ade80';
-                else if (activeProxy.status === 'error') dotColor = '#f87171';
-                return (
-                  <span
-                    style={{
-                      width: '10px',
-                      height: '10px',
-                      borderRadius: '50%',
-                      backgroundColor: dotColor,
-                    }}
-                  />
-                );
-              })()}
-              <span style={{ fontWeight: 600, color: 'var(--text)' }}>{activeProxy.name}</span>
+          {settings.adblockProxyMode === 'manual' && (
+            <div className="settings-group mt-2">
+              <label htmlFor="adblockProxy" className="settings-label">
+                Proxy Manuel
+              </label>
+              <select
+                id="adblockProxy"
+                className="settings-select"
+                value={settings.adblockProxy || ''}
+                onChange={(e) => {
+                  setSettings((prev: any) => ({ ...prev, adblockProxy: e.target.value }));
+                  setSuccess('');
+                }}
+              >
+                <option value="" disabled>
+                  Sélectionnez un proxy
+                </option>
+                {proxies.map((p: any) => (
+                  <option key={p.url} value={p.url}>
+                    {p.name} - {p.url}
+                  </option>
+                ))}
+              </select>
             </div>
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginLeft: '18px' }}>
-              URL: {activeProxy.url}
-            </div>
-            {activeProxy.ping !== undefined && activeProxy.status === 'success' && (
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginLeft: '18px' }}>
-                Ping: {activeProxy.ping}ms
+          )}
+
+          {activeProxy && (
+            <div className="settings-active-proxy">
+              <strong className="settings-active-proxy-title">Proxy Actif Actuellement :</strong>
+              <div className="settings-active-proxy-row">
+                <span
+                  className={`settings-active-proxy-dot${getProxyStatusClass(activeProxy.status)}`}
+                />
+                <span className="settings-active-proxy-name">{activeProxy.name}</span>
               </div>
-            )}
-          </div>
-        )}
-      </>
-    )}
-  </div>
-);
+              <div className="settings-active-proxy-meta">URL: {activeProxy.url}</div>
+              {activeProxy.ping !== undefined && activeProxy.status === 'success' && (
+                <div className="settings-active-proxy-meta">Ping: {activeProxy.ping}ms</div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
 
 const DownloadsSection = ({ settings, setSettings, setSuccess, selectFolder }: any) => (
   <div className="card settings-card">
-    <h2 style={{ marginTop: 0 }}>Downloads (Server Backend)</h2>
+    <h2>Downloads (Server Backend)</h2>
     <p className="settings-description">
       Configure l&apos;emplacement où le serveur de fond NoSubVOD stockera les VODs téléchargées.
     </p>
@@ -250,18 +232,17 @@ const DownloadsSection = ({ settings, setSettings, setSuccess, selectFolder }: a
       <label htmlFor="downloadLocalPath" className="settings-label">
         Chemin Local (Server-Side)
       </label>
-      <div style={{ display: 'flex', gap: '10px' }}>
+      <div className="field-row">
         <input
           id="downloadLocalPath"
           type="text"
-          className="settings-select"
           value={settings.downloadLocalPath || ''}
           placeholder="ex: C:\Downloads\NoSubVOD"
           onChange={(e) => {
             setSettings((prev: any) => ({ ...prev, downloadLocalPath: e.target.value }));
             setSuccess('');
           }}
-          style={{ flex: 1 }}
+          className="settings-select field-grow"
         />
         <button
           type="button"
@@ -271,27 +252,26 @@ const DownloadsSection = ({ settings, setSettings, setSuccess, selectFolder }: a
           Parcourir
         </button>
       </div>
-      <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: '6px' }}>
+      <small className="help-text">
         Chemin absolu sur la machine hébergeant le serveur NoSubVOD. (Windows/Linux/Mac)
       </small>
     </div>
 
-    <div className="settings-group" style={{ marginTop: '16px' }}>
+    <div className="settings-group mt-2">
       <label htmlFor="downloadNetworkSharedPath" className="settings-label">
         Chemin Réseau (SMB/NFS) (Optionnel)
       </label>
-      <div style={{ display: 'flex', gap: '10px' }}>
+      <div className="field-row">
         <input
           id="downloadNetworkSharedPath"
           type="text"
-          className="settings-select"
           value={settings.downloadNetworkSharedPath || ''}
           placeholder="ex: \\NAS\Downloads\NoSubVOD"
           onChange={(e) => {
             setSettings((prev: any) => ({ ...prev, downloadNetworkSharedPath: e.target.value }));
             setSuccess('');
           }}
-          style={{ flex: 1 }}
+          className="settings-select field-grow"
         />
         <button
           type="button"
@@ -301,7 +281,7 @@ const DownloadsSection = ({ settings, setSettings, setSuccess, selectFolder }: a
           Parcourir
         </button>
       </div>
-      <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: '6px' }}>
+      <small className="help-text">
         Chemin d&apos;accès réseau si vous enregistrez sur un NAS. Utilisé en priorité si spécifié.
       </small>
     </div>
@@ -312,17 +292,7 @@ const TwitchClientWarning = ({ twitchStatus }: { twitchStatus: TwitchStatus | nu
   if (!twitchStatus || twitchStatus.clientConfigured) return null;
 
   return (
-    <div
-      style={{
-        background: 'var(--bg-elevated)',
-        border: '1px solid #fbbf24',
-        borderRadius: '6px',
-        padding: '10px 14px',
-        marginBottom: '16px',
-        fontSize: '0.85rem',
-        color: '#fbbf24',
-      }}
-    >
+    <div className="twitch-warning">
       Configuration Twitch incomplète. Configure ton application sur <strong>dev.twitch.tv</strong>{' '}
       et renseigne <code>TWITCH_CLIENT_ID</code> et <code>TWITCH_CLIENT_SECRET</code> dans{' '}
       <code>src-tauri/.env</code>.
@@ -340,7 +310,7 @@ const TwitchAccountSection = ({
   setImportFollowsSetting,
 }: any) => (
   <div className="card settings-card">
-    <h2 style={{ marginTop: 0 }}>Compte Twitch</h2>
+    <h2>Compte Twitch</h2>
     <p className="settings-description">
       Lie ton compte Twitch pour envoyer des messages dans les lives et importer tes chaînes suivies
       dans tes Subs NoSubVOD.
@@ -350,43 +320,31 @@ const TwitchAccountSection = ({
 
     {twitchStatus?.linked ? (
       <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+        <div className="twitch-user-row">
           {twitchStatus.userAvatar && (
-            <img
-              src={twitchStatus.userAvatar}
-              alt="Avatar"
-              style={{ width: '48px', height: '48px', borderRadius: '50%', objectFit: 'cover' }}
-            />
+            <img src={twitchStatus.userAvatar} alt="Avatar" className="twitch-avatar" />
           )}
           <div>
-            <div style={{ fontWeight: 'bold', fontSize: '1rem' }}>
+            <div className="twitch-display-name">
               {twitchStatus.userDisplayName || twitchStatus.userLogin}
             </div>
             {twitchStatus.userLogin && (
-              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                @{twitchStatus.userLogin}
-              </div>
+              <div className="twitch-login">@{twitchStatus.userLogin}</div>
             )}
           </div>
           <button
             onClick={unlinkTwitch}
-            className="action-btn secondary-btn"
-            style={{ marginLeft: 'auto', border: '1px solid var(--surface-hover)' }}
+            className="action-btn secondary-btn soft-outline-btn ml-auto"
           >
             Déconnecter
           </button>
         </div>
 
-        <div
-          style={{
-            borderTop: '1px solid var(--surface-soft)',
-            paddingTop: '16px',
-          }}
-        >
-          <div className="toggle-row" style={{ marginBottom: '12px' }}>
+        <div className="settings-subsection">
+          <div className="toggle-row mb-2">
             <span>
               <strong>
-                <label htmlFor="importFollowsToggle" style={{ marginBottom: 0 }}>
+                <label htmlFor="importFollowsToggle" className="mb-0">
                   Importer les chaînes suivies
                 </label>
               </strong>
@@ -402,8 +360,7 @@ const TwitchAccountSection = ({
           <button
             onClick={importFollows}
             disabled={twitchImporting}
-            className="action-btn secondary-btn"
-            style={{ border: '1px solid var(--surface-hover)' }}
+            className="action-btn secondary-btn soft-outline-btn"
           >
             {twitchImporting ? 'Importation...' : 'Importer maintenant'}
           </button>
@@ -413,8 +370,7 @@ const TwitchAccountSection = ({
       <button
         onClick={linkTwitch}
         disabled={twitchPolling || (twitchStatus !== null && !twitchStatus.clientConfigured)}
-        className="action-btn"
-        style={{ background: '#9146ff' }}
+        className="action-btn twitch-connect-btn"
       >
         {twitchPolling ? 'En attente de connexion...' : 'Lier mon compte Twitch'}
       </button>
@@ -438,34 +394,22 @@ const TrustedDevicesSection = ({
 
   return (
     <div className="card settings-card">
-      <h2 style={{ marginTop: 0 }}>Trusted Devices</h2>
+      <h2>Trusted Devices</h2>
       <p className="settings-description">
         Les appareils listés ici ont déjà accédé à l&apos;app. Active &quot;Trusted&quot; pour
         autoriser l&apos;accès sans <code>?t=...</code>.
       </p>
 
       {devices.length === 0 ? (
-        <div style={{ color: 'var(--text-muted)' }}>Aucun appareil détecté pour le moment.</div>
+        <div className="trusted-devices-empty">Aucun appareil détecté pour le moment.</div>
       ) : (
-        <div style={{ display: 'grid', gap: '10px' }}>
+        <div className="trusted-devices-list">
           {devices.map((device) => (
-            <div
-              key={device.deviceId}
-              style={{
-                border: '1px solid var(--border)',
-                borderRadius: '10px',
-                padding: '12px',
-                backgroundColor: 'var(--bg)',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ fontWeight: 600, color: 'var(--text)', overflowWrap: 'anywhere' }}>
-                  {device.deviceId}
-                </div>
-                <label
-                  style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}
-                >
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Trusted</span>
+            <div key={device.deviceId} className="trusted-device-item">
+              <div className="trusted-device-header">
+                <div className="trusted-device-id">{device.deviceId}</div>
+                <label className="trusted-device-toggle">
+                  <span className="trusted-device-toggle-label">Trusted</span>
                   <input
                     type="checkbox"
                     checked={device.trusted}
@@ -474,28 +418,15 @@ const TrustedDevicesSection = ({
                   />
                 </label>
               </div>
-              <div style={{ marginTop: '8px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+              <div className="trusted-device-meta">
                 Dernier accès: {formatSeen(device.lastSeenAt)}
               </div>
-              <div style={{ marginTop: '2px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+              <div className="trusted-device-meta">
                 Première visite: {formatSeen(device.firstSeenAt)}
               </div>
-              {device.lastIp && (
-                <div style={{ marginTop: '2px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                  IP: {device.lastIp}
-                </div>
-              )}
+              {device.lastIp && <div className="trusted-device-meta">IP: {device.lastIp}</div>}
               {device.userAgent && (
-                <div
-                  style={{
-                    marginTop: '2px',
-                    fontSize: '0.8rem',
-                    color: 'var(--text-muted)',
-                    overflowWrap: 'anywhere',
-                  }}
-                >
-                  UA: {device.userAgent}
-                </div>
+                <div className="trusted-device-meta ua">UA: {device.userAgent}</div>
               )}
             </div>
           ))}
@@ -715,7 +646,7 @@ export default function Settings() {
     <>
       <TopBar mode="back" title="Settings" />
 
-      <div className="container" style={{ maxWidth: '760px' }}>
+      <div className="container container-settings">
         <ServerExperienceSection
           settings={settings}
           loading={loading}
@@ -756,10 +687,7 @@ export default function Settings() {
           onToggleTrusted={toggleTrustedDevice}
         />
 
-        <div
-          className="card settings-card"
-          style={{ border: 'none', background: 'transparent', boxShadow: 'none' }}
-        >
+        <div className="card settings-card settings-footer-card">
           {error && <div className="error-text">{error}</div>}
           {success && <div className="success-text">{success}</div>}
 

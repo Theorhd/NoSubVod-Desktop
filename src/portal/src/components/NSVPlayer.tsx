@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { MediaPlayer, MediaProvider, useMediaRemote, useMediaStore } from '@vidstack/react';
 import { defaultLayoutIcons, DefaultVideoLayout } from '@vidstack/react/player/layouts/default';
 import Hls from 'hls.js';
@@ -82,6 +82,14 @@ export default function NSVPlayer({
   const playerRef = useRef<any>(null);
   const store = useMediaStore(playerRef);
   const remote = useMediaRemote(playerRef);
+
+  // Stable references to avoid re-subscribing every second when store.currentTime changes
+  const remoteRef = useRef(remote);
+  const storeRef = useRef(store);
+  useEffect(() => {
+    remoteRef.current = remote;
+    storeRef.current = store;
+  }, [remote, store]);
 
   const didSeekOnStartRef = useRef(false);
   const lastExternalSeekRef = useRef<number | null>(null);
@@ -191,6 +199,79 @@ export default function NSVPlayer({
 
     remote.changeQuality(-1);
   }, [minQuality, preferredQuality, remote, store.canSetQuality, store.qualities]);
+
+  // Stable handler for remote control events to keep useEffect clean
+  const handleRemoteControl = useCallback((event: any) => {
+    const payload = event.payload;
+    const cmd = payload.command;
+    const val = payload.value ?? 0;
+    console.log('[NSVPlayer] Received Tauri control event:', cmd, val);
+
+    const r = remoteRef.current;
+    const s = storeRef.current;
+
+    switch (cmd) {
+      case 'play':
+        r.play();
+        break;
+      case 'pause':
+        r.pause();
+        break;
+      case 'seek':
+        r.seek(Math.max(0, Math.min(s.duration, (s.currentTime || 0) + val)));
+        break;
+      case 'volume':
+        r.changeVolume(val);
+        break;
+      case 'mute':
+        r.toggleMuted();
+        break;
+    }
+  }, []);
+
+  useEffect(() => {
+    const onPlay = () => remoteRef.current.play();
+    const onPause = () => remoteRef.current.pause();
+    const onSeek = (e: any) => {
+      const val = e.detail?.value || 0;
+      const s = storeRef.current;
+      remoteRef.current.seek(Math.max(0, Math.min(s.duration, (s.currentTime || 0) + val)));
+    };
+    const onVolume = (e: any) => remoteRef.current.changeVolume(e.detail?.value ?? 1);
+    const onMute = () => remoteRef.current.toggleMuted();
+
+    globalThis.addEventListener('nsv-remote-play', onPlay);
+    globalThis.addEventListener('nsv-remote-pause', onPause);
+    globalThis.addEventListener('nsv-remote-seek', onSeek);
+    globalThis.addEventListener('nsv-remote-volume', onVolume);
+    globalThis.addEventListener('nsv-remote-mute', onMute);
+
+    // native tauri event
+    let unlisten: (() => void) | undefined;
+    const isTauri = (globalThis as any).__TAURI_INTERNALS__ || (globalThis as any).__TAURI__;
+
+    if (isTauri) {
+      const setupTauriListener = async () => {
+        try {
+          const { listen } = await import('@tauri-apps/api/event');
+          unlisten = await listen('nsv-control', handleRemoteControl);
+          console.log('[NSVPlayer] Remote control listener registered.');
+        } catch (err) {
+          console.error('[NSVPlayer] Failed to load Tauri event API:', err);
+        }
+      };
+      setupTauriListener();
+    }
+
+    return () => {
+      globalThis.removeEventListener('nsv-remote-play', onPlay);
+      globalThis.removeEventListener('nsv-remote-pause', onPause);
+      globalThis.removeEventListener('nsv-remote-seek', onSeek);
+      globalThis.removeEventListener('nsv-remote-volume', onVolume);
+      globalThis.removeEventListener('nsv-remote-mute', onMute);
+      if (unlisten) unlisten();
+    };
+  }, [handleRemoteControl]); // Only once, refs are used inside
 
   return (
     <MediaPlayer
