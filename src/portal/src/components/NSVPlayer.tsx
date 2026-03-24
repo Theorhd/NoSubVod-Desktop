@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { MediaPlayer, MediaProvider, useMediaRemote, useMediaStore } from '@vidstack/react';
 import { defaultLayoutIcons, DefaultVideoLayout } from '@vidstack/react/player/layouts/default';
 import Hls from 'hls.js';
@@ -212,7 +212,7 @@ export default function NSVPlayer({
 
     switch (cmd) {
       case 'play':
-        r.play().catch(() => {});
+        r.play();
         break;
       case 'pause':
         r.pause();
@@ -230,7 +230,7 @@ export default function NSVPlayer({
   }, []);
 
   useEffect(() => {
-    const onPlay = () => remoteRef.current.play().catch(() => {});
+    const onPlay = () => remoteRef.current.play();
     const onPause = () => remoteRef.current.pause();
     const onSeek = (e: any) => {
       const val = e.detail?.value || 0;

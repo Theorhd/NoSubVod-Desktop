@@ -1,5 +1,10 @@
 import { useState, useEffect, useRef, useCallback, Dispatch, SetStateAction } from 'react';
-import type { ScreenShareSessionState, RemoteInputPayload, WsMessage } from '../../../shared/types';
+import type {
+  ScreenShareSessionState,
+  RemoteInputPayload,
+  RemoteControlPayload,
+  WsMessage,
+} from '../../../shared/types';
 
 const rtcConfig: RTCConfiguration = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],

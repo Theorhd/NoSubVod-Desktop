@@ -11,6 +11,7 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
+import type { RemoteControlPayload } from '../../shared/types';
 import { useResponsive } from './hooks/useResponsive';
 import { useScreenShareState } from './hooks/useScreenShareState';
 import { useWebRTCViewer } from './hooks/useWebRTCViewer';
@@ -47,7 +48,7 @@ const normalizedPointerPosition = (
 };
 
 interface RemoteControlPanelProps {
-  sendRemoteControl: (payload: { command: string; value?: number }) => void;
+  sendRemoteControl: (payload: RemoteControlPayload) => void;
 }
 
 const RemoteControlPanel = ({ sendRemoteControl }: RemoteControlPanelProps) => (
