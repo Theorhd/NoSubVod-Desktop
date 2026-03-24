@@ -86,8 +86,11 @@ export default function Live() {
 
       isFetchingRef.current = true;
       setError('');
-      if (isInitialLoadingRef.current) setIsInitialLoading(true);
-      else setIsLoadingMore(true);
+      if (isInitialLoadingRef.current) {
+        setIsInitialLoading(true);
+      } else {
+        setIsLoadingMore(true);
+      }
 
       try {
         const endpoint = categoryName ? '/api/live/category' : '/api/live';
@@ -205,7 +208,7 @@ export default function Live() {
   );
 
   const handleSearchSubmit = useCallback(
-    (e: React.FormEvent) => {
+    (e: React.SyntheticEvent<HTMLFormElement>) => {
       e.preventDefault();
       const q = searchInput.trim();
       if (!q) {
@@ -231,6 +234,38 @@ export default function Live() {
     if (mode === 'search') return `"${searchInput}"`;
     return 'En direct maintenant';
   }, [mode, activeCategory, searchInput]);
+
+  const renderContent = () => {
+    if (isInitialLoading) {
+      return <div className="status-line">Chargement des streams...</div>;
+    }
+
+    if (error) {
+      return <div className="error-text">{error}</div>;
+    }
+
+    if (streams.length === 0) {
+      return <div className="empty-state">{emptyStateMessage}</div>;
+    }
+
+    return (
+      <>
+        <div className="vod-grid">
+          {streams.map((stream) => (
+            <StreamCard
+              key={stream.id}
+              stream={stream}
+              onWatch={(login) => navigate(`/player?live=${encodeURIComponent(login)}`)}
+              onCategoryClick={switchToCategory}
+              showBroadcaster
+            />
+          ))}
+        </div>
+        <div ref={lastElementRef} style={{ height: '20px', width: '100%' }} aria-hidden="true" />
+        {isLoadingMore && <div className="status-line">Chargement de plus de streams...</div>}
+      </>
+    );
+  };
 
   return (
     <>
@@ -287,36 +322,12 @@ export default function Live() {
             </p>
           )}
           <div className="live-count">
-            {streams.length} stream{streams.length !== 1 ? 's' : ''} chargé
-            {streams.length !== 1 ? 's' : ''}
+            {streams.length} stream{streams.length === 1 ? '' : 's'} chargé
+            {streams.length === 1 ? '' : 's'}
           </div>
         </div>
 
-        {isInitialLoading && <div className="status-line">Chargement des streams...</div>}
-        {error && <div className="error-text">{error}</div>}
-
-        {!isInitialLoading && !error && streams.length === 0 && (
-          <div className="empty-state">{emptyStateMessage}</div>
-        )}
-
-        {!isInitialLoading && streams.length > 0 && (
-          <div className="vod-grid">
-            {streams.map((stream) => (
-              <StreamCard
-                key={stream.id}
-                stream={stream}
-                onWatch={(login) => navigate(`/player?live=${encodeURIComponent(login)}`)}
-                onCategoryClick={switchToCategory}
-                showBroadcaster
-              />
-            ))}
-          </div>
-        )}
-
-        <div ref={lastElementRef} style={{ height: '20px', width: '100%' }} aria-hidden="true" />
-        {!isInitialLoading && isLoadingMore && (
-          <div className="status-line">Chargement de plus de streams...</div>
-        )}
+        {renderContent()}
       </div>
     </>
   );

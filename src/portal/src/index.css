@@ -95,7 +95,7 @@ body {
 .content-wrap {
   flex: 1;
   padding-bottom: 96px; /* Space for Nav */
-  animation: page-fade-in 0.5s var(--transition-smooth);
+  animation: page-fade-in 0.4s var(--transition-smooth);
   width: 100%;
   max-width: 100%;
 }
@@ -103,7 +103,18 @@ body {
 @keyframes page-fade-in {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(10px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes content-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
@@ -153,9 +164,16 @@ body {
   justify-content: center;
   cursor: pointer;
   border-radius: var(--radius-md);
-  transition: all var(--transition-fast);
+  transition:
+    transform var(--transition-fast),
+    background var(--transition-fast),
+    color var(--transition-fast);
   gap: 2px;
   min-width: 0;
+}
+
+.nav-btn:active {
+  transform: scale(0.92);
 }
 
 .nav-btn:hover {
@@ -318,8 +336,9 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 20px;
-  transition: var(--transition-smooth);
+  transition: all var(--transition-smooth);
   width: 100%;
+  animation: content-fade-in 0.5s var(--transition-smooth) both;
 }
 
 .action-btn {
@@ -401,6 +420,7 @@ body {
   transition: var(--transition-smooth);
   cursor: pointer;
   width: 100%;
+  animation: content-fade-in 0.6s var(--transition-smooth) both;
 }
 
 .vod-card:hover,
