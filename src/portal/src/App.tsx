@@ -22,6 +22,7 @@ import { ExtensionProvider, useExtensions } from './ExtensionContext';
 
 const Home = lazy(() => import('./Home'));
 const Channel = lazy(() => import('./Channel'));
+const Player = lazy(() => import('./Player'));
 const Trends = lazy(() => import('./Trends'));
 const Search = lazy(() => import('./Search'));
 const Live = lazy(() => import('./Live'));
@@ -280,10 +281,10 @@ function AppContent() {
                 <Route path="/trends" element={<Trends />} />
                 <Route path="/live" element={<Live />} />
                 <Route path="/search" element={<Search />} />
+                <Route path="/player" element={<Player />} />
                 <Route path="/history" element={<History />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/channel" element={<Channel />} />
-                <Route path="/search" element={<Search />} />
                 <Route path="/multi-view" element={<MultiView />} />
                 <Route path="/downloads" element={<Downloads />} />
                 <Route path="/screen-share" element={<ScreenShare />} />
