@@ -13,6 +13,7 @@ import Login from './Login';
 import { useAuth } from '../../shared/hooks/useAuth';
 import { useScreenShareState } from '../../shared/hooks/useScreenShareState';
 import { ErrorBoundary } from '../../shared/components/ErrorBoundary';
+import { ExtensionProvider, useExtensions } from './ExtensionContext';
 
 const Home = lazy(() => import('./Home'));
 const Channel = lazy(() => import('./Channel'));
@@ -64,8 +65,9 @@ const BottomNav = React.memo(({ items }: Readonly<{ items: NavItem[] }>) => {
 
 BottomNav.displayName = 'BottomNav';
 
-export default function App() {
+function AppContent() {
   const { isAuthenticated } = useAuth();
+  const { contributions } = useExtensions();
 
   const fetchScreenShareState = useCallback(async () => {
     const response = await fetch('/api/screenshare/state');
@@ -102,8 +104,16 @@ export default function App() {
         : []),
       { path: '/search', label: 'Search', Icon: SearchIcon },
       { path: '/downloads', label: 'Downloads', Icon: Download },
+      // Contribution Nav Items
+      ...contributions
+        .filter((c) => c.type === 'nav')
+        .map((c) => ({
+          path: c.path || '',
+          label: c.label || '',
+          Icon: c.component,
+        })),
     ],
-    [screenShareState.active]
+    [screenShareState.active, contributions]
   );
 
   if (!isAuthenticated) {
@@ -133,6 +143,12 @@ export default function App() {
                 <Route path="/player" element={<Player />} />
                 <Route path="/downloads" element={<Downloads />} />
                 <Route path="/screen-share" element={<ScreenShare />} />
+                {/* Contribution Routes */}
+                {contributions
+                  .filter((c) => c.type === 'route')
+                  .map((c) => (
+                    <Route key={c.id} path={c.path} element={<c.component />} />
+                  ))}
               </Routes>
             </div>
           </Suspense>
@@ -140,5 +156,13 @@ export default function App() {
         </div>
       </ErrorBoundary>
     </Router>
+  );
+}
+
+export default function App() {
+  return (
+    <ExtensionProvider>
+      <AppContent />
+    </ExtensionProvider>
   );
 }

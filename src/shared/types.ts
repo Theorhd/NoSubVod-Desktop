@@ -27,6 +27,28 @@ export interface VOD {
   };
 }
 
+export interface ExtensionManifest {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  author?: string;
+  entry: string;
+}
+
+export interface Extension {
+  manifest: ExtensionManifest;
+}
+
+export interface ExtensionContribution {
+  id: string;
+  type: 'nav' | 'route' | 'settings' | 'player-overlay';
+  label?: string;
+  path?: string;
+  icon?: string;
+  component: React.ComponentType<any>;
+}
+
 export interface ServerInfo {
   ip: string;
   port: number;

@@ -4,6 +4,7 @@ pub mod download;
 pub mod download_paths;
 pub mod dto;
 pub mod error;
+pub mod extensions;
 pub mod history;
 pub mod http_utils;
 pub mod middleware;
@@ -34,6 +35,7 @@ use tokio::net::TcpListener;
 use uuid::Uuid;
 
 use download::DownloadManager;
+use extensions::ExtensionManager;
 use history::HistoryStore;
 use routes::{build_router, ApiState};
 use screenshare::ScreenShareService;
@@ -53,10 +55,19 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(app_data_dir: PathBuf) -> AppResult<Self> {
-        let history = Arc::new(HistoryStore::load(app_data_dir)?);
+        let history = Arc::new(HistoryStore::load(app_data_dir.clone())?);
         let twitch = Arc::new(TwitchService::new());
         let download = Arc::new(DownloadManager::new());
         let screenshare = Arc::new(ScreenShareService::new());
+        let extensions = Arc::new(ExtensionManager::new(app_data_dir));
+
+        // Initial scan for extensions (synchronous scan or spawn task)
+        let ext_clone = extensions.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = ext_clone.scan().await {
+                eprintln!("[NoSubVOD] Extension scan error: {}", e);
+            }
+        });
 
         let ip = get_local_ipv4();
         let port = SERVER_PORT;
@@ -97,6 +108,7 @@ impl AppState {
             history,
             download,
             screenshare,
+            extensions,
             oauth,
             server_token,
             app_handle: None,

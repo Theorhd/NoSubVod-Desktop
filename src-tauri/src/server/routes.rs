@@ -55,12 +55,44 @@ pub struct ApiState {
     pub history: Arc<HistoryStore>,
     pub download: Arc<DownloadManager>,
     pub screenshare: Arc<ScreenShareService>,
+    pub extensions: Arc<super::extensions::ExtensionManager>,
     pub oauth: Arc<OAuthStateStore>,
     /// Per-session token required for API access (prevents unauthorized LAN access).
     pub server_token: String,
     pub app_handle: Option<tauri::AppHandle>,
     /// Cache for the downloads list (short TTL to avoid frequent disk scans)
     pub download_cache: Cache<String, Vec<DownloadedFile>>,
+}
+
+async fn handle_get_extensions(State(state): State<ApiState>) -> impl IntoResponse {
+    Json(state.extensions.list().await)
+}
+
+async fn handle_extension_files(
+    Path((id, file_path)): Path<(String, String)>,
+    State(state): State<ApiState>,
+    req: axum::extract::Request,
+) -> AppResult<Response> {
+    let Some(base_path) = state.extensions.get_extension_path(&id).await else {
+        return Err(AppError::NotFound("Extension not found".to_string()));
+    };
+
+    // Treat the extension directory as the base path.
+    let base_dir = std::path::Path::new(&base_path);
+
+    // Reject absolute paths in the user-supplied segment to avoid replacing the base.
+    let requested_path = std::path::Path::new(&file_path);
+    if requested_path.is_absolute() || file_path.contains("..") {
+        return Err(AppError::BadRequest("Invalid path".to_string()));
+    }
+
+    // Join the base directory with the requested relative path
+    let full_path = base_dir.join(requested_path);
+
+    match ServeFile::new(&full_path).oneshot(req).await {
+        Ok(res) => Ok(res.into_response()),
+        Err(_) => Err(AppError::NotFound("File not found".to_string())),
+    }
 }
 
 async fn handle_get_screenshare_state(State(state): State<ApiState>) -> impl IntoResponse {
@@ -1201,6 +1233,9 @@ pub fn build_router(mut state: ApiState, portal_dist: Option<std::path::PathBuf>
         )
         .route("/history/list", get(handle_get_history_list))
         .route("/history/:vod_id", get(handle_get_history_vod))
+        // Extensions
+        .route("/extensions", get(handle_get_extensions))
+        .route("/extensions/:id/*file", get(handle_extension_files))
         // User
         .route("/user/:username", get(handle_get_user))
         .route("/user/:username/vods", get(handle_get_user_vods))
