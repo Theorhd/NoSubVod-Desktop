@@ -12,7 +12,7 @@ function formatProgress(timecode: number, duration: number): number {
   return Math.min(100, Math.max(0, (timecode / duration) * 100));
 }
 
-export default function HistoryPreview({ historyPreview }: HistoryPreviewProps) {
+const HistoryPreview = React.memo(({ historyPreview }: HistoryPreviewProps) => {
   const navigate = useNavigate();
 
   return (
@@ -133,4 +133,7 @@ export default function HistoryPreview({ historyPreview }: HistoryPreviewProps) 
       )}
     </div>
   );
-}
+});
+
+HistoryPreview.displayName = 'HistoryPreview';
+export default HistoryPreview;

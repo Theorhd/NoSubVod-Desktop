@@ -1,0 +1,8 @@
+{
+  "id": "devtool-explorer",
+  "name": "DevTool Explorer",
+  "version": "1.0.0",
+  "description": "Explorateur de fonctionnalités avancées pour les développeurs NSV.",
+  "author": "NoSubVOD Team",
+  "entry": "index.html"
+}

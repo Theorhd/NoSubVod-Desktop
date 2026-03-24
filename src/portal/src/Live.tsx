@@ -9,17 +9,13 @@ const PAGE_SIZE = 24;
 
 type LiveMode = 'all' | 'search' | 'category';
 
-type StreamWithScore = LiveStream & {
-  __score: number;
-};
-
 type TopCategory = {
   id: string;
   name: string;
   boxArtURL: string;
 };
 
-function computeScore(stream: LiveStream, subLogins: Set<string>): number {
+const computeScore = (stream: LiveStream, subLogins: Set<string>): number => {
   const login = stream.broadcaster.login.toLowerCase();
   const subBoost = subLogins.has(login) ? 32 : 0;
   const frenchBoost = (stream.language || '').toLowerCase() === 'fr' ? 8 : 0;
@@ -28,35 +24,26 @@ function computeScore(stream: LiveStream, subLogins: Set<string>): number {
   const freshnessBoost = Math.max(0, 4 - Math.min(uptimeHours, 4));
 
   return viewerScore + subBoost + frenchBoost + freshnessBoost;
-}
+};
 
-function rankStreams(streams: LiveStream[], subLogins: Set<string>): LiveStream[] {
-  return streams
-    .map(
-      (stream) =>
-        ({
-          ...stream,
-          __score: computeScore(stream, subLogins),
-        }) as StreamWithScore
-    )
-    .sort((left, right) => right.__score - left.__score)
-    .map((item) => {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { __score, ...stream } = item;
-      return stream;
-    });
-}
+const rankStreams = (streams: LiveStream[], subLogins: Set<string>): LiveStream[] => {
+  return [...streams]
+    .map((stream) => ({
+      stream,
+      score: computeScore(stream, subLogins),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .map((item) => item.stream);
+};
 
 export default function Live() {
   const navigate = useNavigate();
 
-  // ── Mode & search state ───────────────────────────────────────────────────
   const [mode, setMode] = useState<LiveMode>('all');
   const [searchInput, setSearchInput] = useState('');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [topCategories, setTopCategories] = useState<TopCategory[]>([]);
 
-  // ── Stream list state ─────────────────────────────────────────────────────
   const [streams, setStreams] = useState<LiveStream[]>([]);
   const [subLogins, setSubLogins] = useState<Set<string>>(new Set());
   const [isInitialLoading, setIsInitialLoading] = useState(true);
@@ -69,7 +56,6 @@ export default function Live() {
   const isFetchingRef = useRef(false);
   const isInitialLoadingRef = useRef(true);
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
   const resetStreamState = useCallback(() => {
     setStreams([]);
     seenIdsRef.current = new Set();
@@ -93,9 +79,8 @@ export default function Live() {
     [subLogins]
   );
 
-  // ── Fetchers ──────────────────────────────────────────────────────────────
-  const fetchAllPage = useCallback(
-    async (cursor?: string | null) => {
+  const fetchPage = useCallback(
+    async (cursor?: string | null, categoryName?: string | null) => {
       if (isFetchingRef.current) return;
       if (!isInitialLoadingRef.current && !hasMore) return;
 
@@ -108,50 +93,20 @@ export default function Live() {
       }
 
       try {
+        const endpoint = categoryName ? '/api/live/category' : '/api/live';
         const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
         if (cursor) params.set('cursor', cursor);
-        const res = await fetch(`/api/live?${params.toString()}`);
-        if (!res.ok) throw new Error('Failed to load live streams');
+        if (categoryName) params.set('name', categoryName);
+
+        const res = await fetch(`${endpoint}?${params.toString()}`);
+        if (!res.ok) throw new Error('Failed to load streams');
         const payload = (await res.json()) as LiveStreamsPage;
+
         appendRankedStreams(payload.items || []);
         setNextCursor(payload.nextCursor || null);
         setHasMore(Boolean(payload.hasMore));
       } catch (err: any) {
         setError(err?.message || 'Failed to load live streams');
-      } finally {
-        isFetchingRef.current = false;
-        isInitialLoadingRef.current = false;
-        setIsInitialLoading(false);
-        setIsLoadingMore(false);
-      }
-    },
-    [appendRankedStreams, hasMore]
-  );
-
-  const fetchCategoryPage = useCallback(
-    async (name: string, cursor?: string | null) => {
-      if (isFetchingRef.current) return;
-      if (!isInitialLoadingRef.current && !hasMore) return;
-
-      isFetchingRef.current = true;
-      setError('');
-      if (isInitialLoadingRef.current) {
-        setIsInitialLoading(true);
-      } else {
-        setIsLoadingMore(true);
-      }
-
-      try {
-        const params = new URLSearchParams({ name, limit: String(PAGE_SIZE) });
-        if (cursor) params.set('cursor', cursor);
-        const res = await fetch(`/api/live/category?${params.toString()}`);
-        if (!res.ok) throw new Error('Failed to load category streams');
-        const payload = (await res.json()) as LiveStreamsPage;
-        appendRankedStreams(payload.items || []);
-        setNextCursor(payload.nextCursor || null);
-        setHasMore(Boolean(payload.hasMore));
-      } catch (err: any) {
-        setError(err?.message || 'Failed to load category streams');
       } finally {
         isFetchingRef.current = false;
         isInitialLoadingRef.current = false;
@@ -187,69 +142,59 @@ export default function Live() {
     }
   }, []);
 
-  // ── Load subs + initial data ──────────────────────────────────────────────
   useEffect(() => {
     const init = async () => {
-      // Load subs
       try {
-        const settingsRes = await fetch('/api/settings');
+        const [settingsRes, catsRes] = await Promise.all([
+          fetch('/api/settings'),
+          fetch('/api/live/top-categories'),
+        ]);
+
         let oneSync = false;
         if (settingsRes.ok) {
-          const s = (await settingsRes.json()) as { oneSync?: boolean };
+          const s = await settingsRes.json();
           oneSync = Boolean(s.oneSync);
         }
+
         let subEntries: SubEntry[] = [];
         if (oneSync) {
           const subsRes = await fetch('/api/subs');
-          if (subsRes.ok) subEntries = (await subsRes.json()) as SubEntry[];
+          if (subsRes.ok) subEntries = await subsRes.json();
         } else {
           const local = localStorage.getItem('nsv_subs');
-          subEntries = local ? (JSON.parse(local) as SubEntry[]) || [] : [];
+          subEntries = local ? JSON.parse(local) : [];
         }
         setSubLogins(new Set(subEntries.map((e) => e.login.toLowerCase())));
+
+        if (catsRes.ok) setTopCategories(await catsRes.json());
       } catch {
-        setSubLogins(new Set());
+        // Silently fail init data
       }
-
-      // Load top categories (non-blocking)
-      fetch('/api/live/top-categories')
-        .then((r) => (r.ok ? r.json() : []))
-        .then((cats: TopCategory[]) => setTopCategories(cats || []))
-        .catch(() => {});
-
-      // First page of "all"
-      void fetchAllPage(null);
+      void fetchPage(null);
     };
     void init();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchPage]);
 
   useEffect(() => {
     setStreams((current) => rankStreams(current, subLogins));
   }, [subLogins]);
 
-  // ── Infinite scroll observer (only in all/category modes) ────────────────
-
   const { lastElementRef } = useInfiniteScroll({
     isLoading: isFetchingRef.current || mode === 'search',
     hasMore,
     onLoadMore: () => {
-      if (mode === 'all') {
-        void fetchAllPage(nextCursor);
-      } else if (mode === 'category' && activeCategory) {
-        void fetchCategoryPage(activeCategory, nextCursor);
-      }
+      if (mode === 'all') void fetchPage(nextCursor);
+      else if (mode === 'category' && activeCategory) void fetchPage(nextCursor, activeCategory);
     },
   });
 
-  // ── Mode switching helpers ────────────────────────────────────────────────
   const switchToAll = useCallback(() => {
     setMode('all');
     setActiveCategory(null);
     setSearchInput('');
     resetStreamState();
-    void fetchAllPage(null);
-  }, [resetStreamState, fetchAllPage]);
+    void fetchPage(null);
+  }, [resetStreamState, fetchPage]);
 
   const switchToCategory = useCallback(
     (name: string) => {
@@ -257,13 +202,13 @@ export default function Live() {
       setActiveCategory(name);
       setSearchInput('');
       resetStreamState();
-      void fetchCategoryPage(name, null);
+      void fetchPage(null, name);
     },
-    [resetStreamState, fetchCategoryPage]
+    [resetStreamState, fetchPage]
   );
 
   const handleSearchSubmit = useCallback(
-    (e: React.SubmitEvent<HTMLFormElement>) => {
+    (e: React.SyntheticEvent<HTMLFormElement>) => {
       e.preventDefault();
       const q = searchInput.trim();
       if (!q) {
@@ -278,7 +223,6 @@ export default function Live() {
     [searchInput, resetStreamState, fetchSearch, switchToAll]
   );
 
-  // ── UI labels ─────────────────────────────────────────────────────────────
   const emptyStateMessage = useMemo(() => {
     if (mode === 'search') return 'Aucun live trouvé pour cette recherche.';
     if (mode === 'category') return `Aucun live pour la catégorie "${activeCategory}".`;
@@ -291,17 +235,42 @@ export default function Live() {
     return 'En direct maintenant';
   }, [mode, activeCategory, searchInput]);
 
-  const streamCountLabel = useMemo(() => {
-    if (streams.length <= 0) return 'Aucun stream chargé';
-    return `${streams.length} stream${streams.length > 1 ? 's' : ''} chargé${streams.length > 1 ? 's' : ''}`;
-  }, [streams.length]);
+  const renderContent = () => {
+    if (isInitialLoading) {
+      return <div className="status-line">Chargement des streams...</div>;
+    }
+
+    if (error) {
+      return <div className="error-text">{error}</div>;
+    }
+
+    if (streams.length === 0) {
+      return <div className="empty-state">{emptyStateMessage}</div>;
+    }
+
+    return (
+      <>
+        <div className="vod-grid">
+          {streams.map((stream) => (
+            <StreamCard
+              key={stream.id}
+              stream={stream}
+              onWatch={(login) => navigate(`/player?live=${encodeURIComponent(login)}`)}
+              onCategoryClick={switchToCategory}
+              showBroadcaster
+            />
+          ))}
+        </div>
+        <div ref={lastElementRef} style={{ height: '20px', width: '100%' }} aria-hidden="true" />
+        {isLoadingMore && <div className="status-line">Chargement de plus de streams...</div>}
+      </>
+    );
+  };
 
   return (
     <>
       <TopBar mode="logo" title="Live Twitch" onLogoClick={switchToAll} />
-
       <div className="container">
-        {/* ── Search bar ── */}
         <div className="card live-search-card">
           <form className="live-search-form" onSubmit={handleSearchSubmit}>
             <input
@@ -322,7 +291,6 @@ export default function Live() {
             )}
           </form>
 
-          {/* ── Top 5 categories ── */}
           {topCategories.length > 0 && (
             <div className="live-top-categories">
               <span className="live-cats-label">Populaires&nbsp;:</span>
@@ -346,43 +314,20 @@ export default function Live() {
           )}
         </div>
 
-        {/* ── Section header ── */}
         <div className="card live-intro-card">
           <h2>{headerLabel}</h2>
           {mode === 'all' && (
             <p className="card-subtitle">
-              Flux dynamique classé par popularité, abonnements et fraîcheur du live.
+              Flux dynamique classé par popularité, abonnements et fraîcheur.
             </p>
           )}
-          <div className="live-count">{streamCountLabel}</div>
+          <div className="live-count">
+            {streams.length} stream{streams.length === 1 ? '' : 's'} chargé
+            {streams.length === 1 ? '' : 's'}
+          </div>
         </div>
 
-        {isInitialLoading && <div className="status-line">Chargement des streams...</div>}
-        {error && <div className="error-text">{error}</div>}
-
-        {!isInitialLoading && !error && streams.length === 0 && (
-          <div className="empty-state">{emptyStateMessage}</div>
-        )}
-
-        {!isInitialLoading && streams.length > 0 && (
-          <div className="vod-grid">
-            {streams.map((stream) => (
-              <StreamCard
-                key={stream.id}
-                stream={stream}
-                onWatch={(login) => navigate(`/player?live=${encodeURIComponent(login)}`)}
-                onCategoryClick={switchToCategory}
-                showBroadcaster={true}
-              />
-            ))}
-          </div>
-        )}
-
-        <div ref={lastElementRef} style={{ height: '20px', width: '100%' }} aria-hidden="true" />
-
-        {!isInitialLoading && isLoadingMore && (
-          <div className="status-line">Chargement de plus de streams...</div>
-        )}
+        {renderContent()}
       </div>
     </>
   );

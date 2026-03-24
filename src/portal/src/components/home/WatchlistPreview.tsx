@@ -8,10 +8,7 @@ interface WatchlistPreviewProps {
   readonly removeFromWatchlist: (vodId: string) => Promise<void>;
 }
 
-export default function WatchlistPreview({
-  watchlist,
-  removeFromWatchlist,
-}: WatchlistPreviewProps) {
+const WatchlistPreview = React.memo(({ watchlist, removeFromWatchlist }: WatchlistPreviewProps) => {
   const navigate = useNavigate();
 
   if (watchlist.length === 0) {
@@ -120,4 +117,7 @@ export default function WatchlistPreview({
       </div>
     </div>
   );
-}
+});
+
+WatchlistPreview.displayName = 'WatchlistPreview';
+export default WatchlistPreview;

@@ -6,7 +6,14 @@ const tseslint = require('typescript-eslint');
 
 module.exports = defineConfig(
   {
-    ignores: ['dist/**', 'node_modules/**', 'build/**', 'releasenotes/**', 'src-tauri/target/**'],
+    ignores: [
+      'dist/**',
+      'node_modules/**',
+      'build/**',
+      'releasenotes/**',
+      'src-tauri/target/**',
+      'extensions/**',
+    ],
   },
   ...tseslint.configs.recommended,
   {
@@ -32,6 +39,7 @@ module.exports = defineConfig(
       ...reactPlugin.configs.recommended.rules,
       ...reactHooksPlugin.configs.recommended.rules,
       'react/react-in-jsx-scope': 'off',
+      'react/prop-types': 'off',
       ...prettierConfig.rules,
       '@typescript-eslint/no-require-imports': 'off',
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],

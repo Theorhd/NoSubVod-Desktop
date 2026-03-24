@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { QrCode, KeyRound, ArrowRight, ShieldCheck } from 'lucide-react';
-import { safeStorageSet } from './utils/storage.ts';
+import { safeStorageSet } from '../../shared/utils/storage';
 
 type CameraStatus = 'idle' | 'requesting' | 'granted' | 'denied' | 'unsupported' | 'insecure';
 

@@ -27,6 +27,29 @@ export interface VOD {
   };
 }
 
+export interface ExtensionManifest {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  author?: string;
+  entry: string;
+}
+
+export interface Extension {
+  manifest: ExtensionManifest;
+}
+
+export interface ExtensionContribution {
+  id: string;
+  type: 'nav' | 'route' | 'settings' | 'player-overlay';
+  label?: string;
+  path?: string;
+  icon?: string;
+  component: React.ComponentType<any>;
+  componentProps?: any;
+}
+
 export interface ServerInfo {
   ip: string;
   port: number;
@@ -86,6 +109,8 @@ export interface ExperienceSettings {
   downloadNetworkSharedPath?: string;
   twitchImportFollows?: boolean;
   launchAtLogin?: boolean;
+  autoUpdate?: boolean;
+  enabledExtensions?: string[];
 }
 
 export interface TwitchStatus {
@@ -151,10 +176,27 @@ export type ScreenShareSessionState = {
   startedAt: number | null;
   interactive: boolean;
   maxViewers: number;
+  current_viewers?: number; // compat with Rust side? let's see
   currentViewers: number;
   streamReady: boolean;
   streamMessage: string | null;
 };
+
+export interface DownloadedFile {
+  name: string;
+  size: number;
+  url: string;
+  metadata?: VOD | null;
+}
+
+export interface ActiveDownload {
+  vod_id: string;
+  title: string;
+  status: 'pending' | 'downloading' | 'merging' | 'completed' | 'failed' | (string & {});
+  progress: number;
+  current_time: string;
+  total_duration: number;
+}
 
 export type SignalPayload = {
   sdp?: RTCSessionDescriptionInit;

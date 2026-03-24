@@ -1,6 +1,6 @@
 import React from 'react';
 import { VideoMarker } from '../../../../shared/types';
-import { formatSafeClock as formatClock } from '../../utils/formatters';
+import { formatSafeClock as formatClock } from '../../../../shared/utils/formatters';
 import { Play, Tag, X } from 'lucide-react';
 
 interface MarkerPanelProps {

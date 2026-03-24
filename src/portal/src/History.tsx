@@ -3,7 +3,7 @@ import { useNavigate, type NavigateFunction } from 'react-router-dom';
 import { HistoryVodEntry } from '../../shared/types';
 import { Download as DownloadIcon } from 'lucide-react';
 import DownloadMenu from './components/DownloadMenu';
-import { formatRelative } from './utils/formatters.ts';
+import { formatRelative } from '../../shared/utils/formatters';
 import { TopBar } from './components/TopBar';
 
 type HistoryItemProps = Readonly<{ entry: HistoryVodEntry; navigate: NavigateFunction }>;

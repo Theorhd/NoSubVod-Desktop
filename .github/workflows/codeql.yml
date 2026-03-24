@@ -3,8 +3,12 @@ name: 'Code Security'
 on:
   push:
     branches: [main, dev]
+    paths-ignore:
+      - 'extensions/**'
   pull_request:
     branches: [main, dev]
+    paths-ignore:
+      - 'extensions/**'
   schedule:
     - cron: '30 1 * * 1' # Weekly at 1:30 AM on Monday
 
@@ -30,6 +34,9 @@ jobs:
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
+          config: |
+            paths-ignore:
+              - extensions/**
           # If you have custom queries, specify them here:
           # queries: security-extended,security-and-quality
 

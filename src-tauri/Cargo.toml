@@ -1,6 +1,6 @@
 [package]
 name = "nosubvod-desktop"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2021"
 
 [lib]
@@ -14,6 +14,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "image-ico"] }
 tauri-plugin-shell = "2"
 tauri-plugin-autostart = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
@@ -53,3 +55,8 @@ windows = { version = "0.58", features = [
 thiserror = "2.0.18"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+sysinfo = "0.31"
+
+[dev-dependencies]
+tempfile = "3"
+ctor = "0.2"

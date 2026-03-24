@@ -9,7 +9,7 @@ interface MySubsListProps {
   readonly handleDeleteSub: (e: React.MouseEvent, login: string) => Promise<void>;
 }
 
-export default function MySubsList({ subs, liveStatus, handleDeleteSub }: MySubsListProps) {
+const MySubsList = React.memo(({ subs, liveStatus, handleDeleteSub }: MySubsListProps) => {
   const navigate = useNavigate();
 
   return (
@@ -150,4 +150,7 @@ export default function MySubsList({ subs, liveStatus, handleDeleteSub }: MySubs
       `}</style>
     </div>
   );
-}
+});
+
+MySubsList.displayName = 'MySubsList';
+export default MySubsList;

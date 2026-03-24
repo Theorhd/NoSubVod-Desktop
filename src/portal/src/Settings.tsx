@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { ExperienceSettings, ProxyInfo, TrustedDevice, TwitchStatus } from '../../shared/types';
 import { TopBar } from './components/TopBar';
+import { useExtensions } from './ExtensionContext';
 
 const defaultSettings: ExperienceSettings = {
   oneSync: false,
@@ -10,61 +11,131 @@ const defaultSettings: ExperienceSettings = {
   minVideoQuality: 'none',
   preferredVideoQuality: 'auto',
   launchAtLogin: false,
+  enabledExtensions: [],
 };
 
-const ServerExperienceSection = ({ settings, loading, setSettings, setSuccess }: any) => (
-  <div className="card settings-card">
-    <h2>Server Experience</h2>
-    <p className="settings-description">Gérez le comportement global de votre serveur NoSubVOD.</p>
-    {loading ? (
-      <div className="trusted-devices-empty">Loading settings...</div>
-    ) : (
-      <>
-        <div className="toggle-row">
-          <span>
-            <strong>
-              <label htmlFor="oneSyncToggle" className="mb-0">
-                OneSync
-              </label>
-            </strong>
-            <small>Synchronise les données entre devices (subs, historique)</small>
-          </span>
-          <input
-            id="oneSyncToggle"
-            type="checkbox"
-            checked={settings.oneSync}
-            onChange={(e) => {
-              setSettings((prev: any) => ({ ...prev, oneSync: e.target.checked }));
-              setSuccess('');
-            }}
-          />
-        </div>
+interface SectionProps {
+  readonly settings: ExperienceSettings;
+  readonly setSettings: React.Dispatch<React.SetStateAction<ExperienceSettings>>;
+  readonly setSuccess: (val: string) => void;
+}
 
-        <div className="toggle-row mt-2">
-          <span>
-            <strong>
-              <label htmlFor="launchAtLoginToggle" className="mb-0">
-                Lancer avec l&apos;OS
-              </label>
-            </strong>
-            <small>Démarre NoSubVOD automatiquement à l&apos;ouverture de session</small>
-          </span>
-          <input
-            id="launchAtLoginToggle"
-            type="checkbox"
-            checked={settings.launchAtLogin}
-            onChange={(e) => {
-              setSettings((prev: any) => ({ ...prev, launchAtLogin: e.target.checked }));
-              setSuccess('');
-            }}
-          />
-        </div>
-      </>
-    )}
-  </div>
+const ServerExperienceSection = React.memo(
+  ({ settings, loading, setSettings, setSuccess }: SectionProps & { loading: boolean }) => (
+    <div className="card settings-card">
+      <h2>Server Experience</h2>
+      <p className="settings-description">
+        Gérez le comportement global de votre serveur NoSubVOD.
+      </p>
+      {loading ? (
+        <div className="trusted-devices-empty">Loading settings...</div>
+      ) : (
+        <>
+          <div className="toggle-row">
+            <span>
+              <strong>
+                <label htmlFor="oneSyncToggle" className="mb-0">
+                  OneSync
+                </label>
+              </strong>
+              <small>Synchronise les données entre devices (subs, historique)</small>
+            </span>
+            <input
+              id="oneSyncToggle"
+              type="checkbox"
+              checked={settings.oneSync}
+              onChange={(e) => {
+                setSettings((prev) => ({ ...prev, oneSync: e.target.checked }));
+                setSuccess('');
+              }}
+            />
+          </div>
+
+          <div className="toggle-row mt-2">
+            <span>
+              <strong>
+                <label htmlFor="launchAtLoginToggle" className="mb-0">
+                  Lancer avec l&apos;OS
+                </label>
+              </strong>
+              <small>Démarre NoSubVOD automatiquement à l&apos;ouverture de session</small>
+            </span>
+            <input
+              id="launchAtLoginToggle"
+              type="checkbox"
+              checked={settings.launchAtLogin}
+              onChange={(e) => {
+                setSettings((prev) => ({ ...prev, launchAtLogin: e.target.checked }));
+                setSuccess('');
+              }}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  )
 );
+ServerExperienceSection.displayName = 'ServerExperienceSection';
 
-const VideoPlayerSection = ({ settings, setSettings, setSuccess }: any) => (
+const ExtensionsSection = React.memo(() => {
+  const { extensions, enabledExtensions, toggleExtension, isLoading } = useExtensions();
+
+  if (isLoading) {
+    return (
+      <div className="card settings-card">
+        <h2>Extensions</h2>
+        <div className="trusted-devices-empty">Chargement des extensions...</div>
+      </div>
+    );
+  }
+
+  if (extensions.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="card settings-card">
+      <h2>Extensions</h2>
+      <p className="settings-description">Activez ou désactivez vos extensions installées.</p>
+      <div className="trusted-devices-list">
+        {extensions.map((ext) => {
+          const isEnabled = enabledExtensions.includes(ext.manifest.id);
+          return (
+            <div key={ext.manifest.id} className="trusted-device-item">
+              <div className="trusted-device-header">
+                <div className="trusted-device-id">
+                  <strong>{ext.manifest.name}</strong>
+                  <div style={{ fontSize: '0.75rem', opacity: 0.7 }}>
+                    v{ext.manifest.version} par {ext.manifest.author || 'Inconnu'}
+                  </div>
+                </div>
+                <label className="trusted-device-toggle">
+                  <span className="trusted-device-toggle-label">
+                    {isEnabled ? 'Active' : 'Inactive'}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={isEnabled}
+                    onChange={(e) => toggleExtension(ext.manifest.id, e.target.checked)}
+                  />
+                </label>
+              </div>
+              {ext.manifest.description && (
+                <div className="trusted-device-meta">{ext.manifest.description}</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p className="help-text mt-2" style={{ fontStyle: 'italic' }}>
+        Note: Désactiver une extension peut nécessiter un rechargement de l&apos;application.
+      </p>
+    </div>
+  );
+});
+ExtensionsSection.displayName = 'ExtensionsSection';
+
+const VideoPlayerSection = React.memo(({ settings, setSettings, setSuccess }: SectionProps) => (
   <div className="card settings-card">
     <h2>Video Player</h2>
     <p className="settings-description">Configure la qualité par défaut du lecteur vidéo.</p>
@@ -78,7 +149,7 @@ const VideoPlayerSection = ({ settings, setSettings, setSuccess }: any) => (
         className="settings-select"
         value={settings.minVideoQuality || 'none'}
         onChange={(e) => {
-          setSettings((prev: any) => ({ ...prev, minVideoQuality: e.target.value }));
+          setSettings((prev) => ({ ...prev, minVideoQuality: e.target.value }));
           setSuccess('');
         }}
       >
@@ -102,7 +173,7 @@ const VideoPlayerSection = ({ settings, setSettings, setSuccess }: any) => (
         className="settings-select"
         value={settings.preferredVideoQuality || 'auto'}
         onChange={(e) => {
-          setSettings((prev: any) => ({ ...prev, preferredVideoQuality: e.target.value }));
+          setSettings((prev) => ({ ...prev, preferredVideoQuality: e.target.value }));
           setSuccess('');
         }}
       >
@@ -116,325 +187,327 @@ const VideoPlayerSection = ({ settings, setSettings, setSuccess }: any) => (
       </small>
     </div>
   </div>
-);
+));
+VideoPlayerSection.displayName = 'VideoPlayerSection';
 
-const AdblockSection = ({ settings, setSettings, setSuccess, proxies, activeProxy }: any) => {
-  const getProxyStatusClass = (status?: string) => {
-    if (status === 'success') return ' status-success';
-    if (status === 'error') return ' status-error';
-    return '';
-  };
+const AdblockSection = React.memo(
+  ({
+    settings,
+    setSettings,
+    setSuccess,
+    proxies,
+    activeProxy,
+  }: SectionProps & { proxies: ProxyInfo[]; activeProxy: ProxyInfo | null }) => {
+    const getProxyStatusClass = (status?: string) => {
+      if (status === 'success') return ' status-success';
+      if (status === 'error') return ' status-error';
+      return '';
+    };
 
-  return (
-    <div className="card settings-card">
-      <h2>Adblock Proxies</h2>
-      <p className="settings-description">
-        Utilise un proxy tiers pour contourner les pubs Twitch sur les lives et les VODs. Attention:
-        L&apos;utilisation d&apos;un proxy public peut ralentir le flux vidéo ou se bloquer
-        temporairement.
-      </p>
+    return (
+      <div className="card settings-card">
+        <h2>Adblock Proxies</h2>
+        <p className="settings-description">
+          Utilise un proxy tiers pour contourner les pubs Twitch sur les lives et les VODs.
+        </p>
 
-      <div className="toggle-row">
-        <span>
-          <strong>
-            <label htmlFor="adblockEnabled" className="mb-0">
-              Activer le Proxy Adblock
-            </label>
-          </strong>
-          <small>Désactivé par défaut. Activez-le si vous avez trop de pubs.</small>
-        </span>
-        <input
-          id="adblockEnabled"
-          type="checkbox"
-          checked={settings.adblockEnabled}
-          onChange={(e) => {
-            setSettings((prev: any) => ({ ...prev, adblockEnabled: e.target.checked }));
-            setSuccess('');
-          }}
-        />
-      </div>
+        <div className="toggle-row">
+          <span>
+            <strong>
+              <label htmlFor="adblockEnabled" className="mb-0">
+                Activer le Proxy Adblock
+              </label>
+            </strong>
+            <small>Désactivé par défaut. Activez-le si vous avez trop de pubs.</small>
+          </span>
+          <input
+            id="adblockEnabled"
+            type="checkbox"
+            checked={settings.adblockEnabled}
+            onChange={(e) => {
+              setSettings((prev) => ({ ...prev, adblockEnabled: e.target.checked }));
+              setSuccess('');
+            }}
+          />
+        </div>
 
-      {settings.adblockEnabled && (
-        <>
-          <div className="settings-group mt-2">
-            <label htmlFor="adblockProxyMode" className="settings-label">
-              Mode de Sélection du Proxy
-            </label>
-            <select
-              id="adblockProxyMode"
-              className="settings-select"
-              value={settings.adblockProxyMode || 'auto'}
-              onChange={(e) => {
-                setSettings((prev: any) => ({ ...prev, adblockProxyMode: e.target.value }));
-                setSuccess('');
-              }}
-            >
-              <option value="auto">Automatique (recommandé - sélectionne le plus rapide)</option>
-              <option value="manual">Manuel (choisir un proxy spécifique)</option>
-            </select>
-          </div>
-
-          {settings.adblockProxyMode === 'manual' && (
+        {settings.adblockEnabled && (
+          <>
             <div className="settings-group mt-2">
-              <label htmlFor="adblockProxy" className="settings-label">
-                Proxy Manuel
+              <label htmlFor="adblockProxyMode" className="settings-label">
+                Mode de Sélection du Proxy
               </label>
               <select
-                id="adblockProxy"
+                id="adblockProxyMode"
                 className="settings-select"
-                value={settings.adblockProxy || ''}
+                value={settings.adblockProxyMode || 'auto'}
                 onChange={(e) => {
-                  setSettings((prev: any) => ({ ...prev, adblockProxy: e.target.value }));
+                  setSettings((prev) => ({ ...prev, adblockProxyMode: e.target.value as any }));
                   setSuccess('');
                 }}
               >
-                <option value="" disabled>
-                  Sélectionnez un proxy
-                </option>
-                {proxies.map((p: any) => (
-                  <option key={p.url} value={p.url}>
-                    {p.name} - {p.url}
-                  </option>
-                ))}
+                <option value="auto">Automatique (recommandé)</option>
+                <option value="manual">Manuel</option>
               </select>
             </div>
-          )}
 
-          {activeProxy && (
-            <div className="settings-active-proxy">
-              <strong className="settings-active-proxy-title">Proxy Actif Actuellement :</strong>
-              <div className="settings-active-proxy-row">
-                <span
-                  className={`settings-active-proxy-dot${getProxyStatusClass(activeProxy.status)}`}
-                />
-                <span className="settings-active-proxy-name">{activeProxy.name}</span>
-              </div>
-              <div className="settings-active-proxy-meta">URL: {activeProxy.url}</div>
-              {activeProxy.ping !== undefined && activeProxy.status === 'success' && (
-                <div className="settings-active-proxy-meta">Ping: {activeProxy.ping}ms</div>
-              )}
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-};
-
-const DownloadsSection = ({ settings, setSettings, setSuccess, selectFolder }: any) => (
-  <div className="card settings-card">
-    <h2>Downloads (Server Backend)</h2>
-    <p className="settings-description">
-      Configure l&apos;emplacement où le serveur de fond NoSubVOD stockera les VODs téléchargées.
-    </p>
-
-    <div className="settings-group">
-      <label htmlFor="downloadLocalPath" className="settings-label">
-        Chemin Local (Server-Side)
-      </label>
-      <div className="field-row">
-        <input
-          id="downloadLocalPath"
-          type="text"
-          value={settings.downloadLocalPath || ''}
-          placeholder="ex: C:\Downloads\NoSubVOD"
-          onChange={(e) => {
-            setSettings((prev: any) => ({ ...prev, downloadLocalPath: e.target.value }));
-            setSuccess('');
-          }}
-          className="settings-select field-grow"
-        />
-        <button
-          type="button"
-          onClick={() => selectFolder('downloadLocalPath')}
-          className="action-btn"
-        >
-          Parcourir
-        </button>
-      </div>
-      <small className="help-text">
-        Chemin absolu sur la machine hébergeant le serveur NoSubVOD. (Windows/Linux/Mac)
-      </small>
-    </div>
-
-    <div className="settings-group mt-2">
-      <label htmlFor="downloadNetworkSharedPath" className="settings-label">
-        Chemin Réseau (SMB/NFS) (Optionnel)
-      </label>
-      <div className="field-row">
-        <input
-          id="downloadNetworkSharedPath"
-          type="text"
-          value={settings.downloadNetworkSharedPath || ''}
-          placeholder="ex: \\NAS\Downloads\NoSubVOD"
-          onChange={(e) => {
-            setSettings((prev: any) => ({ ...prev, downloadNetworkSharedPath: e.target.value }));
-            setSuccess('');
-          }}
-          className="settings-select field-grow"
-        />
-        <button
-          type="button"
-          onClick={() => selectFolder('downloadNetworkSharedPath')}
-          className="action-btn"
-        >
-          Parcourir
-        </button>
-      </div>
-      <small className="help-text">
-        Chemin d&apos;accès réseau si vous enregistrez sur un NAS. Utilisé en priorité si spécifié.
-      </small>
-    </div>
-  </div>
-);
-
-const TwitchClientWarning = ({ twitchStatus }: { twitchStatus: TwitchStatus | null }) => {
-  if (!twitchStatus || twitchStatus.clientConfigured) return null;
-
-  return (
-    <div className="twitch-warning">
-      Configuration Twitch incomplète. Configure ton application sur <strong>dev.twitch.tv</strong>{' '}
-      et renseigne <code>TWITCH_CLIENT_ID</code> et <code>TWITCH_CLIENT_SECRET</code> dans{' '}
-      <code>src-tauri/.env</code>.
-    </div>
-  );
-};
-
-const TwitchAccountSection = ({
-  twitchStatus,
-  twitchPolling,
-  twitchImporting,
-  linkTwitch,
-  unlinkTwitch,
-  importFollows,
-  setImportFollowsSetting,
-}: any) => (
-  <div className="card settings-card">
-    <h2>Compte Twitch</h2>
-    <p className="settings-description">
-      Lie ton compte Twitch pour envoyer des messages dans les lives et importer tes chaînes suivies
-      dans tes Subs NoSubVOD.
-    </p>
-
-    <TwitchClientWarning twitchStatus={twitchStatus} />
-
-    {twitchStatus?.linked ? (
-      <div>
-        <div className="twitch-user-row">
-          {twitchStatus.userAvatar && (
-            <img src={twitchStatus.userAvatar} alt="Avatar" className="twitch-avatar" />
-          )}
-          <div>
-            <div className="twitch-display-name">
-              {twitchStatus.userDisplayName || twitchStatus.userLogin}
-            </div>
-            {twitchStatus.userLogin && (
-              <div className="twitch-login">@{twitchStatus.userLogin}</div>
-            )}
-          </div>
-          <button
-            onClick={unlinkTwitch}
-            className="action-btn secondary-btn soft-outline-btn ml-auto"
-          >
-            Déconnecter
-          </button>
-        </div>
-
-        <div className="settings-subsection">
-          <div className="toggle-row mb-2">
-            <span>
-              <strong>
-                <label htmlFor="importFollowsToggle" className="mb-0">
-                  Importer les chaînes suivies
+            {settings.adblockProxyMode === 'manual' && (
+              <div className="settings-group mt-2">
+                <label htmlFor="adblockProxy" className="settings-label">
+                  Proxy Manuel
                 </label>
-              </strong>
-              <small>Ajoute auto. tes follows Twitch dans tes Subs NoSubVOD</small>
-            </span>
-            <input
-              id="importFollowsToggle"
-              type="checkbox"
-              checked={twitchStatus.importFollows ?? false}
-              onChange={(e) => setImportFollowsSetting(e.target.checked)}
-            />
-          </div>
+                <select
+                  id="adblockProxy"
+                  className="settings-select"
+                  value={settings.adblockProxy || ''}
+                  onChange={(e) => {
+                    setSettings((prev) => ({ ...prev, adblockProxy: e.target.value }));
+                    setSuccess('');
+                  }}
+                >
+                  <option value="" disabled>
+                    Sélectionnez un proxy
+                  </option>
+                  {proxies.map((p) => (
+                    <option key={p.url} value={p.url}>
+                      {p.url} ({p.country})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {activeProxy && (
+              <div className="settings-active-proxy">
+                <strong className="settings-active-proxy-title">Proxy Actif :</strong>
+                <div className="settings-active-proxy-row">
+                  <span
+                    className={`settings-active-proxy-dot${getProxyStatusClass((activeProxy as any).status)}`}
+                  />
+                  <span className="settings-active-proxy-name">{activeProxy.url}</span>
+                </div>
+                {activeProxy.ping !== undefined && (
+                  <div className="settings-active-proxy-meta">Ping: {activeProxy.ping}ms</div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  }
+);
+AdblockSection.displayName = 'AdblockSection';
+
+const DownloadsSection = React.memo(
+  ({
+    settings,
+    setSettings,
+    setSuccess,
+    selectFolder,
+  }: SectionProps & { selectFolder: (field: any) => Promise<void> }) => (
+    <div className="card settings-card">
+      <h2>Downloads (Server Backend)</h2>
+      <p className="settings-description">Où stocker les VODs téléchargées.</p>
+
+      <div className="settings-group">
+        <label htmlFor="downloadLocalPath" className="settings-label">
+          Chemin Local
+        </label>
+        <div className="field-row">
+          <input
+            id="downloadLocalPath"
+            type="text"
+            value={settings.downloadLocalPath || ''}
+            placeholder="ex: C:\Downloads\NoSubVOD"
+            onChange={(e) => {
+              setSettings((prev) => ({ ...prev, downloadLocalPath: e.target.value }));
+              setSuccess('');
+            }}
+            className="settings-select field-grow"
+          />
           <button
-            onClick={importFollows}
-            disabled={twitchImporting}
-            className="action-btn secondary-btn soft-outline-btn"
+            type="button"
+            onClick={() => selectFolder('downloadLocalPath')}
+            className="action-btn"
           >
-            {twitchImporting ? 'Importation...' : 'Importer maintenant'}
+            Parcourir
           </button>
         </div>
       </div>
-    ) : (
-      <button
-        onClick={linkTwitch}
-        disabled={twitchPolling || (twitchStatus !== null && !twitchStatus.clientConfigured)}
-        className="action-btn twitch-connect-btn"
-      >
-        {twitchPolling ? 'En attente de connexion...' : 'Lier mon compte Twitch'}
-      </button>
-    )}
-  </div>
+
+      <div className="settings-group mt-2">
+        <label htmlFor="downloadNetworkSharedPath" className="settings-label">
+          Chemin Réseau (SMB/NFS)
+        </label>
+        <div className="field-row">
+          <input
+            id="downloadNetworkSharedPath"
+            type="text"
+            value={settings.downloadNetworkSharedPath || ''}
+            placeholder="ex: \\NAS\Downloads\NoSubVOD"
+            onChange={(e) => {
+              setSettings((prev) => ({ ...prev, downloadNetworkSharedPath: e.target.value }));
+              setSuccess('');
+            }}
+            className="settings-select field-grow"
+          />
+          <button
+            type="button"
+            onClick={() => selectFolder('downloadNetworkSharedPath')}
+            className="action-btn"
+          >
+            Parcourir
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 );
+DownloadsSection.displayName = 'DownloadsSection';
 
-const TrustedDevicesSection = ({
-  devices,
-  pendingDeviceId,
-  onToggleTrusted,
-}: {
-  devices: TrustedDevice[];
-  pendingDeviceId: string | null;
-  onToggleTrusted: (deviceId: string, trusted: boolean) => Promise<void>;
-}) => {
-  const formatSeen = (value: number) => {
-    if (!value) return 'N/A';
-    return new Date(value).toLocaleString();
-  };
-
-  return (
+const TwitchAccountSection = React.memo(
+  ({
+    twitchStatus,
+    twitchPolling,
+    twitchImporting,
+    linkTwitch,
+    unlinkTwitch,
+    importFollows,
+    setImportFollowsSetting,
+  }: any) => (
     <div className="card settings-card">
-      <h2>Trusted Devices</h2>
+      <h2>Compte Twitch</h2>
       <p className="settings-description">
-        Les appareils listés ici ont déjà accédé à l&apos;app. Active &quot;Trusted&quot; pour
-        autoriser l&apos;accès sans <code>?t=...</code>.
+        Lie ton compte Twitch pour les messages et l&apos;import de Subs.
       </p>
 
-      {devices.length === 0 ? (
-        <div className="trusted-devices-empty">Aucun appareil détecté pour le moment.</div>
-      ) : (
-        <div className="trusted-devices-list">
-          {devices.map((device) => (
-            <div key={device.deviceId} className="trusted-device-item">
-              <div className="trusted-device-header">
-                <div className="trusted-device-id">{device.deviceId}</div>
-                <label className="trusted-device-toggle">
-                  <span className="trusted-device-toggle-label">Trusted</span>
-                  <input
-                    type="checkbox"
-                    checked={device.trusted}
-                    disabled={pendingDeviceId === device.deviceId}
-                    onChange={(e) => onToggleTrusted(device.deviceId, e.target.checked)}
-                  />
-                </label>
+      {!twitchStatus?.clientConfigured && (
+        <div className="twitch-warning">Configuration Twitch incomplète (.env).</div>
+      )}
+
+      {twitchStatus?.linked ? (
+        <div>
+          <div className="twitch-user-row">
+            {twitchStatus.userAvatar && (
+              <img src={twitchStatus.userAvatar} alt="Avatar" className="twitch-avatar" />
+            )}
+            <div>
+              <div className="twitch-display-name">
+                {twitchStatus.userDisplayName || twitchStatus.userLogin}
               </div>
-              <div className="trusted-device-meta">
-                Dernier accès: {formatSeen(device.lastSeenAt)}
-              </div>
-              <div className="trusted-device-meta">
-                Première visite: {formatSeen(device.firstSeenAt)}
-              </div>
-              {device.lastIp && <div className="trusted-device-meta">IP: {device.lastIp}</div>}
-              {device.userAgent && (
-                <div className="trusted-device-meta ua">UA: {device.userAgent}</div>
+              {twitchStatus.userLogin && (
+                <div className="twitch-login">@{twitchStatus.userLogin}</div>
               )}
             </div>
-          ))}
+            <button
+              onClick={unlinkTwitch}
+              className="action-btn secondary-btn soft-outline-btn ml-auto"
+            >
+              Déconnecter
+            </button>
+          </div>
+
+          <div className="settings-subsection">
+            <div className="toggle-row mb-2">
+              <span>
+                <strong>
+                  <label htmlFor="importFollowsToggle" className="mb-0">
+                    Importer les chaînes suivies
+                  </label>
+                </strong>
+                <small>Ajoute auto. tes follows Twitch dans tes Subs NoSubVOD</small>
+              </span>
+              <input
+                id="importFollowsToggle"
+                type="checkbox"
+                checked={twitchStatus.importFollows ?? false}
+                onChange={(e) => setImportFollowsSetting(e.target.checked)}
+              />
+            </div>
+            <button
+              onClick={importFollows}
+              disabled={twitchImporting}
+              className="action-btn secondary-btn soft-outline-btn"
+            >
+              {twitchImporting ? 'Importation...' : 'Importer maintenant'}
+            </button>
+          </div>
         </div>
+      ) : (
+        <button
+          onClick={linkTwitch}
+          disabled={twitchPolling || (twitchStatus !== null && !twitchStatus.clientConfigured)}
+          className="action-btn twitch-connect-btn"
+        >
+          {twitchPolling ? 'En attente...' : 'Lier mon compte Twitch'}
+        </button>
       )}
     </div>
-  );
-};
+  )
+);
+TwitchAccountSection.displayName = 'TwitchAccountSection';
+
+const TrustedDevicesSection = React.memo(({ devices, pendingDeviceId, onToggleTrusted }: any) => (
+  <div className="card settings-card">
+    <h2>Trusted Devices</h2>
+    <p className="settings-description">Gérez l&apos;accès sans token pour vos appareils.</p>
+
+    {devices.length === 0 ? (
+      <div className="trusted-devices-empty">Aucun appareil détecté.</div>
+    ) : (
+      <div className="trusted-devices-list">
+        {devices.map((device: TrustedDevice) => (
+          <div key={device.deviceId} className="trusted-device-item">
+            <div className="trusted-device-header">
+              <div className="trusted-device-id">{device.deviceId}</div>
+              <label className="trusted-device-toggle">
+                <span className="trusted-device-toggle-label">Trusted</span>
+                <input
+                  type="checkbox"
+                  checked={device.trusted}
+                  disabled={pendingDeviceId === device.deviceId}
+                  onChange={(e) => onToggleTrusted(device.deviceId, e.target.checked)}
+                />
+              </label>
+            </div>
+            <div className="trusted-device-meta">
+              Dernier accès: {new Date(device.lastSeenAt).toLocaleString()}
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+));
+TrustedDevicesSection.displayName = 'TrustedDevicesSection';
+
+const UpdaterSection = React.memo(({ settings, setSettings, setSuccess }: SectionProps) => (
+  <div className="card settings-card">
+    <h2>Mises à jour</h2>
+    <p className="settings-description">Contrôlez la façon dont NoSubVOD se met à jour.</p>
+    <div className="toggle-row">
+      <span>
+        <strong>
+          <label htmlFor="autoUpdateToggle" className="mb-0">
+            Mise à jour automatique
+          </label>
+        </strong>
+        <small>Vérifier, télécharger et installer automatiquement les nouvelles versions</small>
+      </span>
+      <input
+        id="autoUpdateToggle"
+        type="checkbox"
+        checked={settings.autoUpdate || false}
+        onChange={(e) => {
+          setSettings((prev) => ({ ...prev, autoUpdate: e.target.checked }));
+          setSuccess('');
+        }}
+      />
+    </div>
+  </div>
+));
+UpdaterSection.displayName = 'UpdaterSection';
 
 export default function Settings() {
   const [settings, setSettings] = useState<ExperienceSettings>(defaultSettings);
@@ -450,107 +523,60 @@ export default function Settings() {
   const [trustedDevices, setTrustedDevices] = useState<TrustedDevice[]>([]);
   const [trustedDevicePendingId, setTrustedDevicePendingId] = useState<string | null>(null);
 
-  const fetchAdblockStatus = useCallback(async () => {
+  const fetchSettingsData = useCallback(async () => {
     try {
-      const resp = await fetch('/api/adblock/status');
-      if (resp.ok) {
-        const data = await resp.json();
-        setActiveProxy(data);
-      }
-    } catch (e) {
-      console.error('Failed to fetch adblock status:', e);
-    }
-  }, []);
-
-  const fetchProxies = useCallback(async () => {
-    try {
-      const resp = await fetch('/api/adblock/proxies');
-      if (resp.ok) {
-        const data = await resp.json();
-        setProxies(data);
-      }
-    } catch (e) {
-      console.error('Failed to fetch proxies:', e);
-    }
-  }, []);
-
-  const fetchSettings = useCallback(async () => {
-    try {
-      const resp = await fetch('/api/settings');
-      if (!resp.ok) throw new Error('Failed to load settings');
-      const data = await resp.json();
-      setSettings({
-        ...defaultSettings,
-        ...data,
-      });
-      fetchAdblockStatus();
-      fetchProxies();
+      const [sets, ads, pxs, tw, devs] = await Promise.all([
+        fetch('/api/settings').then((r) => (r.ok ? r.json() : defaultSettings)),
+        fetch('/api/adblock/status').then((r) => (r.ok ? r.json() : null)),
+        fetch('/api/adblock/proxies').then((r) => (r.ok ? r.json() : [])),
+        fetch('/api/auth/twitch/status').then((r) => (r.ok ? r.json() : null)),
+        fetch('/api/trusted-devices').then((r) => (r.ok ? r.json() : [])),
+      ]);
+      setSettings({ ...defaultSettings, ...sets });
+      setActiveProxy(ads);
+      setProxies(pxs);
+      setTwitchStatus(tw);
+      setTrustedDevices(devs);
     } catch (e: any) {
       setError(e.message);
     } finally {
       setLoading(false);
     }
-  }, [fetchAdblockStatus, fetchProxies]);
-
-  const fetchTwitchStatus = useCallback(async () => {
-    try {
-      const res = await fetch('/api/auth/twitch/status');
-      if (res.ok) setTwitchStatus(await res.json());
-    } catch (e) {
-      console.error('Failed to fetch twitch status', e);
-    }
-  }, []);
-
-  const fetchTrustedDevices = useCallback(async () => {
-    try {
-      const res = await fetch('/api/trusted-devices');
-      if (!res.ok) return;
-      const data = (await res.json()) as TrustedDevice[];
-      setTrustedDevices(data);
-    } catch (e) {
-      console.error('Failed to fetch trusted devices', e);
-    }
   }, []);
 
   useEffect(() => {
-    fetchSettings();
-    fetchTwitchStatus();
-    fetchTrustedDevices();
-    const interval = setInterval(() => {
-      fetchAdblockStatus();
-      fetchProxies();
-    }, 5000);
+    void fetchSettingsData();
+    const interval = setInterval(async () => {
+      const [ads, pxs] = await Promise.all([
+        fetch('/api/adblock/status').then((r) => (r.ok ? r.json() : null)),
+        fetch('/api/adblock/proxies').then((r) => (r.ok ? r.json() : [])),
+      ]);
+      setActiveProxy(ads);
+      setProxies(pxs);
+    }, 10000);
     return () => clearInterval(interval);
-  }, [fetchSettings, fetchAdblockStatus, fetchProxies, fetchTwitchStatus, fetchTrustedDevices]);
+  }, [fetchSettingsData]);
 
-  const saveSettings = async () => {
+  const saveSettings = useCallback(async () => {
     setSaving(true);
     setError('');
     setSuccess('');
-
     try {
       const res = await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings),
       });
-
       if (!res.ok) throw new Error('Failed to save settings');
-
-      const data = (await res.json()) as ExperienceSettings;
-      setSettings({
-        ...defaultSettings,
-        ...data,
-      });
       setSuccess('Settings saved.');
     } catch (err: any) {
       setError(err.message);
     } finally {
       setSaving(false);
     }
-  };
+  }, [settings]);
 
-  const selectFolder = async (field: 'downloadLocalPath' | 'downloadNetworkSharedPath') => {
+  const selectFolder = useCallback(async (field: keyof ExperienceSettings) => {
     try {
       const res = await fetch('/api/system/dialog/folder');
       if (!res.ok) return;
@@ -559,9 +585,9 @@ export default function Settings() {
     } catch (e) {
       console.error('Failed to open dialog', e);
     }
-  };
+  }, []);
 
-  const linkTwitch = async () => {
+  const linkTwitch = useCallback(async () => {
     try {
       const res = await fetch('/api/auth/twitch/start');
       if (!res.ok) return;
@@ -572,16 +598,14 @@ export default function Settings() {
       const poll = setInterval(async () => {
         attempts++;
         const r = await fetch('/api/auth/twitch/status');
-        if (!r.ok) {
-          if (attempts >= 60) {
-            clearInterval(poll);
-            setTwitchPolling(false);
-          }
+        if (!r.ok || attempts >= 60) {
+          clearInterval(poll);
+          setTwitchPolling(false);
           return;
         }
         const data = await r.json();
         setTwitchStatus(data);
-        if (data.linked || attempts >= 60) {
+        if (data.linked) {
           clearInterval(poll);
           setTwitchPolling(false);
         }
@@ -589,18 +613,19 @@ export default function Settings() {
     } catch (e) {
       console.error('Failed to start Twitch auth', e);
     }
-  };
+  }, []);
 
-  const unlinkTwitch = async () => {
+  const unlinkTwitch = useCallback(async () => {
     try {
       await fetch('/api/auth/twitch', { method: 'DELETE' });
-      await fetchTwitchStatus();
+      const res = await fetch('/api/auth/twitch/status');
+      if (res.ok) setTwitchStatus(await res.json());
     } catch (e) {
       console.error('Failed to unlink Twitch', e);
     }
-  };
+  }, []);
 
-  const importFollows = async () => {
+  const importFollows = useCallback(async () => {
     setTwitchImporting(true);
     try {
       await fetch('/api/auth/twitch/import-follows', { method: 'POST' });
@@ -609,22 +634,23 @@ export default function Settings() {
     } finally {
       setTwitchImporting(false);
     }
-  };
+  }, []);
 
-  const setImportFollowsSetting = async (value: boolean) => {
+  const setImportFollowsSetting = useCallback(async (value: boolean) => {
     try {
       await fetch('/api/auth/twitch/import-follows-setting', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: value }),
       });
-      await fetchTwitchStatus();
+      const res = await fetch('/api/auth/twitch/status');
+      if (res.ok) setTwitchStatus(await res.json());
     } catch (e) {
       console.error('Failed to update import follows setting', e);
     }
-  };
+  }, []);
 
-  const toggleTrustedDevice = async (deviceId: string, trusted: boolean) => {
+  const onToggleTrusted = useCallback(async (deviceId: string, trusted: boolean) => {
     setTrustedDevicePendingId(deviceId);
     try {
       const res = await fetch(`/api/trusted-devices/${encodeURIComponent(deviceId)}`, {
@@ -633,19 +659,19 @@ export default function Settings() {
         body: JSON.stringify({ trusted }),
       });
       if (!res.ok) throw new Error('Failed to update trusted device');
-      await fetchTrustedDevices();
+      const devsRes = await fetch('/api/trusted-devices');
+      if (devsRes.ok) setTrustedDevices(await devsRes.json());
       setSuccess('Trusted devices mis à jour.');
     } catch (e: any) {
       setError(e?.message || 'Failed to update trusted device');
     } finally {
       setTrustedDevicePendingId(null);
     }
-  };
+  }, []);
 
   return (
     <>
       <TopBar mode="back" title="Settings" />
-
       <div className="container container-settings">
         <ServerExperienceSection
           settings={settings}
@@ -653,9 +679,8 @@ export default function Settings() {
           setSettings={setSettings}
           setSuccess={setSuccess}
         />
-
+        <ExtensionsSection />
         <VideoPlayerSection settings={settings} setSettings={setSettings} setSuccess={setSuccess} />
-
         <AdblockSection
           settings={settings}
           setSettings={setSettings}
@@ -663,14 +688,12 @@ export default function Settings() {
           proxies={proxies}
           activeProxy={activeProxy}
         />
-
         <DownloadsSection
           settings={settings}
           setSettings={setSettings}
           setSuccess={setSuccess}
           selectFolder={selectFolder}
         />
-
         <TwitchAccountSection
           twitchStatus={twitchStatus}
           twitchPolling={twitchPolling}
@@ -680,17 +703,15 @@ export default function Settings() {
           importFollows={importFollows}
           setImportFollowsSetting={setImportFollowsSetting}
         />
-
         <TrustedDevicesSection
           devices={trustedDevices}
           pendingDeviceId={trustedDevicePendingId}
-          onToggleTrusted={toggleTrustedDevice}
+          onToggleTrusted={onToggleTrusted}
         />
-
+        <UpdaterSection settings={settings} setSettings={setSettings} setSuccess={setSuccess} />
         <div className="card settings-card settings-footer-card">
           {error && <div className="error-text">{error}</div>}
           {success && <div className="success-text">{success}</div>}
-
           <div className="btn-row">
             <button className="action-btn" onClick={saveSettings} disabled={loading || saving}>
               {saving ? 'Saving...' : 'Save Settings'}
