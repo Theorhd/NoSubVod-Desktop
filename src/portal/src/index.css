@@ -1522,9 +1522,18 @@ select:focus {
   margin-bottom: 16px;
 }
 
-.status-granted { background: rgba(49, 196, 141, 0.2); color: var(--success); }
-.status-denied { background: rgba(255, 107, 135, 0.2); color: var(--danger); }
-.status-requesting { background: rgba(143, 87, 255, 0.2); color: var(--primary); }
+.status-granted {
+  background: rgba(49, 196, 141, 0.2);
+  color: var(--success);
+}
+.status-denied {
+  background: rgba(255, 107, 135, 0.2);
+  color: var(--danger);
+}
+.status-requesting {
+  background: rgba(143, 87, 255, 0.2);
+  color: var(--primary);
+}
 
 .qr-reader-container {
   width: 100%;
@@ -1555,10 +1564,34 @@ select:focus {
   filter: drop-shadow(0 0 8px var(--primary-glow));
 }
 
-.top-left { top: 0; left: 0; border-right: 0; border-bottom: 0; border-radius: 4px 0 0 0; }
-.top-right { top: 0; right: 0; border-left: 0; border-bottom: 0; border-radius: 0 4px 0 0; }
-.bottom-left { bottom: 0; left: 0; border-right: 0; border-top: 0; border-radius: 0 0 0 4px; }
-.bottom-right { bottom: 0; right: 0; border-left: 0; border-top: 0; border-radius: 0 0 4px 0; }
+.top-left {
+  top: 0;
+  left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 4px 0 0 0;
+}
+.top-right {
+  top: 0;
+  right: 0;
+  border-left: 0;
+  border-bottom: 0;
+  border-radius: 0 4px 0 0;
+}
+.bottom-left {
+  bottom: 0;
+  left: 0;
+  border-right: 0;
+  border-top: 0;
+  border-radius: 0 0 0 4px;
+}
+.bottom-right {
+  bottom: 0;
+  right: 0;
+  border-left: 0;
+  border-top: 0;
+  border-radius: 0 0 4px 0;
+}
 
 .scan-hint {
   margin-top: 24px;
@@ -1780,7 +1813,9 @@ select:focus {
   scrollbar-width: none;
 }
 
-.live-top-categories::-webkit-scrollbar { display: none; }
+.live-top-categories::-webkit-scrollbar {
+  display: none;
+}
 
 .live-cats-label {
   font-size: 0.85rem;
@@ -1975,7 +2010,7 @@ button {
   .top-bar {
     padding: 10px 12px;
   }
-  
+
   .container {
     width: calc(100% - 24px);
   }
@@ -1983,11 +2018,11 @@ button {
   .live-search-form > * {
     width: 100%;
   }
-  
+
   .history-item-main {
     grid-template-columns: 1fr;
   }
-  
+
   .history-item-main img {
     min-height: 160px;
   }
