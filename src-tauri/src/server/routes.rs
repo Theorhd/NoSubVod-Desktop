@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 #[cfg(debug_assertions)]
 use axum::response::Redirect;
 use axum::{
@@ -22,8 +20,6 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
 use super::{
-    auth::OAuthStateStore,
-    download::DownloadManager,
     download_paths::{
         build_master_m3u8_url, build_output_file_base_path, build_output_file_path,
         resolve_download_output_dir,
@@ -34,11 +30,9 @@ use super::{
         SearchCategoryQuery, SearchQuery, SettingsPatch, TrustedDevicePatch, VariantProxyQuery,
     },
     error::{AppError, AppResult},
-    history::HistoryStore,
     middleware::{auth_middleware, security_headers_middleware},
-    screenshare::ScreenShareService,
     screenshare::StartScreenShareRequest,
-    twitch::TwitchService,
+    state::ApiState,
     types::{SubEntry, WatchlistEntry},
     validation::{
         filter_hevc_variants_for_ios, is_ios_family_request, is_valid_id, is_valid_login,
@@ -46,23 +40,6 @@ use super::{
 };
 use moka::future::Cache;
 use std::time::Duration;
-
-// ── Application state shared across all routes ─────────────────────────────────
-
-#[derive(Clone)]
-pub struct ApiState {
-    pub twitch: Arc<TwitchService>,
-    pub history: Arc<HistoryStore>,
-    pub download: Arc<DownloadManager>,
-    pub screenshare: Arc<ScreenShareService>,
-    pub extensions: Arc<super::extensions::ExtensionManager>,
-    pub oauth: Arc<OAuthStateStore>,
-    /// Per-session token required for API access (prevents unauthorized LAN access).
-    pub server_token: String,
-    pub app_handle: Option<tauri::AppHandle>,
-    /// Cache for the downloads list (short TTL to avoid frequent disk scans)
-    pub download_cache: Cache<String, Vec<DownloadedFile>>,
-}
 
 async fn handle_get_extensions(State(state): State<ApiState>) -> impl IntoResponse {
     Json(state.extensions.list().await)
@@ -1287,20 +1264,29 @@ mod tests {
         let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&temp_dir).unwrap();
 
-        let history = Arc::new(crate::server::history::HistoryStore::load(temp_dir).unwrap());
+        let history =
+            Arc::new(crate::server::history::HistoryStore::load(temp_dir.clone()).unwrap());
         let twitch = Arc::new(TwitchService::new());
         let download = Arc::new(DownloadManager::new());
         let screenshare = Arc::new(ScreenShareService::new());
         let oauth = Arc::new(crate::server::auth::OAuthStateStore::new());
+        let extensions = Arc::new(crate::server::extensions::ExtensionManager::new(temp_dir));
+
+        let download_cache = moka::future::Cache::builder()
+            .time_to_live(std::time::Duration::from_secs(5))
+            .max_capacity(1)
+            .build();
 
         ApiState {
             twitch,
             history,
             download,
             screenshare,
+            extensions,
             oauth,
             server_token: "test_token".to_string(),
             app_handle: None,
+            download_cache,
         }
     }
 

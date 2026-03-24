@@ -7,7 +7,7 @@ use axum::{
     Json,
 };
 
-use super::routes::ApiState;
+use super::state::ApiState;
 
 /// Validates requests carry a valid server token via the `X-NSV-Token` header
 /// or `t` query parameter. Rejects unauthorized requests with 401.

@@ -10,6 +10,7 @@ pub mod http_utils;
 pub mod middleware;
 pub mod routes;
 pub mod screenshare;
+pub mod state;
 pub mod twitch;
 pub mod types;
 pub mod url_utils;
@@ -37,8 +38,9 @@ use uuid::Uuid;
 use download::DownloadManager;
 use extensions::ExtensionManager;
 use history::HistoryStore;
-use routes::{build_router, ApiState};
+use routes::build_router;
 use screenshare::ScreenShareService;
+use state::ApiState;
 use twitch::TwitchService;
 use types::ServerInfo;
 

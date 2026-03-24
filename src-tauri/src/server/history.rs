@@ -607,3 +607,73 @@ impl HistoryStore {
         Ok(updated)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_token_encryption_roundtrip() {
+        let dir = tempdir().unwrap();
+        let key = derive_key(dir.path());
+        let token = "my_secret_twitch_token_123";
+
+        let encrypted = encrypt_token(token, &key).expect("Encryption failed");
+        assert_ne!(token, encrypted);
+
+        let decrypted = decrypt_token(&encrypted, &key).expect("Decryption failed");
+        assert_eq!(token, decrypted);
+    }
+
+    #[test]
+    fn test_token_decryption_failure() {
+        let dir = tempdir().unwrap();
+        let key = derive_key(dir.path());
+        let wrong_key = derive_key(Path::new("somewhere_else"));
+        let token = "secret";
+
+        let encrypted = encrypt_token(token, &key).unwrap();
+        let decrypted = decrypt_token(&encrypted, &wrong_key);
+        assert!(decrypted.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_history_store_basic_ops() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::load(dir.path().to_path_buf()).unwrap();
+
+        // Test history update
+        store.update_history("vod123", 10.5, 3600.0).await.unwrap();
+        let history = store.get_history_by_vod_id("vod123").await.unwrap();
+        assert_eq!(history.timecode, 10.5);
+        assert_eq!(history.duration, 3600.0);
+
+        // Test watchlist
+        let entry = WatchlistEntry {
+            vod_id: "vod456".to_string(),
+            title: "Test VOD".to_string(),
+            preview_thumbnail_url: "http://example.com/thumb.jpg".to_string(),
+            length_seconds: 1200,
+            added_at: 0,
+        };
+        store.add_to_watchlist(entry).await.unwrap();
+        let watchlist = store.get_watchlist().await;
+        assert_eq!(watchlist.len(), 1);
+        assert_eq!(watchlist[0].vod_id, "vod456");
+
+        store.remove_from_watchlist("vod456").await.unwrap();
+        assert_eq!(store.get_watchlist().await.len(), 0);
+
+        // Test subs
+        let sub = SubEntry {
+            login: "testuser".to_string(),
+            display_name: "TestUser".to_string(),
+            profile_image_url: "http://example.com/avatar.png".to_string(),
+        };
+        store.add_sub(sub).await.unwrap();
+        let subs = store.get_subs().await;
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].login, "testuser");
+    }
+}

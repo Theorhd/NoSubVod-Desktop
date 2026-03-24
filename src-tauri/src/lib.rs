@@ -1,8 +1,27 @@
 #[cfg(not(test))]
 mod commands;
-
 #[cfg(not(test))]
 pub mod server;
+
+#[cfg(test)]
+pub mod server {
+    pub const SERVER_PORT: u16 = 23455;
+    pub mod auth;
+    pub mod chat;
+    pub mod download;
+    pub mod download_paths;
+    pub mod dto;
+    pub mod error;
+    pub mod extensions;
+    pub mod history;
+    pub mod http_utils;
+    pub mod screenshare;
+    pub mod state;
+    pub mod twitch;
+    pub mod types;
+    pub mod url_utils;
+    pub mod validation;
+}
 
 #[cfg(not(test))]
 use std::sync::Arc;
@@ -20,13 +39,13 @@ use server::AppState;
 
 #[cfg(not(test))]
 fn init_tracing() {
-    tracing_subscriber::registry()
+    let _ = tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "nosubvod_desktop_lib=debug,tower_http=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer())
-        .init();
+        .try_init();
 }
 
 #[cfg(not(test))]
@@ -133,9 +152,8 @@ pub fn run() {
 pub fn run() {}
 
 #[cfg(test)]
-pub mod server {
-    pub mod download_paths;
-    pub mod error;
-    pub mod http_utils;
-    pub mod url_utils;
+#[ctor::ctor]
+fn init_tests() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let _ = rustls::crypto::ring::default_provider().install_default();
 }
