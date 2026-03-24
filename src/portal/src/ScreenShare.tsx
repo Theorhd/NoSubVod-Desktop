@@ -10,6 +10,12 @@ import {
   normalizedPointerPosition,
 } from '../../shared/utils/player';
 
+type JoinRole = 'host' | 'viewer';
+
+const rtcConfig: RTCConfiguration = {
+  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+};
+
 export default function ScreenShare() {
   const navigate = useNavigate();
 
@@ -394,7 +400,8 @@ export default function ScreenShare() {
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
-          systemAudio: 'include' as any,
+          // @ts-expect-error - systemAudio is not in standard DOM typings yet
+          systemAudio: 'include',
         },
       });
 
@@ -471,6 +478,7 @@ export default function ScreenShare() {
 
     const connect = () => {
       if (disposed) return;
+      const authQuery = getAuthQuery();
       const authQueryString = authQuery ? `?${authQuery}` : '';
       const wsUrl = `${protocol}://${host}/api/screenshare/ws${authQueryString}`;
       const ws = new WebSocket(wsUrl);
@@ -552,7 +560,7 @@ export default function ScreenShare() {
       const now = performance.now();
       if (now - lastPointerMoveRef.current < 8) return;
       lastPointerMoveRef.current = now;
-      const pos = normalizedPointerPosition(event);
+      const pos = normalizedPointerPosition(event, viewerSurfaceRef.current);
       sendRemoteInput({ kind: 'pointer', action: 'move', x: pos.x, y: pos.y });
     },
     [sendRemoteInput]
@@ -560,7 +568,7 @@ export default function ScreenShare() {
 
   const handleViewerMouseDown = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
-      const pos = normalizedPointerPosition(event);
+      const pos = normalizedPointerPosition(event, viewerSurfaceRef.current);
       sendRemoteInput({
         kind: 'pointer',
         action: 'down',
@@ -574,7 +582,7 @@ export default function ScreenShare() {
 
   const handleViewerMouseUp = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
-      const pos = normalizedPointerPosition(event);
+      const pos = normalizedPointerPosition(event, viewerSurfaceRef.current);
       sendRemoteInput({
         kind: 'pointer',
         action: 'up',
