@@ -1,64 +1,26 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ScreenShareSessionState } from '../../shared/types';
+import { ScreenShareSessionState, WsMessage, RemoteInputPayload } from '../../shared/types';
 import { TopBar } from './components/TopBar';
-
-const defaultState: ScreenShareSessionState = {
-  active: false,
-  sessionId: null,
-  sourceType: null,
-  sourceLabel: null,
-  startedAt: null,
-  interactive: true,
-  maxViewers: 5,
-  currentViewers: 0,
-  streamReady: false,
-  streamMessage: null,
-};
-
-function formatStartedAt(startedAt: number | null): string {
-  if (!startedAt) return 'Not started';
-  const date = new Date(startedAt);
-  return date.toLocaleString();
-}
-
-type JoinRole = 'host' | 'viewer';
-
-type SignalPayload = {
-  sdp?: RTCSessionDescriptionInit;
-  candidate?: RTCIceCandidateInit;
-};
-
-type RemoteInputPayload = {
-  kind: 'pointer' | 'keyboard';
-  action: 'move' | 'down' | 'up' | 'wheel';
-  x?: number;
-  y?: number;
-  button?: 'left' | 'middle' | 'right';
-  key?: string;
-  deltaX?: number;
-  deltaY?: number;
-};
-
-type WsMessage = {
-  type?: string;
-  state?: ScreenShareSessionState;
-  message?: string;
-  clientId?: string;
-  hostClientId?: string | null;
-  role?: string;
-  from?: string;
-  target?: string;
-  payload?: SignalPayload;
-};
-
-const rtcConfig: RTCConfiguration = {
-  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-};
+import { useScreenShareState } from '../../shared/hooks/useScreenShareState';
+import { useInterval } from '../../shared/hooks/useInterval';
+import {
+  formatStartedAt,
+  pointerButtonFromMouseEvent,
+  normalizedPointerPosition,
+} from '../../shared/utils/player';
 
 export default function ScreenShare() {
   const navigate = useNavigate();
-  const [state, setState] = useState<ScreenShareSessionState>(defaultState);
+
+  const fetchScreenShareState = useCallback(async () => {
+    const response = await fetch('/api/screenshare/state');
+    if (!response.ok) throw new Error('Failed to fetch state');
+    return (await response.json()) as ScreenShareSessionState;
+  }, []);
+
+  const { state, setState } = useScreenShareState(fetchScreenShareState, 3000);
+
   const [isStopping, setIsStopping] = useState(false);
   const [signalStatus, setSignalStatus] = useState('Disconnected');
   const [rtcStatus, setRtcStatus] = useState('Idle');
@@ -81,81 +43,48 @@ export default function ScreenShare() {
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const viewerSurfaceRef = useRef<HTMLButtonElement | null>(null);
   const lastPointerMoveRef = useRef(0);
-  const applyWsMessageRef = useRef<(message: WsMessage) => void>(() => {});
-  const stopLocalStreamRef = useRef<() => void>(() => {});
 
-  const getAuthQuery = () => {
+  const getAuthQuery = useCallback(() => {
     const token =
       globalThis.sessionStorage.getItem('nsv_token') ||
       globalThis.localStorage.getItem('nsv_token');
     const deviceId = globalThis.localStorage.getItem('nsv_device_id');
     const params = new URLSearchParams();
-    if (token) {
-      params.set('t', token);
-    }
-    if (deviceId) {
-      params.set('d', deviceId);
-    }
+    if (token) params.set('t', token);
+    if (deviceId) params.set('d', deviceId);
     return params.toString();
-  };
+  }, []);
 
-  const sendWs = (payload: object) => {
+  const sendWs = useCallback((payload: object) => {
     const ws = wsRef.current;
-    if (ws?.readyState !== WebSocket.OPEN) {
-      return;
-    }
+    if (ws?.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify(payload));
-  };
+  }, []);
 
-  const sendRemoteInput = (payload: RemoteInputPayload) => {
-    if (isHostMode || !hasRemoteStream || !state.interactive) {
-      return;
-    }
+  const sendRemoteInput = useCallback(
+    (payload: RemoteInputPayload) => {
+      if (isHostMode || !hasRemoteStream || !state.interactive) return;
+      sendWs({ type: 'input', payload });
+    },
+    [hasRemoteStream, isHostMode, sendWs, state.interactive]
+  );
 
-    sendWs({
-      type: 'input',
-      payload,
-    });
-  };
-
-  const pointerButtonFromMouseEvent = (button: number): 'left' | 'middle' | 'right' => {
-    if (button === 1) return 'middle';
-    if (button === 2) return 'right';
-    return 'left';
-  };
-
-  const normalizedPointerPosition = (event: React.MouseEvent<HTMLButtonElement>) => {
-    const surface = viewerSurfaceRef.current;
-    if (!surface) {
-      return { x: 0.5, y: 0.5 };
-    }
-
-    const rect = surface.getBoundingClientRect();
-    const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)));
-    const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / Math.max(1, rect.height)));
-
-    return {
-      x: Number.isFinite(x) ? x : 0.5,
-      y: Number.isFinite(y) ? y : 0.5,
-    };
-  };
-
-  const cleanupViewerPeer = () => {
+  const cleanupViewerPeer = useCallback(() => {
     const peer = viewerPeerRef.current;
     if (peer) {
       peer.close();
       viewerPeerRef.current = null;
     }
-  };
+  }, []);
 
-  const cleanupHostPeer = (viewerId: string) => {
+  const cleanupHostPeer = useCallback((viewerId: string) => {
     const peer = hostPeersRef.current.get(viewerId);
     if (!peer) return;
     peer.close();
     hostPeersRef.current.delete(viewerId);
-  };
+  }, []);
 
-  const stopLocalStream = () => {
+  const stopLocalStream = useCallback(() => {
     const stream = localStreamRef.current;
     if (stream) {
       stream.getTracks().forEach((track) => track.stop());
@@ -168,250 +97,226 @@ export default function ScreenShare() {
     for (const viewerId of hostPeersRef.current.keys()) {
       cleanupHostPeer(viewerId);
     }
-  };
+  }, [cleanupHostPeer]);
 
-  stopLocalStreamRef.current = stopLocalStream;
+  const ensureViewerPeer = useCallback(
+    async (hostId: string): Promise<RTCPeerConnection> => {
+      const existing = viewerPeerRef.current;
+      if (existing) return existing;
 
-  const ensureViewerPeer = async (hostId: string): Promise<RTCPeerConnection> => {
-    const existing = viewerPeerRef.current;
-    if (existing) return existing;
+      const peer = new RTCPeerConnection(rtcConfig);
+      viewerPeerRef.current = peer;
 
-    const peer = new RTCPeerConnection(rtcConfig);
-    viewerPeerRef.current = peer;
+      peer.ontrack = (event) => {
+        const [stream] = event.streams;
+        if (!stream) return;
 
-    peer.ontrack = (event) => {
-      const [stream] = event.streams;
-      if (!stream) return;
+        setHasRemoteStream(true);
+        setStreamError('');
 
-      setHasRemoteStream(true);
-      setStreamError('');
+        let retries = 0;
+        const attachStream = () => {
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = stream;
+          } else if (retries < 20) {
+            retries++;
+            setTimeout(attachStream, 50);
+          }
+        };
+        attachStream();
+      };
 
-      // Mount may not have happened yet, so we wait for remoteVideoRef
-      let retries = 0;
-      const attachStream = () => {
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = stream;
-        } else if (retries < 20) {
-          retries++;
-          setTimeout(attachStream, 50);
+      peer.onconnectionstatechange = () => {
+        if (peer.connectionState === 'connected') {
+          setRtcStatus('WebRTC live (viewer)');
+        } else if (peer.connectionState === 'failed') {
+          setStreamError('WebRTC connection failed');
         }
       };
-      attachStream();
-    };
 
-    peer.onconnectionstatechange = () => {
-      console.log('Viewer connection state:', peer.connectionState);
-      if (peer.connectionState === 'connected') {
-        setRtcStatus('WebRTC live (viewer)');
-      } else if (peer.connectionState === 'failed') {
-        setStreamError('WebRTC connection failed');
+      peer.onicecandidate = (event) => {
+        if (!event.candidate) return;
+        sendWs({
+          type: 'signal',
+          target: hostId,
+          payload: { candidate: event.candidate.toJSON() },
+        });
+      };
+
+      return peer;
+    },
+    [sendWs]
+  );
+
+  const createHostPeer = useCallback(
+    async (viewerId: string): Promise<RTCPeerConnection | null> => {
+      const stream = localStreamRef.current;
+      if (!stream) {
+        waitingViewerIdsRef.current.add(viewerId);
+        return null;
       }
-    };
 
-    peer.onicecandidateerror = (event: Event) => {
-      console.error('Viewer ICE error:', event);
-    };
+      const existing = hostPeersRef.current.get(viewerId);
+      if (existing) return existing;
 
-    peer.onicecandidate = (event) => {
-      if (!event.candidate) return;
-      sendWs({
-        type: 'signal',
-        target: hostId,
-        payload: { candidate: event.candidate.toJSON() },
-      });
-    };
+      const peer = new RTCPeerConnection(rtcConfig);
+      hostPeersRef.current.set(viewerId, peer);
 
-    return peer;
-  };
-
-  const createHostPeer = async (viewerId: string): Promise<RTCPeerConnection | null> => {
-    const stream = localStreamRef.current;
-    if (!stream) {
-      waitingViewerIdsRef.current.add(viewerId);
-      return null;
-    }
-
-    const existing = hostPeersRef.current.get(viewerId);
-    if (existing) return existing;
-
-    const peer = new RTCPeerConnection(rtcConfig);
-    hostPeersRef.current.set(viewerId, peer);
-
-    for (const track of stream.getTracks()) {
-      peer.addTrack(track, stream);
-    }
-
-    peer.onicecandidate = (event) => {
-      if (!event.candidate) return;
-      sendWs({
-        type: 'signal',
-        target: viewerId,
-        payload: { candidate: event.candidate.toJSON() },
-      });
-    };
-
-    peer.onconnectionstatechange = () => {
-      if (peer.connectionState === 'failed' || peer.connectionState === 'closed') {
-        cleanupHostPeer(viewerId);
+      for (const track of stream.getTracks()) {
+        peer.addTrack(track, stream);
       }
-    };
 
-    const offer = await peer.createOffer({
-      offerToReceiveAudio: false,
-      offerToReceiveVideo: false,
-    });
-    await peer.setLocalDescription(offer);
-    sendWs({
-      type: 'signal',
-      target: viewerId,
-      payload: { sdp: offer },
-    });
+      peer.onicecandidate = (event) => {
+        if (!event.candidate) return;
+        sendWs({
+          type: 'signal',
+          target: viewerId,
+          payload: { candidate: event.candidate.toJSON() },
+        });
+      };
 
-    return peer;
-  };
-
-  const handleSignalSdp = async (from: string, sdp: RTCSessionDescriptionInit) => {
-    if (roleRef.current === 'host') {
-      const peer = hostPeersRef.current.get(from);
-      if (!peer) return;
-      if (sdp.type === 'answer') {
-        try {
-          await peer.setRemoteDescription(new RTCSessionDescription(sdp));
-          setRtcStatus('WebRTC live (host)');
-        } catch (error: any) {
-          console.error('Failed to set remote description on host:', error);
-          setStreamError(`Host WebRTC error: ${error.message}`);
+      peer.onconnectionstatechange = () => {
+        if (peer.connectionState === 'failed' || peer.connectionState === 'closed') {
+          cleanupHostPeer(viewerId);
         }
-      }
-      return;
-    }
+      };
 
-    const peer = await ensureViewerPeer(from);
-    if (sdp.type !== 'offer') return;
-
-    try {
-      await peer.setRemoteDescription(new RTCSessionDescription(sdp));
-      const answer = await peer.createAnswer();
-      await peer.setLocalDescription(answer);
-      sendWs({
-        type: 'signal',
-        target: from,
-        payload: { sdp: answer },
+      const offer = await peer.createOffer({
+        offerToReceiveAudio: false,
+        offerToReceiveVideo: false,
       });
-      setRtcStatus('WebRTC negotiating (viewer)');
-    } catch (error: any) {
-      console.error('Failed to handle offer on viewer:', error);
-      setStreamError(`Viewer WebRTC error: ${error.message}`);
-    }
-  };
+      await peer.setLocalDescription(offer);
+      sendWs({ type: 'signal', target: viewerId, payload: { sdp: offer } });
 
-  const handleSignalCandidate = async (from: string, candidate: RTCIceCandidateInit) => {
-    if (roleRef.current === 'host') {
-      const peer = hostPeersRef.current.get(from);
-      if (peer) {
-        await peer.addIceCandidate(new RTCIceCandidate(candidate));
-      }
-      return;
-    }
+      return peer;
+    },
+    [cleanupHostPeer, sendWs]
+  );
 
-    const hostId = hostClientIdRef.current;
-    if (!hostId || from !== hostId) return;
-    const peer = await ensureViewerPeer(from);
-    await peer.addIceCandidate(new RTCIceCandidate(candidate));
-  };
-
-  const handleSignalMessage = async (message: WsMessage) => {
-    const target = message.target;
-    const me = clientIdRef.current;
-    if (target && me && target !== me) {
-      console.warn('Signal routed to wrong target', { target, me });
-      return;
-    }
-
-    const from = message.from;
-    const payload = message.payload;
-    if (!from || !payload) {
-      console.warn('Incomplete signal message dropped', message);
-      return;
-    }
-
-    if (payload.sdp) {
-      await handleSignalSdp(from, payload.sdp);
-      return;
-    }
-
-    if (payload.candidate) {
-      await handleSignalCandidate(from, payload.candidate);
-    }
-  };
-
-  const handleWelcomeMessage = (message: WsMessage) => {
-    if (message.state) {
-      setState(message.state);
-    }
-    clientIdRef.current = message.clientId || null;
-    hostClientIdRef.current = message.hostClientId || null;
-
-    const hostIntentSession = localStorage.getItem('nsv_screenshare_host_session');
-    const shouldJoinAsHost = !!(
-      hostIntentSession &&
-      message.state?.sessionId &&
-      hostIntentSession === message.state.sessionId
-    );
-    const role: JoinRole = shouldJoinAsHost ? 'host' : 'viewer';
-    roleRef.current = role;
-    setIsHostMode(role === 'host');
-    sendWs({ type: 'join', role });
-  };
-
-  const handlePeerJoinedMessage = (message: WsMessage) => {
-    if (!message.clientId) return;
-
-    if (message.role === 'viewer') {
+  const handleSignalSdp = useCallback(
+    async (from: string, sdp: RTCSessionDescriptionInit) => {
       if (roleRef.current === 'host') {
-        createHostPeer(message.clientId);
+        const peer = hostPeersRef.current.get(from);
+        if (!peer) return;
+        if (sdp.type === 'answer') {
+          try {
+            await peer.setRemoteDescription(new RTCSessionDescription(sdp));
+            setRtcStatus('WebRTC live (host)');
+          } catch (error: any) {
+            setStreamError(`Host WebRTC error: ${error.message}`);
+          }
+        }
+        return;
       }
-      return;
-    }
 
-    if (message.role === 'host') {
-      hostClientIdRef.current = message.clientId;
-    }
-  };
+      const peer = await ensureViewerPeer(from);
+      if (sdp.type !== 'offer') return;
 
-  const handlePeerLeftMessage = (message: WsMessage) => {
-    if (!message.clientId) return;
+      try {
+        await peer.setRemoteDescription(new RTCSessionDescription(sdp));
+        const answer = await peer.createAnswer();
+        await peer.setLocalDescription(answer);
+        sendWs({ type: 'signal', target: from, payload: { sdp: answer } });
+        setRtcStatus('WebRTC negotiating (viewer)');
+      } catch (error: any) {
+        setStreamError(`Viewer WebRTC error: ${error.message}`);
+      }
+    },
+    [ensureViewerPeer, sendWs]
+  );
 
-    if (message.role === 'host') {
-      hostClientIdRef.current = null;
-      cleanupViewerPeer();
-      setHasRemoteStream(false);
-      setRtcStatus('Host disconnected');
-      return;
-    }
+  const handleSignalCandidate = useCallback(
+    async (from: string, candidate: RTCIceCandidateInit) => {
+      if (roleRef.current === 'host') {
+        const peer = hostPeersRef.current.get(from);
+        if (peer) await peer.addIceCandidate(new RTCIceCandidate(candidate));
+        return;
+      }
 
-    if (message.role === 'viewer') {
-      cleanupHostPeer(message.clientId);
-      waitingViewerIdsRef.current.delete(message.clientId);
-    }
-  };
+      const hostId = hostClientIdRef.current;
+      if (!hostId || from !== hostId) return;
+      const peer = await ensureViewerPeer(from);
+      await peer.addIceCandidate(new RTCIceCandidate(candidate));
+    },
+    [ensureViewerPeer]
+  );
 
-  const handleControlMessage = (message: WsMessage) => {
+  const handleSignalMessage = useCallback(
+    async (message: WsMessage) => {
+      const target = message.target;
+      const me = clientIdRef.current;
+      if (target && me && target !== me) return;
+
+      const from = message.from;
+      const payload = message.payload;
+      if (!from || !payload) return;
+
+      if (payload.sdp) {
+        await handleSignalSdp(from, payload.sdp);
+      } else if (payload.candidate) {
+        await handleSignalCandidate(from, payload.candidate);
+      }
+    },
+    [handleSignalCandidate, handleSignalSdp]
+  );
+
+  const handleWelcomeMessage = useCallback(
+    (message: WsMessage) => {
+      if (message.state) setState(message.state);
+      clientIdRef.current = message.clientId || null;
+      hostClientIdRef.current = message.hostClientId || null;
+
+      const hostIntentSession = localStorage.getItem('nsv_screenshare_host_session');
+      const shouldJoinAsHost = !!(
+        hostIntentSession &&
+        message.state?.sessionId &&
+        hostIntentSession === message.state.sessionId
+      );
+      const role: JoinRole = shouldJoinAsHost ? 'host' : 'viewer';
+      roleRef.current = role;
+      setIsHostMode(role === 'host');
+      sendWs({ type: 'join', role });
+    },
+    [sendWs, setState]
+  );
+
+  const handlePeerJoinedMessage = useCallback(
+    (message: WsMessage) => {
+      if (!message.clientId) return;
+      if (message.role === 'viewer') {
+        if (roleRef.current === 'host') createHostPeer(message.clientId);
+      } else if (message.role === 'host') {
+        hostClientIdRef.current = message.clientId;
+      }
+    },
+    [createHostPeer]
+  );
+
+  const handlePeerLeftMessage = useCallback(
+    (message: WsMessage) => {
+      if (!message.clientId) return;
+      if (message.role === 'host') {
+        hostClientIdRef.current = null;
+        cleanupViewerPeer();
+        setHasRemoteStream(false);
+        setRtcStatus('Host disconnected');
+      } else if (message.role === 'viewer') {
+        cleanupHostPeer(message.clientId);
+        waitingViewerIdsRef.current.delete(message.clientId);
+      }
+    },
+    [cleanupHostPeer, cleanupViewerPeer]
+  );
+
+  const handleControlMessage = useCallback((message: WsMessage) => {
     if (roleRef.current !== 'host') return;
-
     const payload = message.payload as unknown as { command: string; value?: number };
     if (!payload) return;
 
     const cmd = payload.command;
     const val = payload.value ?? 0;
 
-    console.log('[ScreenShare] Received remote control:', cmd, val);
-
-    // If we have a local video (preview), we can try to control it,
-    // but usually the host is sharing another tab/window.
-    // However, if the host is sharing THIS tab, we can control the video elements.
-    const videos = document.querySelectorAll('video');
-    videos.forEach((v) => {
+    document.querySelectorAll('video').forEach((v) => {
       try {
         switch (cmd) {
           case 'play':
@@ -430,52 +335,53 @@ export default function ScreenShare() {
             v.muted = !v.muted;
             break;
         }
-      } catch (e) {
-        console.warn('[ScreenShare] Failed to apply control to video', e);
+      } catch {
+        /* Ignore */
       }
     });
-  };
+  }, []);
 
-  const applyWsMessage = (message: WsMessage) => {
-    switch (message.type) {
-      case 'welcome':
-        handleWelcomeMessage(message);
-        return;
-      case 'session-state':
-        if (message.state) {
-          setState(message.state);
-        }
-        return;
-      case 'peer-joined':
-        handlePeerJoinedMessage(message);
-        return;
-      case 'peer-left':
-        handlePeerLeftMessage(message);
-        return;
-      case 'system':
-        if (message.message) {
-          setState((current) => ({ ...current, streamMessage: message.message ?? null }));
-        }
-        return;
-      case 'signal':
-        handleSignalMessage(message);
-        return;
-      case 'control':
-        handleControlMessage(message);
-        return;
-      case 'error':
-        if (message.message) {
-          setStreamError(message.message);
-        }
-        return;
-      default:
-        return;
-    }
-  };
+  const handleWsMessage = useCallback(
+    (message: WsMessage) => {
+      switch (message.type) {
+        case 'welcome':
+          handleWelcomeMessage(message);
+          break;
+        case 'session-state':
+          if (message.state) setState(message.state);
+          break;
+        case 'peer-joined':
+          handlePeerJoinedMessage(message);
+          break;
+        case 'peer-left':
+          handlePeerLeftMessage(message);
+          break;
+        case 'system':
+          if (message.message)
+            setState((current) => ({ ...current, streamMessage: message.message ?? null }));
+          break;
+        case 'signal':
+          handleSignalMessage(message);
+          break;
+        case 'control':
+          handleControlMessage(message);
+          break;
+        case 'error':
+          if (message.message) setStreamError(message.message);
+          break;
+      }
+    },
+    [
+      handleControlMessage,
+      handlePeerJoinedMessage,
+      handlePeerLeftMessage,
+      handleSignalMessage,
+      handleWelcomeMessage,
+      setState,
+    ]
+  );
 
-  applyWsMessageRef.current = applyWsMessage;
-
-  const startHostWebRtc = async () => {
+  const startHostWebRtc = useCallback(async () => {
     setStreamError('');
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -484,19 +390,17 @@ export default function ScreenShare() {
           height: { ideal: 1080, max: 2160 },
           frameRate: { ideal: 60, max: 60 },
         },
-        // Request audio track from display capture so viewers can hear system/tab audio.
         audio: {
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
-          // @ts-expect-error - systemAudio is not in standard DOM typings yet
-          systemAudio: 'include',
+          systemAudio: 'include' as any,
         },
       });
 
       if (stream.getAudioTracks().length === 0) {
         setStreamError(
-          'Attention : Le flux n\'a pas de son ! Il faut choisir "Ecran complet" (Entire Screen) ou "Onglet" et COCHER LA CASE "Partager l\'audio du système" !'
+          'Attention : Le flux n\'a pas de son ! Il faut choisir "Ecran complet" ou "Onglet" et COCHER LA CASE "Partager l\'audio du système" !'
         );
       }
 
@@ -504,15 +408,11 @@ export default function ScreenShare() {
       setHostStreaming(true);
       setRtcStatus('WebRTC capturing (host)');
 
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
       const viewers = Array.from(waitingViewerIdsRef.current.values());
       waitingViewerIdsRef.current.clear();
-      for (const viewerId of viewers) {
-        await createHostPeer(viewerId);
-      }
+      for (const viewerId of viewers) await createHostPeer(viewerId);
 
       const [videoTrack] = stream.getVideoTracks();
       if (videoTrack) {
@@ -525,140 +425,54 @@ export default function ScreenShare() {
       setStreamError(error?.message || 'Unable to start WebRTC capture.');
       setRtcStatus('Host capture failed');
     }
-  };
-
-  useEffect(() => {
-    let mounted = true;
-
-    const load = async () => {
-      try {
-        const response = await fetch('/api/screenshare/state');
-        if (!response.ok) return;
-        const payload = (await response.json()) as ScreenShareSessionState;
-        if (mounted) {
-          setState(payload);
-        }
-      } catch {
-        // Keep current state if endpoint is not reachable.
-      }
-    };
-
-    load();
-    const timer = globalThis.setInterval(() => {
-      load();
-    }, 3000);
-
-    return () => {
-      mounted = false;
-      globalThis.clearInterval(timer);
-    };
-  }, []);
+  }, [createHostPeer, stopLocalStream]);
 
   useEffect(() => {
     if (!state.active) {
       setSnapshotAvailable(true);
       setSnapshotUrl((previous) => {
-        if (previous) {
-          URL.revokeObjectURL(previous);
-        }
+        if (previous) URL.revokeObjectURL(previous);
         return null;
       });
       setStreamError('');
     }
   }, [state.active]);
 
-  useEffect(() => {
-    if (!state.active || state.sourceType !== 'browser') {
-      setSnapshotUrl((previous) => {
-        if (previous) {
-          URL.revokeObjectURL(previous);
-        }
-        return null;
-      });
+  const loadSnapshot = useCallback(async () => {
+    if (!state.active || state.sourceType !== 'browser' || hasRemoteStream || !snapshotAvailable)
       return;
-    }
-
-    if (hasRemoteStream || !snapshotAvailable) {
+    const authQuery = getAuthQuery();
+    const src = authQuery
+      ? `/api/screenshare/snapshot.jpg?tick=${Date.now()}&${authQuery}`
+      : `/api/screenshare/snapshot.jpg?tick=${Date.now()}`;
+    try {
+      const response = await fetch(src, { cache: 'no-store', headers: { Accept: 'image/*' } });
+      if (!response.ok) throw new Error(`snapshot-http-${response.status}`);
+      const blob = await response.blob();
+      const nextUrl = URL.createObjectURL(blob);
       setSnapshotUrl((previous) => {
-        if (previous) {
-          URL.revokeObjectURL(previous);
-        }
-        return null;
+        if (previous) URL.revokeObjectURL(previous);
+        return nextUrl;
       });
-      return;
+    } catch {
+      setSnapshotAvailable(false);
+      if (!hasRemoteStream)
+        setStreamError('Snapshot fallback unavailable. Waiting for host WebRTC stream.');
     }
+  }, [getAuthQuery, hasRemoteStream, snapshotAvailable, state.active, state.sourceType]);
 
-    let disposed = false;
-
-    const loadSnapshot = async () => {
-      const authQuery = getAuthQuery();
-      const src = authQuery
-        ? `/api/screenshare/snapshot.jpg?tick=${Date.now()}&${authQuery}`
-        : `/api/screenshare/snapshot.jpg?tick=${Date.now()}`;
-
-      try {
-        const response = await fetch(src, {
-          cache: 'no-store',
-          headers: {
-            Accept: 'image/*',
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error(`snapshot-http-${response.status}`);
-        }
-
-        const blob = await response.blob();
-        if (disposed) {
-          return;
-        }
-
-        const nextUrl = URL.createObjectURL(blob);
-        setSnapshotUrl((previous) => {
-          if (previous) {
-            URL.revokeObjectURL(previous);
-          }
-          return nextUrl;
-        });
-      } catch {
-        if (disposed) {
-          return;
-        }
-        setSnapshotAvailable(false);
-        if (!hasRemoteStream) {
-          setStreamError('Snapshot fallback unavailable. Waiting for host WebRTC stream.');
-        }
-      }
-    };
-
-    loadSnapshot();
-    const timer = globalThis.setInterval(() => {
-      loadSnapshot();
-    }, 450);
-
-    return () => {
-      disposed = true;
-      globalThis.clearInterval(timer);
-    };
-  }, [state.active, state.sourceType, hasRemoteStream, snapshotAvailable]);
+  useInterval(loadSnapshot, 450);
 
   useEffect(() => {
     const host = globalThis.location.host;
     const protocol = globalThis.location.protocol === 'https:' ? 'wss' : 'ws';
-
     let disposed = false;
-    let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
-    const hostPeers = hostPeersRef.current;
-    const waitingViewerIds = waitingViewerIdsRef.current;
+    let reconnectTimer: any;
 
     const connect = () => {
-      if (disposed) {
-        return;
-      }
-
+      if (disposed) return;
       const authQuery = getAuthQuery();
-      const wsPath = authQuery ? `/api/screenshare/ws?${authQuery}` : '/api/screenshare/ws';
-      const wsUrl = `${protocol}://${host}${wsPath}`;
+      const wsUrl = `${protocol}://${host}/api/screenshare/ws${authQuery ? `?${authQuery}` : ''}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -672,58 +486,47 @@ export default function ScreenShare() {
         setRtcStatus('Signaling disconnected');
         cleanupViewerPeer();
         setHasRemoteStream(false);
-
-        if (!disposed) {
-          reconnectTimer = globalThis.setTimeout(connect, 1500);
-        }
+        if (!disposed) reconnectTimer = setTimeout(connect, 1500);
       });
 
       ws.addEventListener('message', (event) => {
         try {
-          const message = JSON.parse(event.data) as WsMessage;
-          applyWsMessageRef.current(message);
+          handleWsMessage(JSON.parse(event.data));
         } catch {
-          // Ignore malformed realtime payloads.
+          /* Ignore */
         }
       });
     };
 
     connect();
 
-    const pingTimer = globalThis.setInterval(() => {
-      const ws = wsRef.current;
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'ping' }));
-      }
+    const pingTimer = setInterval(() => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) sendWs({ type: 'ping' });
     }, 15000);
+
+    const currentWs = wsRef.current;
+    const currentHostPeers = hostPeersRef.current;
+    const currentWaitingViewerIds = waitingViewerIdsRef.current;
 
     return () => {
       disposed = true;
-      globalThis.clearInterval(pingTimer);
-      if (reconnectTimer !== undefined) {
-        globalThis.clearTimeout(reconnectTimer);
-      }
-      const ws = wsRef.current;
-      wsRef.current = null;
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.close();
-      }
+      clearInterval(pingTimer);
+      clearTimeout(reconnectTimer);
+      if (currentWs?.readyState === WebSocket.OPEN) currentWs.close();
       cleanupViewerPeer();
-      for (const peer of hostPeers.values()) {
-        peer.close();
-      }
-      hostPeers.clear();
-      waitingViewerIds.clear();
-      stopLocalStreamRef.current();
+      currentHostPeers.forEach((p) => p.close());
+      currentHostPeers.clear();
+      currentWaitingViewerIds.clear();
+      stopLocalStream();
     };
-  }, []);
+  }, [cleanupViewerPeer, getAuthQuery, handleWsMessage, sendWs, stopLocalStream]);
 
   const statusLabel = useMemo(() => {
     if (!state.active) return 'Offline';
     return state.streamReady ? 'Live' : 'Preparing';
   }, [state.active, state.streamReady]);
 
-  const handleStop = async () => {
+  const handleStop = useCallback(async () => {
     setIsStopping(true);
     try {
       const response = await fetch('/api/screenshare/stop', { method: 'POST' });
@@ -731,133 +534,150 @@ export default function ScreenShare() {
       const payload = (await response.json()) as ScreenShareSessionState;
       setState(payload);
       const hostIntentSession = localStorage.getItem('nsv_screenshare_host_session');
-      if (hostIntentSession && hostIntentSession === state.sessionId) {
+      if (hostIntentSession === state.sessionId)
         localStorage.removeItem('nsv_screenshare_host_session');
-      }
       stopLocalStream();
       cleanupViewerPeer();
       setHasRemoteStream(false);
       setRtcStatus('Session stopped');
     } catch {
-      // Keep current state on network failure.
+      /* Ignore */
     } finally {
       setIsStopping(false);
     }
-  };
+  }, [cleanupViewerPeer, setState, state.sessionId, stopLocalStream]);
 
-  const handleViewerMouseMove = (event: React.MouseEvent<HTMLButtonElement>) => {
-    const now = performance.now();
-    if (now - lastPointerMoveRef.current < 8) {
-      return;
-    }
-    lastPointerMoveRef.current = now;
+  const handleViewerMouseMove = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      const now = performance.now();
+      if (now - lastPointerMoveRef.current < 8) return;
+      lastPointerMoveRef.current = now;
+      const pos = normalizedPointerPosition(event);
+      sendRemoteInput({ kind: 'pointer', action: 'move', x: pos.x, y: pos.y });
+    },
+    [sendRemoteInput]
+  );
 
-    const pos = normalizedPointerPosition(event);
-    sendRemoteInput({
-      kind: 'pointer',
-      action: 'move',
-      x: pos.x,
-      y: pos.y,
-    });
-  };
+  const handleViewerMouseDown = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      const pos = normalizedPointerPosition(event);
+      sendRemoteInput({
+        kind: 'pointer',
+        action: 'down',
+        button: pointerButtonFromMouseEvent(event.button),
+        x: pos.x,
+        y: pos.y,
+      });
+    },
+    [sendRemoteInput]
+  );
 
-  const handleViewerMouseDown = (event: React.MouseEvent<HTMLButtonElement>) => {
-    const pos = normalizedPointerPosition(event);
-    sendRemoteInput({
-      kind: 'pointer',
-      action: 'down',
-      button: pointerButtonFromMouseEvent(event.button),
-      x: pos.x,
-      y: pos.y,
-    });
-  };
+  const handleViewerMouseUp = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      const pos = normalizedPointerPosition(event);
+      sendRemoteInput({
+        kind: 'pointer',
+        action: 'up',
+        button: pointerButtonFromMouseEvent(event.button),
+        x: pos.x,
+        y: pos.y,
+      });
+    },
+    [sendRemoteInput]
+  );
 
-  const handleViewerMouseUp = (event: React.MouseEvent<HTMLButtonElement>) => {
-    const pos = normalizedPointerPosition(event);
-    sendRemoteInput({
-      kind: 'pointer',
-      action: 'up',
-      button: pointerButtonFromMouseEvent(event.button),
-      x: pos.x,
-      y: pos.y,
-    });
-  };
+  const handleViewerWheel = useCallback(
+    (event: React.WheelEvent<HTMLButtonElement>) => {
+      const surface = viewerSurfaceRef.current;
+      const rect = surface?.getBoundingClientRect();
+      const x = rect
+        ? Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)))
+        : 0.5;
+      const y = rect
+        ? Math.min(1, Math.max(0, (event.clientY - rect.top) / Math.max(1, rect.height)))
+        : 0.5;
+      sendRemoteInput({
+        kind: 'pointer',
+        action: 'wheel',
+        x,
+        y,
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+      });
+    },
+    [sendRemoteInput]
+  );
 
-  const handleViewerWheel = (event: React.WheelEvent<HTMLButtonElement>) => {
-    const surface = viewerSurfaceRef.current;
-    const rect = surface?.getBoundingClientRect();
-    const x = rect
-      ? Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)))
-      : 0.5;
-    const y = rect
-      ? Math.min(1, Math.max(0, (event.clientY - rect.top) / Math.max(1, rect.height)))
-      : 0.5;
-    sendRemoteInput({
-      kind: 'pointer',
-      action: 'wheel',
-      x,
-      y,
-      deltaX: event.deltaX,
-      deltaY: event.deltaY,
-    });
-  };
+  const handleViewerKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      if (event.repeat) return;
+      sendRemoteInput({ kind: 'keyboard', action: 'down', key: event.key });
+    },
+    [sendRemoteInput]
+  );
 
-  const handleViewerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (event.repeat) {
-      return;
-    }
-    sendRemoteInput({
-      kind: 'keyboard',
-      action: 'down',
-      key: event.key,
-    });
-  };
+  const handleViewerKeyUp = useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      sendRemoteInput({ kind: 'keyboard', action: 'up', key: event.key });
+    },
+    [sendRemoteInput]
+  );
 
-  const handleViewerKeyUp = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    sendRemoteInput({
-      kind: 'keyboard',
-      action: 'up',
-      key: event.key,
-    });
-  };
-
-  let feedContent: React.ReactNode;
-  if (isHostMode) {
-    feedContent = (
-      <video ref={localVideoRef} className="screen-share-video" autoPlay muted playsInline>
-        <track kind="captions" />
-      </video>
-    );
-  } else if (hasRemoteStream) {
-    feedContent = (
-      <button
-        ref={viewerSurfaceRef}
-        type="button"
-        className="screen-share-remote-surface"
-        style={{ touchAction: 'none' }}
-        aria-label="Interactive remote stream"
-        onMouseMove={handleViewerMouseMove}
-        onMouseDown={handleViewerMouseDown}
-        onMouseUp={handleViewerMouseUp}
-        onWheelCapture={handleViewerWheel}
-        onKeyDown={handleViewerKeyDown}
-        onKeyUp={handleViewerKeyUp}
-        onContextMenu={(event) => event.preventDefault()}
-      >
-        <video ref={remoteVideoRef} className="screen-share-video" autoPlay playsInline>
+  const feedContent = useMemo(() => {
+    if (isHostMode) {
+      return (
+        <video ref={localVideoRef} className="screen-share-video" autoPlay muted playsInline>
           <track kind="captions" />
         </video>
-      </button>
-    );
-  } else if (state.active && state.sourceType === 'browser' && snapshotAvailable && snapshotUrl) {
-    feedContent = (
-      <img className="screen-share-preview" src={snapshotUrl} alt="Screen share browser preview" />
-    );
-  } else if (state.active && state.sourceType === 'browser' && snapshotAvailable) {
-    feedContent = <div className="screen-share-placeholder">Preparing preview…</div>;
-  } else {
-    feedContent = <div className="screen-share-placeholder">Live preview coming next.</div>;
-  }
+      );
+    } else if (hasRemoteStream) {
+      return (
+        <button
+          ref={viewerSurfaceRef}
+          type="button"
+          className="screen-share-remote-surface"
+          style={{ touchAction: 'none' }}
+          aria-label="Interactive remote stream"
+          onMouseMove={handleViewerMouseMove}
+          onMouseDown={handleViewerMouseDown}
+          onMouseUp={handleViewerMouseUp}
+          onWheelCapture={handleViewerWheel}
+          onKeyDown={handleViewerKeyDown}
+          onKeyUp={handleViewerKeyUp}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <video ref={remoteVideoRef} className="screen-share-video" autoPlay playsInline>
+            <track kind="captions" />
+          </video>
+        </button>
+      );
+    } else if (state.active && state.sourceType === 'browser' && snapshotAvailable && snapshotUrl) {
+      return (
+        <img
+          className="screen-share-preview"
+          src={snapshotUrl}
+          alt="Screen share browser preview"
+        />
+      );
+    } else if (state.active && state.sourceType === 'browser' && snapshotAvailable) {
+      return <div className="screen-share-placeholder">Preparing preview…</div>;
+    } else {
+      return <div className="screen-share-placeholder">Live preview coming next.</div>;
+    }
+  }, [
+    hasRemoteStream,
+    handleViewerKeyDown,
+    handleViewerKeyUp,
+    handleViewerMouseDown,
+    handleViewerMouseMove,
+    handleViewerMouseUp,
+    handleViewerWheel,
+    isHostMode,
+    snapshotAvailable,
+    snapshotUrl,
+    state.active,
+    state.sourceType,
+  ]);
 
   return (
     <>
@@ -913,7 +733,7 @@ export default function ScreenShare() {
               <button
                 className="action-btn cancel"
                 disabled={isStopping}
-                onClick={() => handleStop()}
+                onClick={handleStop}
                 type="button"
               >
                 {isStopping ? 'Stopping...' : 'Stop session'}
@@ -951,7 +771,7 @@ export default function ScreenShare() {
               <button
                 className="action-btn"
                 disabled={hostStreaming}
-                onClick={() => startHostWebRtc()}
+                onClick={startHostWebRtc}
                 type="button"
               >
                 {hostStreaming ? 'WebRTC HD active' : 'Activer flux WebRTC HD (60 fps)'}

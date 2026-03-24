@@ -4,7 +4,7 @@ import App from './App';
 import './index.css';
 import '@vidstack/react/player/styles/default/theme.css';
 import '@vidstack/react/player/styles/default/layouts/video.css';
-import { safeStorageGet, safeStorageSet } from './utils/storage.ts';
+import { safeStorageGet, safeStorageSet } from '../../shared/utils/storage';
 
 function normalizeErrorMessage(error: unknown): string {
   if (error instanceof Error) {

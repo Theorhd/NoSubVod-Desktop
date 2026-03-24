@@ -11,7 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import NSVPlayer, { NSVMediaSource } from './components/NSVPlayer';
-import { formatSize } from './utils/formatters.ts';
+import { formatSize } from '../../shared/utils/formatters';
 import { TopBar } from './components/TopBar';
 import { DownloadedFile, useDownloadsData } from './hooks/useDownloadsData';
 

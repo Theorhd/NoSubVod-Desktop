@@ -7,7 +7,7 @@ import LiveChatComponent from './components/player/LiveChatComponent';
 import MarkerPanel from './components/player/MarkerPanel';
 import ClipMode from './components/player/ClipMode';
 import PlayerInfo from './components/player/PlayerInfo';
-import { formatSafeClock as formatClock } from './utils/formatters.ts';
+import { formatSafeClock as formatClock } from '../../shared/utils/formatters';
 import PlayerRTC from './PlayerRTC';
 
 const DEFAULT_SETTINGS: ExperienceSettings = {

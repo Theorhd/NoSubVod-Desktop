@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { UserInfo } from '../../shared/types';
-import { formatViewers } from './utils/formatters.ts';
+import { formatViewers } from '../../shared/utils/formatters';
 import { TopBar } from './components/TopBar';
 
 type SearchGame = {

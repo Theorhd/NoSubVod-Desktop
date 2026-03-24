@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { HistoryEntry, LiveStream, LiveStreamsPage, VOD } from '../../../shared/types';
 
 type CategoryVodPage = {
@@ -9,9 +9,8 @@ type CategoryVodPage = {
 
 const MIN_VOD_DURATION_SECONDS = 210;
 
-function filterShortVods(vods: VOD[]): VOD[] {
-  return vods.filter((vod) => (vod.lengthSeconds || 0) >= MIN_VOD_DURATION_SECONDS);
-}
+const filterShortVods = (vods: VOD[]): VOD[] =>
+  vods.filter((vod) => (vod.lengthSeconds || 0) >= MIN_VOD_DURATION_SECONDS);
 
 type UseChannelDataParams = Readonly<{
   user: string | null;
@@ -34,6 +33,8 @@ export function useChannelData({ user, category, categoryId }: UseChannelDataPar
   const [catVodHasMore, setCatVodHasMore] = useState(false);
   const [catVodLoading, setCatVodLoading] = useState(false);
 
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   const isUserMode = Boolean(user);
   const isCategoryMode = !isUserMode && Boolean(category);
 
@@ -43,86 +44,95 @@ export function useChannelData({ user, category, categoryId }: UseChannelDataPar
     return 'VODs';
   }, [category, user]);
 
-  useEffect(() => {
+  const fetchData = useCallback(async () => {
     if (!isUserMode && !isCategoryMode) {
       setError('No channel or category specified');
       setLoading(false);
       return;
     }
 
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+
     setLoading(true);
     setError('');
 
-    if (isUserMode && user) {
-      Promise.all([
-        fetch(`/api/user/${encodeURIComponent(user)}/vods`).then((res) => {
-          if (!res.ok) throw new Error('Failed to fetch VODs');
-          return res.json();
-        }),
-        fetch(`/api/user/${encodeURIComponent(user)}/live`)
-          .then((res) => (res.ok ? res.json() : null))
-          .catch(() => null),
-        fetch('/api/history')
-          .then((res) => (res.ok ? res.json() : {}))
-          .catch(() => ({})),
-      ])
-        .then(([vodsData, liveData, historyData]) => {
-          setVods(filterShortVods(vodsData as VOD[]));
-          setLiveStream((liveData as LiveStream | null) || null);
-          setHistory(historyData as Record<string, HistoryEntry>);
+    try {
+      if (isUserMode && user) {
+        const [vodsData, liveData, historyData] = await Promise.all([
+          fetch(`/api/user/${encodeURIComponent(user)}/vods`, { signal }).then((res) => {
+            if (!res.ok) throw new Error('Failed to fetch VODs');
+            return res.json();
+          }),
+          fetch(`/api/user/${encodeURIComponent(user)}/live`, { signal })
+            .then((res) => (res.ok ? res.json() : null))
+            .catch(() => null),
+          fetch('/api/history', { signal })
+            .then((res) => (res.ok ? res.json() : {}))
+            .catch(() => ({})),
+        ]);
+
+        if (signal.aborted) return;
+
+        setVods(filterShortVods(vodsData as VOD[]));
+        setLiveStream((liveData as LiveStream | null) || null);
+        setHistory(historyData as Record<string, HistoryEntry>);
+        setCatLiveStreams([]);
+        setCatLiveCursor(null);
+        setCatLiveHasMore(false);
+        setCatVodCursor(null);
+        setCatVodHasMore(false);
+      } else if (isCategoryMode && category) {
+        const categoryVodParams = new URLSearchParams({ name: category, limit: '24' });
+        if (categoryId) categoryVodParams.set('id', categoryId);
+
+        const [vodPage, livePage, historyData] = await Promise.all([
+          fetch(`/api/search/category-vods?${categoryVodParams.toString()}`, { signal }).then(
+            (res) => {
+              if (!res.ok) throw new Error('Failed to fetch VODs');
+              return res.json() as Promise<CategoryVodPage>;
+            }
+          ),
+          fetch(`/api/live/category?name=${encodeURIComponent(category)}&limit=12`, { signal })
+            .then((res) => (res.ok ? (res.json() as Promise<LiveStreamsPage>) : null))
+            .catch(() => null),
+          fetch('/api/history', { signal })
+            .then((res) => (res.ok ? res.json() : {}))
+            .catch(() => ({})),
+        ]);
+
+        if (signal.aborted) return;
+
+        setVods(filterShortVods(vodPage.items || []));
+        setCatVodCursor(vodPage.nextCursor || null);
+        setCatVodHasMore(Boolean(vodPage.hasMore));
+        if (livePage) {
+          setCatLiveStreams(livePage.items || []);
+          setCatLiveCursor(livePage.nextCursor || null);
+          setCatLiveHasMore(Boolean(livePage.hasMore));
+        } else {
           setCatLiveStreams([]);
           setCatLiveCursor(null);
           setCatLiveHasMore(false);
-          setCatVodCursor(null);
-          setCatVodHasMore(false);
-          setLoading(false);
-        })
-        .catch((err: Error) => {
-          setError(err.message);
-          setLoading(false);
-        });
-      return;
-    }
-
-    if (isCategoryMode && category) {
-      const categoryVodParams = new URLSearchParams({ name: category, limit: '24' });
-      if (categoryId) categoryVodParams.set('id', categoryId);
-
-      Promise.all([
-        fetch(`/api/search/category-vods?${categoryVodParams.toString()}`).then((res) => {
-          if (!res.ok) throw new Error('Failed to fetch VODs');
-          return res.json() as Promise<CategoryVodPage>;
-        }),
-        fetch(`/api/live/category?name=${encodeURIComponent(category)}&limit=12`)
-          .then((res) => (res.ok ? (res.json() as Promise<LiveStreamsPage>) : null))
-          .catch(() => null),
-        fetch('/api/history')
-          .then((res) => (res.ok ? res.json() : {}))
-          .catch(() => ({})),
-      ])
-        .then(([vodPage, livePage, historyData]) => {
-          setVods(filterShortVods(vodPage.items || []));
-          setCatVodCursor(vodPage.nextCursor || null);
-          setCatVodHasMore(Boolean(vodPage.hasMore));
-          if (livePage) {
-            setCatLiveStreams(livePage.items || []);
-            setCatLiveCursor(livePage.nextCursor || null);
-            setCatLiveHasMore(Boolean(livePage.hasMore));
-          } else {
-            setCatLiveStreams([]);
-            setCatLiveCursor(null);
-            setCatLiveHasMore(false);
-          }
-          setLiveStream(null);
-          setHistory(historyData as Record<string, HistoryEntry>);
-          setLoading(false);
-        })
-        .catch((err: Error) => {
-          setError(err.message);
-          setLoading(false);
-        });
+        }
+        setLiveStream(null);
+        setHistory(historyData as Record<string, HistoryEntry>);
+      }
+    } catch (err: any) {
+      if (err.name === 'AbortError') return;
+      setError(err.message || 'An unknown error occurred');
+    } finally {
+      setLoading(false);
     }
   }, [category, categoryId, isCategoryMode, isUserMode, user]);
+
+  useEffect(() => {
+    void fetchData();
+    return () => {
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+    };
+  }, [fetchData]);
 
   const loadMoreCatVods = useCallback(async () => {
     if (!category || catVodLoading || !catVodHasMore) return;
@@ -174,16 +184,20 @@ export function useChannelData({ user, category, categoryId }: UseChannelDataPar
   }, [catLiveCursor, catLiveHasMore, catLiveLoading, category]);
 
   const addToWatchlist = useCallback(async (vod: VOD) => {
-    await fetch('/api/watchlist', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        vodId: vod.id,
-        title: vod.title,
-        previewThumbnailURL: vod.previewThumbnailURL,
-        lengthSeconds: vod.lengthSeconds,
-      }),
-    });
+    try {
+      await fetch('/api/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vodId: vod.id,
+          title: vod.title,
+          previewThumbnailURL: vod.previewThumbnailURL,
+          lengthSeconds: vod.lengthSeconds,
+        }),
+      });
+    } catch {
+      // ignore watchlist failures
+    }
   }, []);
 
   return {

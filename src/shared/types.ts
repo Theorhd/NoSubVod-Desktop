@@ -151,10 +151,27 @@ export type ScreenShareSessionState = {
   startedAt: number | null;
   interactive: boolean;
   maxViewers: number;
+  current_viewers?: number; // compat with Rust side? let's see
   currentViewers: number;
   streamReady: boolean;
   streamMessage: string | null;
 };
+
+export interface DownloadedFile {
+  name: string;
+  size: number;
+  url: string;
+  metadata?: VOD | null;
+}
+
+export interface ActiveDownload {
+  vod_id: string;
+  title: string;
+  status: 'pending' | 'downloading' | 'merging' | 'completed' | 'failed' | string;
+  progress: number;
+  current_time: string;
+  total_duration: number;
+}
 
 export type SignalPayload = {
   sdp?: RTCSessionDescriptionInit;

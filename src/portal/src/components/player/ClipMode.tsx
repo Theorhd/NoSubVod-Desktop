@@ -1,6 +1,6 @@
 import React from 'react';
 import { VOD } from '../../../../shared/types';
-import { formatSafeClock as formatClock } from '../../utils/formatters';
+import { formatSafeClock as formatClock } from '../../../../shared/utils/formatters';
 
 interface ClipModeProps {
   duration: number;

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { MediaPlayer, MediaProvider, useMediaRemote, useMediaStore } from '@vidstack/react';
 import { defaultLayoutIcons, DefaultVideoLayout } from '@vidstack/react/player/layouts/default';
 import Hls from 'hls.js';
-import { safeStorageGet } from '../utils/storage.ts';
+import { safeStorageGet } from '../../../shared/utils/storage';
 
 const HLS_STABILITY_CONFIG = {
   enableWorker: true,
