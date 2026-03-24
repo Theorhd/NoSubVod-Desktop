@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useCallback, useMemo, useEffect } from 'react';
+import React, { Suspense, lazy, useCallback, useMemo, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import {
   TrendingUp,
@@ -7,7 +7,10 @@ import {
   Radio,
   Download,
   MonitorSmartphone,
+  Bell,
+  X,
 } from 'lucide-react';
+import { listen } from '@tauri-apps/api/event';
 import { ScreenShareSessionState } from '../../shared/types';
 import Login from './Login';
 import { useAuth } from '../../shared/hooks/useAuth';
@@ -31,6 +34,39 @@ type NavItem = {
   label: string;
   Icon: React.ComponentType<{ size?: number }>;
   isHome?: boolean;
+};
+
+type Notification = {
+  id: string;
+  title: string;
+  message: string;
+};
+
+const NotificationToast = ({
+  notifications,
+  onClose,
+}: {
+  notifications: Notification[];
+  onClose: (id: string) => void;
+}) => {
+  return (
+    <div className="toast-container">
+      {notifications.map((n) => (
+        <div key={n.id} className="toast">
+          <div className="toast-icon">
+            <Bell size={18} />
+          </div>
+          <div className="toast-content">
+            <div className="toast-title">{n.title}</div>
+            <div className="toast-msg">{n.message}</div>
+          </div>
+          <button className="toast-close" onClick={() => onClose(n.id)}>
+            <X size={16} />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
 };
 
 const BottomNav = React.memo(({ items }: Readonly<{ items: NavItem[] }>) => {
@@ -68,6 +104,41 @@ BottomNav.displayName = 'BottomNav';
 function AppContent() {
   const { isAuthenticated } = useAuth();
   const { contributions } = useExtensions();
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+
+  const handleNotification = useCallback(
+    (event: { payload: { title: string; message: string } }) => {
+      const id = Math.random().toString(36).substring(7);
+      const newNotif = { id, ...event.payload };
+      setNotifications((prev) => [...prev, newNotif]);
+
+      const cleanup = () => {
+        setNotifications((prev) => prev.filter((n) => n.id !== id));
+      };
+
+      setTimeout(cleanup, 5000);
+    },
+    []
+  );
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    const setupListener = async () => {
+      // @ts-ignore
+      if (globalThis.__TAURI_INTERNALS__) {
+        unlisten = await listen<{ title: string; message: string }>(
+          'nsv-notification',
+          handleNotification
+        );
+      }
+    };
+
+    setupListener();
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [handleNotification]);
 
   const fetchScreenShareState = useCallback(async () => {
     const response = await fetch('/api/screenshare/state');
@@ -153,6 +224,10 @@ function AppContent() {
             </div>
           </Suspense>
           <BottomNav items={navItems} />
+          <NotificationToast
+            notifications={notifications}
+            onClose={(id) => setNotifications((prev) => prev.filter((n) => n.id !== id))}
+          />
         </div>
       </ErrorBoundary>
     </Router>

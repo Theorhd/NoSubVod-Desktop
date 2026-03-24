@@ -53,6 +53,7 @@ windows = { version = "0.58", features = [
 thiserror = "2.0.18"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+sysinfo = "0.31"
 
 [dev-dependencies]
 tempfile = "3"
