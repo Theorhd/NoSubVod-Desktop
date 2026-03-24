@@ -335,6 +335,7 @@ impl ScreenShareService {
             }
         }
 
+        #[cfg(target_os = "windows")]
         let is_browser = internal.state.source_type == Some(ScreenShareSourceType::Browser);
         drop(internal);
 
