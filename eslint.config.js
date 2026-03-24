@@ -6,7 +6,14 @@ const tseslint = require('typescript-eslint');
 
 module.exports = defineConfig(
   {
-    ignores: ['dist/**', 'node_modules/**', 'build/**', 'releasenotes/**', 'src-tauri/target/**'],
+    ignores: [
+      'dist/**',
+      'node_modules/**',
+      'build/**',
+      'releasenotes/**',
+      'src-tauri/target/**',
+      'extensions/**',
+    ],
   },
   ...tseslint.configs.recommended,
   {
