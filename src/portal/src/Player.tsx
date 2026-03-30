@@ -578,7 +578,7 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
             }}
           >
             <NSVPlayer
-              source={{ src: source.src, type: source.type }}
+              source={source}
               streamType={source.streamType}
               title={vodInfo?.title || liveInfo?.title || playerTitle}
               startTime={initialTime}

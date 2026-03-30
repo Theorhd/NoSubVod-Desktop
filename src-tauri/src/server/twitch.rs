@@ -2503,8 +2503,9 @@ impl TwitchService {
         );
 
         let mut start_bandwidth: u64 = 8_534_030;
+        let mut set = tokio::task::JoinSet::new();
 
-        for (res_key, resolution, fps) in &resolutions {
+        for (res_key, resolution, fps) in resolutions {
             let stream_url = build_stream_url(
                 &domain,
                 &vod_special_id,
@@ -2514,15 +2515,45 @@ impl TwitchService {
                 days_diff,
                 channel_login,
             );
+            let client = self.android_tv_client.clone();
+            let res_key = res_key.to_string();
+            let resolution = resolution.to_string();
 
-            if let Some(codec) = is_valid_quality(&self.android_tv_client, &stream_url).await {
-                let quality = if *res_key == "chunked" {
+            set.spawn(async move {
+                let codec = is_valid_quality(&client, &stream_url).await;
+                (res_key, resolution, fps, stream_url, codec)
+            });
+        }
+
+        let mut results = Vec::new();
+        while let Some(res) = set.join_next().await {
+            if let Ok(val) = res {
+                results.push(val);
+            }
+        }
+
+        // Sort results to maintain the same order as resolutions vector (highest first)
+        let order: HashMap<&str, usize> = vec![
+            "chunked", "1080p60", "720p60", "480p30", "360p30", "160p30",
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, k)| (k, i))
+        .collect();
+
+        results.sort_by_key(|(res_key, _, _, _, _)| {
+            order.get(res_key.as_str()).copied().unwrap_or(99)
+        });
+
+        for (res_key, resolution, fps, stream_url, codec_opt) in results {
+            if let Some(codec) = codec_opt {
+                let quality = if res_key == "chunked" {
                     let height = resolution.split('x').nth(1).unwrap_or("1080");
                     format!("{height}p")
                 } else {
-                    res_key.to_string()
+                    res_key.clone()
                 };
-                let enabled = if *res_key == "chunked" { "YES" } else { "NO" };
+                let enabled = if res_key == "chunked" { "YES" } else { "NO" };
 
                 let proxy_id =
                     match register_variant_proxy_target(&self.variant_cache, &stream_url).await {
