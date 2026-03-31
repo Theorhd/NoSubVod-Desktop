@@ -1,6 +1,6 @@
 {
   "name": "nosubvod-desktop",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Bypass sub-only VODs and stream to local network with streamer subscriptions",
   "author": "Theorhd",
   "scripts": {
@@ -55,7 +55,7 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "prettier": "^3.8.1",
-    "typescript": "6.0.2",
+    "typescript": "5.9.3",
     "typescript-eslint": "8.57.2",
     "vite": "8.0.3"
   }
