@@ -211,97 +211,96 @@ const NSVPlayer = React.memo(
         }
       };
 
-      const onAutoPipChange = (event: any) => {
-        if (event.detail === 'hidden') {
-          remoteRef.current.play();
-        }
-      };
-
-      const onBackgroundPlaybackChange = (event: any) => {
+      const onHiddenResume = (event: any) => {
         if (event.detail === 'hidden') {
           remoteRef.current.play();
         }
       };
 
       player.addEventListener('quality-change-request', onQualityChangeRequest);
-      player.addEventListener('auto-picture-in-picture-change', onAutoPipChange);
-      player.addEventListener('background-playback-change', onBackgroundPlaybackChange);
+      player.addEventListener('auto-picture-in-picture-change', onHiddenResume);
+      player.addEventListener('background-playback-change', onHiddenResume);
 
       return () => {
         player.removeEventListener('quality-change-request', onQualityChangeRequest);
-        player.removeEventListener('auto-picture-in-picture-change', onAutoPipChange);
-        player.removeEventListener('background-playback-change', onBackgroundPlaybackChange);
+        player.removeEventListener('auto-picture-in-picture-change', onHiddenResume);
+        player.removeEventListener('background-playback-change', onHiddenResume);
       };
     }, []);
 
-    useEffect(() => {
-      if (userInteractedWithQualityRef.current) return;
-      if (didApplyPreferredQualityRef.current) return;
-      if (!store.canSetQuality) return;
-      if (!store.qualities || store.qualities.length === 0) return;
+    const determineQualityIndex = useCallback(
+      (
+        qualities: any[],
+        minQuality?: string,
+        preferredQuality?: string,
+        streamType: 'on-demand' | 'live' | 'll-live' = 'on-demand'
+      ): number | null => {
+        const sorted = sortedQualitiesByHeightDesc(qualities);
+        if (sorted.length === 0) return null;
 
-      const sorted = sortedQualitiesByHeightDesc(store.qualities as any[]);
-      if (sorted.length === 0) return;
+        const minHeight = parseHeight(minQuality);
+        const allowed =
+          minHeight === null ? sorted : sorted.filter((quality) => quality.height >= minHeight);
 
-      const minHeight = parseHeight(minQuality || undefined);
-      const allowed =
-        minHeight === null ? sorted : sorted.filter((quality) => quality.height >= minHeight);
-
-      // If we have a minHeight requirement but no qualities satisfy it yet, wait.
-      if (minHeight !== null && allowed.length === 0) {
-        // Exception: if sorted has everything (Twitch usually has at least 160p to 1080p),
-        // and still none satisfy, then we might be in a weird state.
-        // But usually, we just wait for more qualities to load.
-        if (sorted.length < 3) return; 
-      }
-
-      if (allowed.length === 0) {
-        remote.changeQuality(-1);
-        didApplyPreferredQualityRef.current = true;
-        return;
-      }
-
-      if (!preferredQuality || preferredQuality === 'auto') {
-        if (streamType === 'on-demand' || minHeight !== null) {
-          remote.changeQuality(allowed[0].idx);
-        } else {
-          remote.changeQuality(-1);
+        // If we have a minHeight requirement but no qualities satisfy it yet, wait.
+        if (minHeight !== null && allowed.length === 0 && sorted.length < 3) {
+          return null;
         }
-        didApplyPreferredQualityRef.current = true;
+
+        if (allowed.length === 0) return -1;
+
+        if (!preferredQuality || preferredQuality === 'auto') {
+          return streamType === 'on-demand' || minHeight !== null ? allowed[0].idx : -1;
+        }
+
+        const preferredHeight = parseHeight(preferredQuality);
+        if (preferredHeight === null) return -1;
+
+        const exact = allowed.find((q) => q.height === preferredHeight);
+        if (exact) return exact.idx;
+
+        const closestBelow = allowed.find((q) => q.height < preferredHeight);
+        if (closestBelow) return closestBelow.idx;
+
+        const closestAbove = [...allowed].reverse().find((q) => q.height > preferredHeight);
+        if (closestAbove) return closestAbove.idx;
+
+        return -1;
+      },
+      []
+    );
+
+    useEffect(() => {
+      if (
+        userInteractedWithQualityRef.current ||
+        didApplyPreferredQualityRef.current ||
+        !store.canSetQuality ||
+        !store.qualities ||
+        store.qualities.length === 0
+      ) {
         return;
       }
 
-      const preferredHeight = parseHeight(preferredQuality);
-      if (preferredHeight === null) {
-        remote.changeQuality(-1);
-        didApplyPreferredQualityRef.current = true;
-        return;
-      }
+      const qualityIdx = determineQualityIndex(
+        store.qualities as any[],
+        minQuality || undefined,
+        preferredQuality,
+        streamType
+      );
 
-      const exact = allowed.find((q) => q.height === preferredHeight);
-      if (exact) {
-        remote.changeQuality(exact.idx);
+      if (qualityIdx !== null) {
+        remote.changeQuality(qualityIdx);
         didApplyPreferredQualityRef.current = true;
-        return;
       }
-
-      const closestBelow = allowed.find((q) => q.height < preferredHeight);
-      if (closestBelow) {
-        remote.changeQuality(closestBelow.idx);
-        didApplyPreferredQualityRef.current = true;
-        return;
-      }
-
-      const closestAbove = [...allowed].reverse().find((q) => q.height > preferredHeight);
-      if (closestAbove) {
-        remote.changeQuality(closestAbove.idx);
-        didApplyPreferredQualityRef.current = true;
-        return;
-      }
-
-      remote.changeQuality(-1);
-      didApplyPreferredQualityRef.current = true;
-    }, [minQuality, preferredQuality, remote, store.canSetQuality, store.qualities, streamType]);
+    }, [
+      minQuality,
+      preferredQuality,
+      remote,
+      store.canSetQuality,
+      store.qualities,
+      streamType,
+      determineQualityIndex,
+    ]);
 
     const handleRemoteControl = useCallback((event: any) => {
       const payload = event.payload;
