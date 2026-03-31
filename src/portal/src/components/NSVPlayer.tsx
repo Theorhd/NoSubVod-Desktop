@@ -17,7 +17,7 @@ const HLS_STABILITY_CONFIG = {
   levelLoadingTimeOut: 20000,
   fragLoadingTimeOut: 25000,
   nudgeMaxRetry: 8,
-  abrEwmaDefaultEstimate: 8_000_000,
+  abrEwmaDefaultEstimate: 12_000_000,
 };
 
 type QualityEntry = {
@@ -120,6 +120,7 @@ const NSVPlayer = React.memo(
     const didSeekOnStartRef = useRef(false);
     const lastExternalSeekRef = useRef<number | null>(null);
     const didApplyPreferredQualityRef = useRef(false);
+    const userInteractedWithQualityRef = useRef(false);
 
     const src = useMemo(
       () => ({
@@ -129,19 +130,33 @@ const NSVPlayer = React.memo(
       [source.src, source.type]
     );
 
+    const lastTimeRef = useRef<number>(0);
     useEffect(() => {
       if (!onTimeUpdate) return;
-      onTimeUpdate(store.currentTime || 0);
+      const next = store.currentTime || 0;
+      // Throttle or guard: only update if change is significant (at least 0.2s)
+      if (Math.abs(lastTimeRef.current - next) < 0.2 && next !== 0) return;
+      lastTimeRef.current = next;
+      onTimeUpdate(next);
     }, [store.currentTime, onTimeUpdate]);
 
+    const lastDurationRef = useRef<number>(0);
     useEffect(() => {
       if (!onDurationChange) return;
-      onDurationChange(store.duration || 0);
+      const next = store.duration || 0;
+      if (Math.abs(lastDurationRef.current - next) < 0.1) return;
+      lastDurationRef.current = next;
+      onDurationChange(next);
     }, [store.duration, onDurationChange]);
+
+    const lastPlayingStateRef = useRef<boolean | null>(null);
 
     useEffect(() => {
       if (!onPlayStateChange) return;
-      onPlayStateChange(!store.paused);
+      const isPlaying = !store.paused;
+      if (lastPlayingStateRef.current === isPlaying) return;
+      lastPlayingStateRef.current = isPlaying;
+      onPlayStateChange(isPlaying);
     }, [store.paused, onPlayStateChange]);
 
     useEffect(() => {
@@ -162,6 +177,7 @@ const NSVPlayer = React.memo(
       didSeekOnStartRef.current = false;
       lastExternalSeekRef.current = null;
       didApplyPreferredQualityRef.current = false;
+      userInteractedWithQualityRef.current = false;
     }, [src.src]);
 
     useEffect(() => {
@@ -184,63 +200,107 @@ const NSVPlayer = React.memo(
       remote.seek(nextValue);
     }, [seekTo, store.canSeek, store.duration, remote]);
 
+    // Track user quality changes, PiP and background playback
     useEffect(() => {
-      if (didApplyPreferredQualityRef.current) return;
-      if (!store.canSetQuality) return;
-      if (!store.qualities || store.qualities.length === 0) return;
+      const player = playerRef.current;
+      if (!player) return;
 
-      didApplyPreferredQualityRef.current = true;
-
-      const sorted = sortedQualitiesByHeightDesc(store.qualities as any[]);
-      if (sorted.length === 0) {
-        remote.changeQuality(-1);
-        return;
-      }
-
-      const minHeight = parseHeight(minQuality || undefined);
-      const allowed =
-        minHeight === null ? sorted : sorted.filter((quality) => quality.height >= minHeight);
-
-      if (allowed.length === 0) {
-        remote.changeQuality(-1);
-        return;
-      }
-
-      if (!preferredQuality || preferredQuality === 'auto') {
-        if (streamType === 'on-demand' || minHeight !== null) {
-          remote.changeQuality(allowed[0].idx);
-        } else {
-          remote.changeQuality(-1);
+      const onQualityChangeRequest = (event: any) => {
+        if (event.origin === 'user' || event.isTrusted) {
+          userInteractedWithQualityRef.current = true;
         }
+      };
+
+      const onHiddenResume = (event: any) => {
+        if (event.detail === 'hidden') {
+          remoteRef.current.play();
+        }
+      };
+
+      player.addEventListener('quality-change-request', onQualityChangeRequest);
+      player.addEventListener('auto-picture-in-picture-change', onHiddenResume);
+      player.addEventListener('background-playback-change', onHiddenResume);
+
+      return () => {
+        player.removeEventListener('quality-change-request', onQualityChangeRequest);
+        player.removeEventListener('auto-picture-in-picture-change', onHiddenResume);
+        player.removeEventListener('background-playback-change', onHiddenResume);
+      };
+    }, []);
+
+    const determineQualityIndex = useCallback(
+      (
+        qualities: any[],
+        minQuality?: string,
+        preferredQuality?: string,
+        streamType: 'on-demand' | 'live' | 'll-live' = 'on-demand'
+      ): number | null => {
+        const sorted = sortedQualitiesByHeightDesc(qualities);
+        if (sorted.length === 0) return null;
+
+        const minHeight = parseHeight(minQuality);
+        const allowed =
+          minHeight === null ? sorted : sorted.filter((quality) => quality.height >= minHeight);
+
+        // If we have a minHeight requirement but no qualities satisfy it yet, wait.
+        if (minHeight !== null && allowed.length === 0 && sorted.length < 3) {
+          return null;
+        }
+
+        if (allowed.length === 0) return -1;
+
+        if (!preferredQuality || preferredQuality === 'auto') {
+          return streamType === 'on-demand' || minHeight !== null ? allowed[0].idx : -1;
+        }
+
+        const preferredHeight = parseHeight(preferredQuality);
+        if (preferredHeight === null) return -1;
+
+        const exact = allowed.find((q) => q.height === preferredHeight);
+        if (exact) return exact.idx;
+
+        const closestBelow = allowed.find((q) => q.height < preferredHeight);
+        if (closestBelow) return closestBelow.idx;
+
+        const closestAbove = [...allowed].reverse().find((q) => q.height > preferredHeight);
+        if (closestAbove) return closestAbove.idx;
+
+        return -1;
+      },
+      []
+    );
+
+    useEffect(() => {
+      if (
+        userInteractedWithQualityRef.current ||
+        didApplyPreferredQualityRef.current ||
+        !store.canSetQuality ||
+        !store.qualities ||
+        store.qualities.length === 0
+      ) {
         return;
       }
 
-      const preferredHeight = parseHeight(preferredQuality);
-      if (preferredHeight === null) {
-        remote.changeQuality(-1);
-        return;
-      }
+      const qualityIdx = determineQualityIndex(
+        store.qualities as any[],
+        minQuality || undefined,
+        preferredQuality,
+        streamType
+      );
 
-      const exact = allowed.find((q) => q.height === preferredHeight);
-      if (exact) {
-        remote.changeQuality(exact.idx);
-        return;
+      if (qualityIdx !== null) {
+        remote.changeQuality(qualityIdx);
+        didApplyPreferredQualityRef.current = true;
       }
-
-      const closestBelow = allowed.find((q) => q.height < preferredHeight);
-      if (closestBelow) {
-        remote.changeQuality(closestBelow.idx);
-        return;
-      }
-
-      const closestAbove = [...allowed].reverse().find((q) => q.height > preferredHeight);
-      if (closestAbove) {
-        remote.changeQuality(closestAbove.idx);
-        return;
-      }
-
-      remote.changeQuality(-1);
-    }, [minQuality, preferredQuality, remote, store.canSetQuality, store.qualities, streamType]);
+    }, [
+      minQuality,
+      preferredQuality,
+      remote,
+      store.canSetQuality,
+      store.qualities,
+      streamType,
+      determineQualityIndex,
+    ]);
 
     const handleRemoteControl = useCallback((event: any) => {
       const payload = event.payload;
@@ -350,6 +410,7 @@ const NSVPlayer = React.memo(
         autoPlay={autoPlay}
         muted={muted}
         playsInline
+        fullscreenOrientation="none"
         keyTarget="player"
         keyShortcuts={{
           togglePaused: 'k Space',
