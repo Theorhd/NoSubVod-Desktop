@@ -308,9 +308,22 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
           const known = new Set(prev.map((m) => m.id));
           const incoming = (data.messages || []).filter((m: ChatMessage) => !known.has(m.id));
           if (incoming.length === 0) return prev;
-          return [...prev, ...incoming].sort(
+
+          let next = [...prev, ...incoming].sort(
             (a, b) => a.contentOffsetSeconds - b.contentOffsetSeconds
           );
+
+          // Purge messages far from current time if the list is too long (> 1000 items)
+          // Keep messages within current time +/- 5 minutes
+          if (next.length > 1000) {
+            const current = currentTimeRef.current;
+            next = next.filter(
+              (m) =>
+                m.contentOffsetSeconds > current - 300 && m.contentOffsetSeconds < current + 600
+            );
+          }
+
+          return next;
         });
 
         lastChatOffsetRef.current = offset;
@@ -492,38 +505,63 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
       {!isFullscreen && (
         <div
           className="top-bar"
-          style={{ position: 'relative', zIndex: 10, background: 'rgba(7, 8, 15, 0.8)' }}
+          style={{
+            position: 'relative',
+            zIndex: 10,
+            background: 'rgba(7, 8, 15, 0.8)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '8px',
+            padding: '8px 12px',
+            paddingTop: 'calc(8px + var(--safe-top))',
+          }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flex: 1 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
             <button
               onClick={() => navigate(-1)}
               className="secondary-btn"
-              style={{ width: '40px', height: '40px', padding: 0, borderRadius: '50%' }}
+              style={{
+                width: '36px',
+                height: '36px',
+                padding: 0,
+                borderRadius: '50%',
+                flexShrink: 0,
+              }}
             >
-              <ArrowLeft size={20} />
+              <ArrowLeft size={18} />
             </button>
             <h2
               style={{
-                fontSize: '1rem',
+                fontSize: '0.9rem',
                 fontWeight: 800,
                 margin: 0,
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
+                flex: 1,
               }}
             >
               {vodInfo?.title || liveInfo?.title || playerTitle}
             </h2>
           </div>
 
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
             {!liveId && (
               <button
                 onClick={() => setShowChatSearch((v) => !v)}
                 className="secondary-btn"
                 style={{
-                  width: '40px',
-                  height: '40px',
+                  width: '36px',
+                  height: '36px',
                   padding: 0,
                   borderRadius: '50%',
                   display: 'flex',
@@ -532,26 +570,36 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
                 }}
                 title="Rechercher dans le chat"
               >
-                <Search size={18} />
+                <Search size={16} />
               </button>
             )}
 
-            {!liveId && (
+            {!liveId && markers.length > 0 && (
               <button
                 onClick={() => setShowMarkers((v) => !v)}
                 className="secondary-btn"
-                style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                style={{
+                  fontSize: '0.75rem',
+                  padding: '4px 10px',
+                  height: '36px',
+                  borderRadius: '18px',
+                }}
               >
-                Chapters ({markers.length})
+                Chapters
               </button>
             )}
 
             <button
               onClick={() => setShowChat((v) => !v)}
               className="action-btn"
-              style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+              style={{
+                fontSize: '0.75rem',
+                padding: '4px 10px',
+                height: '36px',
+                borderRadius: '18px',
+              }}
             >
-              {showChat ? 'Hide Chat' : 'Show Chat'}
+              Chat
             </button>
           </div>
         </div>

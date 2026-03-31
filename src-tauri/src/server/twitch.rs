@@ -2533,13 +2533,12 @@ impl TwitchService {
         }
 
         // Sort results to maintain the same order as resolutions vector (highest first)
-        let order: HashMap<&str, usize> = vec![
-            "chunked", "1080p60", "720p60", "480p30", "360p30", "160p30",
-        ]
-        .into_iter()
-        .enumerate()
-        .map(|(i, k)| (k, i))
-        .collect();
+        let order: HashMap<&str, usize> =
+            vec!["chunked", "1080p60", "720p60", "480p30", "360p30", "160p30"]
+                .into_iter()
+                .enumerate()
+                .map(|(i, k)| (k, i))
+                .collect();
 
         results.sort_by_key(|(res_key, _, _, _, _)| {
             order.get(res_key.as_str()).copied().unwrap_or(99)
