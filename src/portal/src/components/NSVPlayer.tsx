@@ -9,9 +9,10 @@ const HLS_STABILITY_CONFIG = {
   lowLatencyMode: false,
   startLevel: -1,
   capLevelToPlayerSize: false,
-  maxBufferLength: 60,
-  maxMaxBufferLength: 120,
-  backBufferLength: 30,
+  maxBufferLength: 30,
+  maxMaxBufferLength: 45,
+  backBufferLength: 15,
+  maxBufferSize: 40 * 1000 * 1000,
   maxBufferHole: 0.5,
   manifestLoadingTimeOut: 20000,
   levelLoadingTimeOut: 20000,
@@ -120,6 +121,8 @@ const NSVPlayer = React.memo(
     const didSeekOnStartRef = useRef(false);
     const lastExternalSeekRef = useRef<number | null>(null);
     const didApplyPreferredQualityRef = useRef(false);
+    const lockedQualityHeightRef = useRef<number | null>(null);
+    const hlsInstanceRef = useRef<Hls | null>(null);
 
     const src = useMemo(
       () => ({
@@ -162,6 +165,17 @@ const NSVPlayer = React.memo(
       didSeekOnStartRef.current = false;
       lastExternalSeekRef.current = null;
       didApplyPreferredQualityRef.current = false;
+      lockedQualityHeightRef.current = null;
+
+      if (hlsInstanceRef.current) {
+        try {
+          hlsInstanceRef.current.stopLoad();
+          hlsInstanceRef.current.detachMedia();
+        } catch {
+          // Ignore cleanup failures on stale instances.
+        }
+        hlsInstanceRef.current = null;
+      }
     }, [src.src]);
 
     useEffect(() => {
@@ -193,6 +207,7 @@ const NSVPlayer = React.memo(
 
       const sorted = sortedQualitiesByHeightDesc(store.qualities as any[]);
       if (sorted.length === 0) {
+        lockedQualityHeightRef.current = null;
         remote.changeQuality(-1);
         return;
       }
@@ -202,11 +217,13 @@ const NSVPlayer = React.memo(
         minHeight === null ? sorted : sorted.filter((quality) => quality.height >= minHeight);
 
       if (allowed.length === 0) {
+        lockedQualityHeightRef.current = null;
         remote.changeQuality(-1);
         return;
       }
 
       if (!preferredQuality || preferredQuality === 'auto') {
+        lockedQualityHeightRef.current = null;
         if (streamType === 'on-demand' || minHeight !== null) {
           remote.changeQuality(allowed[0].idx);
         } else {
@@ -217,30 +234,67 @@ const NSVPlayer = React.memo(
 
       const preferredHeight = parseHeight(preferredQuality);
       if (preferredHeight === null) {
+        lockedQualityHeightRef.current = null;
         remote.changeQuality(-1);
         return;
       }
 
       const exact = allowed.find((q) => q.height === preferredHeight);
       if (exact) {
+        lockedQualityHeightRef.current = exact.height;
         remote.changeQuality(exact.idx);
         return;
       }
 
       const closestBelow = allowed.find((q) => q.height < preferredHeight);
       if (closestBelow) {
+        lockedQualityHeightRef.current = closestBelow.height;
         remote.changeQuality(closestBelow.idx);
         return;
       }
 
       const closestAbove = [...allowed].reverse().find((q) => q.height > preferredHeight);
       if (closestAbove) {
+        lockedQualityHeightRef.current = closestAbove.height;
         remote.changeQuality(closestAbove.idx);
         return;
       }
 
+      lockedQualityHeightRef.current = null;
       remote.changeQuality(-1);
     }, [minQuality, preferredQuality, remote, store.canSetQuality, store.qualities, streamType]);
+
+    useEffect(() => {
+      const lockedHeight = lockedQualityHeightRef.current;
+      if (lockedHeight === null) return;
+      if (!store.canSetQuality) return;
+      if (!store.qualities || store.qualities.length === 0) return;
+
+      const sorted = sortedQualitiesByHeightDesc(store.qualities as any[]);
+      const target = sorted.find((q) => q.height === lockedHeight);
+      if (!target) return;
+
+      const currentHeight = Number((store.quality as any)?.height || 0);
+      if (store.autoQuality || currentHeight !== lockedHeight) {
+        remote.changeQuality(target.idx);
+      }
+    }, [remote, store.autoQuality, store.canSetQuality, store.qualities, store.quality]);
+
+    const handleQualityChangeRequest = useCallback((qualityIndex: number) => {
+      if (qualityIndex === -1) {
+        lockedQualityHeightRef.current = null;
+        return;
+      }
+
+      const qualities = (storeRef.current.qualities || []) as any[];
+      const selected = qualities[qualityIndex] as { height?: number } | undefined;
+      const selectedHeight = Number(selected?.height || 0);
+      lockedQualityHeightRef.current = selectedHeight > 0 ? selectedHeight : null;
+    }, []);
+
+    const handleHlsInstance = useCallback((instance: Hls) => {
+      hlsInstanceRef.current = instance;
+    }, []);
 
     const handleRemoteControl = useCallback((event: any) => {
       const payload = event.payload;
@@ -338,6 +392,8 @@ const NSVPlayer = React.memo(
     return (
       <MediaPlayer
         onProviderChange={onProviderChange}
+        onMediaQualityChangeRequest={handleQualityChangeRequest}
+        onHlsInstance={handleHlsInstance}
         ref={playerRef}
         className={className}
         title={title}
