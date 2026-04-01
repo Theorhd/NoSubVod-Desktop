@@ -266,6 +266,7 @@ body {
   font-size: 1.15rem;
   font-weight: 800;
   background: linear-gradient(to right, #fff, var(--text-muted));
+  background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   margin: 0;
@@ -1100,6 +1101,7 @@ body {
   line-height: 1.3;
   color: #edf2ff;
   display: -webkit-box;
+  line-clamp: 2;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
@@ -1212,6 +1214,7 @@ body {
   line-height: 1.32;
   color: #eef3ff;
   display: -webkit-box;
+  line-clamp: 2;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;

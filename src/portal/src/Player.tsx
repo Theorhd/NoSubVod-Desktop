@@ -207,9 +207,16 @@ type VodLivePlayerProps = {
 
 function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
   const navigate = useNavigate();
+  const mediaKey = useMemo(() => {
+    if (vodId) return `vod:${vodId}`;
+    if (liveId) return `live:${liveId}`;
+    return 'none';
+  }, [vodId, liveId]);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const lastChatOffsetRef = useRef(-1);
+  const pendingChatOffsetsRef = useRef(new Set<number>());
+  const previousMediaKeyRef = useRef<string>(mediaKey);
 
   const [showChat, setShowChat] = useState(window.innerWidth > 1024);
   const [showChatSearch, setShowChatSearch] = useState(false);
@@ -298,6 +305,9 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
     async (offset: number) => {
       if (!vodId) return;
       if (offset === lastChatOffsetRef.current) return;
+      if (pendingChatOffsetsRef.current.has(offset)) return;
+
+      pendingChatOffsetsRef.current.add(offset);
 
       try {
         const res = await fetch(`/api/vod/${vodId}/chat?offset=${offset}`);
@@ -316,6 +326,8 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
         lastChatOffsetRef.current = offset;
       } catch (error) {
         console.error('Failed to fetch chat', error);
+      } finally {
+        pendingChatOffsetsRef.current.delete(offset);
       }
     },
     [vodId]
@@ -344,22 +356,24 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
   }, []);
 
   useEffect(() => {
-    const timeoutId = globalThis.setTimeout(() => {
-      setPlayerError(null);
-      setChatMessages([]);
-      setMarkers([]);
-      setVodInfo(null);
-      setLiveInfo(null);
-      setCurrentTime(0);
-      setDuration(0);
-      setInitialTime(0);
-      setClipStart(null);
-      setClipEnd(null);
-      setShowDownloadMenu(false);
-    }, 0);
+    if (previousMediaKeyRef.current === mediaKey) return;
+    previousMediaKeyRef.current = mediaKey;
+
+    setPlayerError(null);
+    setChatMessages([]);
+    setMarkers([]);
+    setVodInfo(null);
+    setLiveInfo(null);
+    setCurrentTime(0);
+    setDuration(0);
+    setInitialTime(0);
+    setSeekTo(null);
+    setClipStart(null);
+    setClipEnd(null);
+    setShowDownloadMenu(false);
     lastChatOffsetRef.current = -1;
-    return () => globalThis.clearTimeout(timeoutId);
-  }, [vodId, liveId]);
+    pendingChatOffsetsRef.current.clear();
+  }, [mediaKey]);
 
   useEffect(() => {
     let disposed = false;

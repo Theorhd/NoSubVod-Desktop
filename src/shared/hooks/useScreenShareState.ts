@@ -15,6 +15,21 @@ export const DEFAULT_SCREEN_SHARE_STATE: ScreenShareSessionState = {
   streamMessage: null,
 };
 
+function isSameScreenShareState(a: ScreenShareSessionState, b: ScreenShareSessionState): boolean {
+  return (
+    a.active === b.active &&
+    a.sessionId === b.sessionId &&
+    a.sourceType === b.sourceType &&
+    a.sourceLabel === b.sourceLabel &&
+    a.startedAt === b.startedAt &&
+    a.interactive === b.interactive &&
+    a.maxViewers === b.maxViewers &&
+    a.currentViewers === b.currentViewers &&
+    a.streamReady === b.streamReady &&
+    a.streamMessage === b.streamMessage
+  );
+}
+
 export function useScreenShareState(
   fetcher: () => Promise<ScreenShareSessionState>,
   pollingInterval: number | null = 3000
@@ -25,7 +40,7 @@ export function useScreenShareState(
   const updateState = useCallback(async () => {
     try {
       const newState = await fetcher();
-      setState(newState);
+      setState((prev) => (isSameScreenShareState(prev, newState) ? prev : newState));
     } catch {
       // In production, we might want to be less noisy or handle specific errors
       // console.warn('[useScreenShareState] Update failed:', err);

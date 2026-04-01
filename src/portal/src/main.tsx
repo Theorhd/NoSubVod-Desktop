@@ -121,12 +121,10 @@ class AppErrorBoundary extends React.Component<React.PropsWithChildren, AppError
 }
 
 // Expose React globally for extensions to avoid bundling it
-(window as any).React = React;
+(globalThis as any).React = React;
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <AppErrorBoundary>
-      <App />
-    </AppErrorBoundary>
-  </React.StrictMode>
+  <AppErrorBoundary>
+    <App />
+  </AppErrorBoundary>
 );

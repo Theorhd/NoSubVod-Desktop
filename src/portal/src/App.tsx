@@ -281,7 +281,7 @@ function AppContent() {
                 <Route path="/trends" element={<Trends />} />
                 <Route path="/live" element={<Live />} />
                 <Route path="/search" element={<Search />} />
-                <Route path="/player" element={<Player />} />
+                <Route path="/player" Component={Player} />
                 <Route path="/history" element={<History />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/channel" element={<Channel />} />
