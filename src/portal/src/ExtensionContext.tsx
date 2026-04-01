@@ -28,7 +28,10 @@ const ExtensionIframe = ({ src, title }: Readonly<{ src: string; title: string }
 
 const ExtensionNavIcon = () => <div style={{ fontSize: '1.2rem' }}>🧩</div>;
 
-export function ExtensionProvider({ children }: Readonly<{ children: React.ReactNode }>) {
+export function ExtensionProvider({
+  children,
+  suspendLoading = false,
+}: Readonly<{ children: React.ReactNode; suspendLoading?: boolean }>) {
   const [extensions, setExtensions] = useState<Extension[]>([]);
   const [enabledExtensions, setEnabledExtensions] = useState<string[]>([]);
   const [contributions, setContributions] = useState<ExtensionContribution[]>([]);
@@ -142,6 +145,14 @@ export function ExtensionProvider({ children }: Readonly<{ children: React.React
   );
 
   useEffect(() => {
+    if (suspendLoading) {
+      setExtensions([]);
+      setEnabledExtensions([]);
+      setContributions([]);
+      setIsLoading(false);
+      return;
+    }
+
     // Expose Global API for extensions
     (globalThis as any).NSV = {
       registerContribution,
@@ -183,7 +194,7 @@ export function ExtensionProvider({ children }: Readonly<{ children: React.React
     };
 
     loadExtensions();
-  }, [loadExtensions, registerContribution]);
+  }, [loadExtensions, registerContribution, suspendLoading]);
 
   const contextValue = useMemo(
     () => ({

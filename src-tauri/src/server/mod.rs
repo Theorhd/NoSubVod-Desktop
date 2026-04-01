@@ -105,6 +105,16 @@ impl AppState {
             .max_capacity(1)
             .build();
 
+        let segment_cache = Cache::builder()
+            .time_to_live(Duration::from_secs(20))
+            .weigher(
+                |_key: &String, value: &crate::server::state::CachedSegment| {
+                    value.body.len().min(u32::MAX as usize) as u32
+                },
+            )
+            .max_capacity(64 * 1024 * 1024)
+            .build();
+
         let api_state = ApiState {
             twitch,
             history,
@@ -115,6 +125,7 @@ impl AppState {
             server_token,
             app_handle: None,
             download_cache,
+            segment_cache,
         };
 
         Ok(Self {

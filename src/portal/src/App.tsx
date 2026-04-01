@@ -13,10 +13,9 @@ import {
 import { listen } from '@tauri-apps/api/event';
 import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
-import { ScreenShareSessionState, ExperienceSettings } from '../../shared/types';
+import { ExperienceSettings } from '../../shared/types';
 import Login from './Login';
 import { useAuth } from '../../shared/hooks/useAuth';
-import { useScreenShareState } from '../../shared/hooks/useScreenShareState';
 import { ErrorBoundary } from '../../shared/components/ErrorBoundary';
 import { ExtensionProvider, useExtensions } from './ExtensionContext';
 
@@ -31,6 +30,8 @@ const History = lazy(() => import('./History'));
 const Downloads = lazy(() => import('./Downloads'));
 const MultiView = lazy(() => import('./MultiView'));
 const ScreenShare = lazy(() => import('./ScreenShare.tsx'));
+
+const STABILITY_MODE = true;
 
 type NavItem = {
   path: string;
@@ -154,6 +155,7 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
+    if (STABILITY_MODE) return;
     if (!isAuthenticated) return;
 
     const checkUpdate = async () => {
@@ -212,16 +214,7 @@ function AppContent() {
     };
   }, [handleNotification]);
 
-  const fetchScreenShareState = useCallback(async () => {
-    const response = await fetch('/api/screenshare/state');
-    if (!response.ok) throw new Error('Failed to fetch state');
-    return (await response.json()) as ScreenShareSessionState;
-  }, []);
-
-  const { state: screenShareState } = useScreenShareState(
-    fetchScreenShareState,
-    isAuthenticated ? 3000 : null
-  );
+  const screenShareState = useMemo(() => ({ active: false }), []);
 
   useEffect(() => {
     try {
@@ -314,7 +307,7 @@ function AppContent() {
 
 export default function App() {
   return (
-    <ExtensionProvider>
+    <ExtensionProvider suspendLoading={STABILITY_MODE}>
       <AppContent />
     </ExtensionProvider>
   );

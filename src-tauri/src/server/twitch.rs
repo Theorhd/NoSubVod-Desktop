@@ -7,6 +7,7 @@ use once_cell::sync::Lazy;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tauri::async_runtime;
 use tokio::sync::RwLock;
 use tracing::{debug, error, instrument};
@@ -394,8 +395,8 @@ impl TwitchService {
                 .time_to_live(Duration::from_secs(120))
                 .build(),
             variant_cache: Cache::builder()
-                .max_capacity(2000)
-                .time_to_live(Duration::from_secs(86400))
+                .max_capacity(8000)
+                .time_to_live(Duration::from_secs(21600))
                 .build(),
         }
     }
@@ -786,7 +787,7 @@ async fn rewrite_tag_uri_with_proxy(line: &str, base_url: &str, token: &str) -> 
 // ── Quality check helper ──────────────────────────────────────────────────────
 
 async fn is_valid_quality(client: &Client, url: &str) -> Option<String> {
-    let resp = tokio::time::timeout(Duration::from_secs(5), client.get(url).send())
+    let resp = tokio::time::timeout(Duration::from_secs(12), client.get(url).send())
         .await
         .ok()?
         .ok()?;
@@ -804,7 +805,7 @@ async fn is_valid_quality(client: &Client, url: &str) -> Option<String> {
     if text.contains(".mp4") {
         let init_url = url.replace("index-dvr.m3u8", "init-0.mp4");
         let codec = if let Ok(Ok(init_resp)) =
-            tokio::time::timeout(Duration::from_secs(5), client.get(&init_url).send()).await
+            tokio::time::timeout(Duration::from_secs(12), client.get(&init_url).send()).await
         {
             if let Ok(body) = init_resp.text().await {
                 if body.contains("hev1") {
@@ -831,10 +832,29 @@ async fn register_variant_proxy_target(
     target_url: &str,
 ) -> AppResult<String> {
     let sanitized = validate_variant_target_url(target_url)?;
+
+    let target_key = {
+        let mut hasher = Sha256::new();
+        hasher.update(sanitized.as_bytes());
+        let digest = hasher.finalize();
+        format!("variant_target_{:x}", digest)
+    };
+
+    if let Some(existing_id) = variant_cache.get(&target_key).await {
+        if RE_UUID_V4.is_match(existing_id.trim()) {
+            let proxy_key = format!("variant_proxy_{}", existing_id.trim());
+            if variant_cache.get(&proxy_key).await.is_some() {
+                return Ok(existing_id.trim().to_string());
+            }
+        }
+    }
+
     let proxy_id = Uuid::new_v4().to_string();
     variant_cache
         .insert(format!("variant_proxy_{proxy_id}"), sanitized)
         .await;
+    variant_cache.insert(target_key, proxy_id.clone()).await;
+
     Ok(proxy_id)
 }
 
@@ -2515,31 +2535,33 @@ impl TwitchService {
                 channel_login,
             );
 
-            if let Some(codec) = is_valid_quality(&self.android_tv_client, &stream_url).await {
-                let quality = if *res_key == "chunked" {
-                    let height = resolution.split('x').nth(1).unwrap_or("1080");
-                    format!("{height}p")
-                } else {
-                    res_key.to_string()
+            let codec = is_valid_quality(&self.android_tv_client, &stream_url)
+                .await
+                .unwrap_or_else(|| "avc1.4D001E".to_string());
+
+            let quality = if *res_key == "chunked" {
+                let height = resolution.split('x').nth(1).unwrap_or("1080");
+                format!("{height}p")
+            } else {
+                res_key.to_string()
+            };
+            let enabled = if *res_key == "chunked" { "YES" } else { "NO" };
+
+            let proxy_id =
+                match register_variant_proxy_target(&self.variant_cache, &stream_url).await {
+                    Ok(id) => id,
+                    Err(_) => continue,
                 };
-                let enabled = if *res_key == "chunked" { "YES" } else { "NO" };
+            let proxy_url = format!(
+                "/api/stream/variant.m3u8?id={}&t={}",
+                urlencoding_simple(&proxy_id),
+                token
+            );
 
-                let proxy_id =
-                    match register_variant_proxy_target(&self.variant_cache, &stream_url).await {
-                        Ok(id) => id,
-                        Err(_) => continue,
-                    };
-                let proxy_url = format!(
-                    "/api/stream/variant.m3u8?id={}&t={}",
-                    urlencoding_simple(&proxy_id),
-                    token
-                );
-
-                playlist.push_str(&format!(
-                    "\n#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID=\"{quality}\",NAME=\"{quality}\",AUTOSELECT={enabled},DEFAULT={enabled}\n#EXT-X-STREAM-INF:BANDWIDTH={start_bandwidth},CODECS=\"{codec},mp4a.40.2\",RESOLUTION={resolution},VIDEO=\"{quality}\",FRAME-RATE={fps}\n{proxy_url}"
-                ));
-                start_bandwidth = start_bandwidth.saturating_sub(100);
-            }
+            playlist.push_str(&format!(
+                "\n#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID=\"{quality}\",NAME=\"{quality}\",AUTOSELECT={enabled},DEFAULT={enabled}\n#EXT-X-STREAM-INF:BANDWIDTH={start_bandwidth},CODECS=\"{codec},mp4a.40.2\",RESOLUTION={resolution},VIDEO=\"{quality}\",FRAME-RATE={fps}\n{proxy_url}"
+            ));
+            start_bandwidth = start_bandwidth.saturating_sub(100);
         }
 
         Ok(playlist)
@@ -2593,24 +2615,23 @@ impl TwitchService {
         channel_login: &str,
         settings: &ExperienceSettings,
     ) -> AppResult<(String, String)> {
-        let platform = if settings.adblock_enabled {
-            "ios"
-        } else {
-            "web"
+        let build_body = |platform: &str| {
+            serde_json::json!({
+                "operationName": "PlaybackAccessToken_Template",
+                "query": format!("query PlaybackAccessToken_Template($login: String!) {{ streamPlaybackAccessToken(channelName: $login, params: {{platform: \"{}\", playerBackend: \"mediaplayer\", playerType: \"site\"}}) {{ value signature }} }}", platform),
+                "variables": { "login": channel_login }
+            })
         };
 
         let device_id = create_device_id();
         let session_id = create_serving_id();
 
-        let body = serde_json::json!({
-            "operationName": "PlaybackAccessToken_Template",
-            "query": format!("query PlaybackAccessToken_Template($login: String!) {{ streamPlaybackAccessToken(channelName: $login, params: {{platform: \"{}\", playerBackend: \"mediaplayer\", playerType: \"site\"}}) {{ value signature }} }}", platform),
-            "variables": { "login": channel_login }
-        });
+        let primary_body = build_body("web");
+        let ios_fallback_body = build_body("ios");
 
         let client = self.get_client(settings).await;
 
-        let make_req = |c: &Client| {
+        let make_req = |c: &Client, body: &Value| {
             let mut r = c
                 .post("https://gql.twitch.tv/gql")
                 .header("Client-Id", "kimne78kx3ncx6brgo4mv6wki5h1ko")
@@ -2620,13 +2641,23 @@ impl TwitchService {
             if settings.adblock_enabled {
                 r = r.header("Client-Adblock-Extension", "ttv-lol-pro");
             }
-            r.json(&body)
+            r.json(body)
         };
 
         let mut data_opt: Option<Value> = None;
 
-        if settings.adblock_enabled {
-            if let Ok(resp) = make_req(&client).send().await {
+        if let Ok(resp) = make_req(&client, &primary_body).send().await {
+            if resp.status().is_success() {
+                if let Ok(json) = resp.json::<Value>().await {
+                    if !json["data"]["streamPlaybackAccessToken"].is_null() {
+                        data_opt = Some(json);
+                    }
+                }
+            }
+        }
+
+        if data_opt.is_none() && settings.adblock_enabled {
+            if let Ok(resp) = make_req(&client, &ios_fallback_body).send().await {
                 if resp.status().is_success() {
                     if let Ok(json) = resp.json::<Value>().await {
                         if !json["data"]["streamPlaybackAccessToken"].is_null() {
@@ -2640,19 +2671,13 @@ impl TwitchService {
         let data = match data_opt {
             Some(d) => d,
             None => {
-                let fallback_body = serde_json::json!({
-                    "operationName": "PlaybackAccessToken_Template",
-                    "query": "query PlaybackAccessToken_Template($login: String!) { streamPlaybackAccessToken(channelName: $login, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: \"site\"}) { value signature } }",
-                    "variables": { "login": channel_login }
-                });
-
                 let resp = self
                     .android_tv_client
                     .post("https://gql.twitch.tv/gql")
                     .header("Client-Id", "kimne78kx3ncx6brgo4mv6wki5h1ko")
                     .header("X-Device-Id", &device_id)
                     .header("Client-Session-Id", &session_id)
-                    .json(&fallback_body)
+                    .json(&primary_body)
                     .send()
                     .await?;
 

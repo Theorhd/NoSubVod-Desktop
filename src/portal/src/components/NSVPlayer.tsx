@@ -9,16 +9,16 @@ const HLS_STABILITY_CONFIG = {
   lowLatencyMode: false,
   startLevel: -1,
   capLevelToPlayerSize: false,
-  maxBufferLength: 30,
-  maxMaxBufferLength: 45,
-  backBufferLength: 15,
-  maxBufferSize: 40 * 1000 * 1000,
+  maxBufferLength: 8,
+  maxMaxBufferLength: 10,
+  backBufferLength: 2,
+  maxBufferSize: 10 * 1000 * 1000,
   maxBufferHole: 0.5,
   manifestLoadingTimeOut: 20000,
   levelLoadingTimeOut: 20000,
   fragLoadingTimeOut: 25000,
   nudgeMaxRetry: 8,
-  abrEwmaDefaultEstimate: 8_000_000,
+  abrEwmaDefaultEstimate: 24_000_000,
 };
 
 type QualityEntry = {
@@ -182,6 +182,11 @@ const NSVPlayer = React.memo(
       didApplyPreferredQualityRef.current = false;
     }, [preferredQuality, minQuality, streamType]);
 
+    const qualityConfigKey = useMemo(
+      () => `${preferredQuality || 'auto'}|${minQuality || 'none'}|${streamType}`,
+      [preferredQuality, minQuality, streamType]
+    );
+
     useEffect(() => {
       if (!Number.isFinite(seekTo)) return;
       if (!store.canSeek || store.duration <= 0) return;
@@ -203,94 +208,85 @@ const NSVPlayer = React.memo(
       if (!store.canSetQuality) return;
       if (!store.qualities || store.qualities.length === 0) return;
 
-      didApplyPreferredQualityRef.current = true;
-
-      const sorted = sortedQualitiesByHeightDesc(store.qualities as any[]);
-      if (sorted.length === 0) {
-        lockedQualityHeightRef.current = null;
-        remote.changeQuality(-1);
-        return;
-      }
-
-      const minHeight = parseHeight(minQuality || undefined);
-      const allowed =
-        minHeight === null ? sorted : sorted.filter((quality) => quality.height >= minHeight);
-
-      if (allowed.length === 0) {
-        lockedQualityHeightRef.current = null;
-        remote.changeQuality(-1);
-        return;
-      }
-
-      if (!preferredQuality || preferredQuality === 'auto') {
-        lockedQualityHeightRef.current = null;
-        if (streamType === 'on-demand' || minHeight !== null) {
-          remote.changeQuality(allowed[0].idx);
-        } else {
+      try {
+        const sorted = sortedQualitiesByHeightDesc(store.qualities as any[]);
+        if (sorted.length === 0) {
+          didApplyPreferredQualityRef.current = false;
+          lockedQualityHeightRef.current = null;
           remote.changeQuality(-1);
+          return;
         }
-        return;
-      }
 
-      const preferredHeight = parseHeight(preferredQuality);
-      if (preferredHeight === null) {
+        const minHeight = parseHeight(minQuality || undefined);
+        const allowed =
+          minHeight === null ? sorted : sorted.filter((quality) => quality.height >= minHeight);
+
+        if (allowed.length === 0) {
+          didApplyPreferredQualityRef.current = false;
+          lockedQualityHeightRef.current = null;
+          remote.changeQuality(-1);
+          return;
+        }
+
+        if (!preferredQuality || preferredQuality === 'auto') {
+          lockedQualityHeightRef.current = null;
+          if (streamType === 'on-demand' || minHeight !== null) {
+            remote.changeQuality(allowed[0].idx);
+          } else {
+            remote.changeQuality(-1);
+          }
+          didApplyPreferredQualityRef.current = true;
+          return;
+        }
+
+        const preferredHeight = parseHeight(preferredQuality);
+        if (preferredHeight === null) {
+          didApplyPreferredQualityRef.current = false;
+          lockedQualityHeightRef.current = null;
+          remote.changeQuality(-1);
+          return;
+        }
+
+        const exact = allowed.find((q) => q.height === preferredHeight);
+        if (exact) {
+          lockedQualityHeightRef.current = exact.height;
+          remote.changeQuality(exact.idx);
+          didApplyPreferredQualityRef.current = true;
+          return;
+        }
+
+        const closestBelow = allowed.find((q) => q.height < preferredHeight);
+        if (closestBelow) {
+          lockedQualityHeightRef.current = closestBelow.height;
+          remote.changeQuality(closestBelow.idx);
+          didApplyPreferredQualityRef.current = true;
+          return;
+        }
+
+        const closestAbove = [...allowed].reverse().find((q) => q.height > preferredHeight);
+        if (closestAbove) {
+          lockedQualityHeightRef.current = closestAbove.height;
+          remote.changeQuality(closestAbove.idx);
+          didApplyPreferredQualityRef.current = true;
+          return;
+        }
+
+        didApplyPreferredQualityRef.current = false;
         lockedQualityHeightRef.current = null;
         remote.changeQuality(-1);
-        return;
+      } catch (error) {
+        didApplyPreferredQualityRef.current = false;
+        console.error('[NSVPlayer] Failed to apply preferred quality', error);
       }
-
-      const exact = allowed.find((q) => q.height === preferredHeight);
-      if (exact) {
-        lockedQualityHeightRef.current = exact.height;
-        remote.changeQuality(exact.idx);
-        return;
-      }
-
-      const closestBelow = allowed.find((q) => q.height < preferredHeight);
-      if (closestBelow) {
-        lockedQualityHeightRef.current = closestBelow.height;
-        remote.changeQuality(closestBelow.idx);
-        return;
-      }
-
-      const closestAbove = [...allowed].reverse().find((q) => q.height > preferredHeight);
-      if (closestAbove) {
-        lockedQualityHeightRef.current = closestAbove.height;
-        remote.changeQuality(closestAbove.idx);
-        return;
-      }
-
-      lockedQualityHeightRef.current = null;
-      remote.changeQuality(-1);
-    }, [minQuality, preferredQuality, remote, store.canSetQuality, store.qualities, streamType]);
-
-    useEffect(() => {
-      const lockedHeight = lockedQualityHeightRef.current;
-      if (lockedHeight === null) return;
-      if (!store.canSetQuality) return;
-      if (!store.qualities || store.qualities.length === 0) return;
-
-      const sorted = sortedQualitiesByHeightDesc(store.qualities as any[]);
-      const target = sorted.find((q) => q.height === lockedHeight);
-      if (!target) return;
-
-      const currentHeight = Number((store.quality as any)?.height || 0);
-      if (store.autoQuality || currentHeight !== lockedHeight) {
-        remote.changeQuality(target.idx);
-      }
-    }, [remote, store.autoQuality, store.canSetQuality, store.qualities, store.quality]);
-
-    const handleQualityChangeRequest = useCallback((qualityIndex: number) => {
-      if (qualityIndex === -1) {
-        lockedQualityHeightRef.current = null;
-        return;
-      }
-
-      const qualities = (storeRef.current.qualities || []) as any[];
-      const selected = qualities[qualityIndex] as { height?: number } | undefined;
-      const selectedHeight = Number(selected?.height || 0);
-      lockedQualityHeightRef.current = selectedHeight > 0 ? selectedHeight : null;
-    }, []);
+    }, [
+      qualityConfigKey,
+      minQuality,
+      preferredQuality,
+      remote,
+      store.canSetQuality,
+      store.qualities,
+      streamType,
+    ]);
 
     const handleHlsInstance = useCallback((instance: Hls) => {
       hlsInstanceRef.current = instance;
@@ -392,7 +388,6 @@ const NSVPlayer = React.memo(
     return (
       <MediaPlayer
         onProviderChange={onProviderChange}
-        onMediaQualityChangeRequest={handleQualityChangeRequest}
         onHlsInstance={handleHlsInstance}
         ref={playerRef}
         className={className}
@@ -402,7 +397,7 @@ const NSVPlayer = React.memo(
         poster={poster}
         streamType={streamType}
         load={streamType === 'on-demand' ? 'eager' : 'visible'}
-        preload="auto"
+        preload="metadata"
         autoPlay={autoPlay}
         muted={muted}
         playsInline

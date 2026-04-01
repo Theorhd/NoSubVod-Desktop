@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use moka::future::Cache;
 use std::sync::Arc;
 use tauri::AppHandle;
@@ -9,6 +10,12 @@ use super::{
 };
 
 // ── Application state shared across all routes ─────────────────────────────────
+
+#[derive(Clone)]
+pub struct CachedSegment {
+    pub content_type: Option<String>,
+    pub body: Bytes,
+}
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -23,4 +30,6 @@ pub struct ApiState {
     pub app_handle: Option<AppHandle>,
     /// Cache for the downloads list (short TTL to avoid frequent disk scans)
     pub download_cache: Cache<String, Vec<DownloadedFile>>,
+    /// Very small in-memory cache for frequently re-requested tiny media chunks.
+    pub segment_cache: Cache<String, CachedSegment>,
 }

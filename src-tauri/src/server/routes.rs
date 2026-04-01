@@ -341,6 +341,26 @@ async fn handle_proxy_segment(
     Query(q): Query<VariantProxyQuery>,
     State(state): State<ApiState>,
 ) -> AppResult<Response> {
+    const SEGMENT_CACHEABLE_MAX_BYTES: u64 = 1_500_000;
+
+    let cache_key = if let Some(id) = q.id.as_deref() {
+        Some(format!("id:{id}"))
+    } else {
+        q.url.as_ref().map(|url| format!("url:{url}"))
+    };
+
+    if let Some(ref key) = cache_key {
+        if let Some(cached) = state.segment_cache.get(key).await {
+            let mut builder = Response::builder();
+            if let Some(ct) = cached.content_type {
+                builder = builder.header(reqwest::header::CONTENT_TYPE, ct);
+            }
+            return builder
+                .body(Body::from(cached.body))
+                .map_err(|e| AppError::Internal(e.to_string()));
+        }
+    }
+
     let settings = state.history.get_settings().await;
     let resp = if let Some(id) = q.id {
         state.twitch.proxy_segment(&id, &settings).await?
@@ -358,6 +378,39 @@ async fn handle_proxy_segment(
     }
     if let Some(cc) = resp.headers().get(reqwest::header::CACHE_CONTROL) {
         builder = builder.header(reqwest::header::CACHE_CONTROL, cc);
+    }
+
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    let should_cache = resp
+        .content_length()
+        .map(|len| len > 0 && len <= SEGMENT_CACHEABLE_MAX_BYTES)
+        .unwrap_or(false);
+
+    if should_cache {
+        let bytes = resp.bytes().await.map_err(AppError::from)?;
+        if let Some(ref key) = cache_key {
+            if (bytes.len() as u64) <= SEGMENT_CACHEABLE_MAX_BYTES {
+                state
+                    .segment_cache
+                    .insert(
+                        key.clone(),
+                        crate::server::state::CachedSegment {
+                            content_type: content_type.clone(),
+                            body: bytes.clone(),
+                        },
+                    )
+                    .await;
+            }
+        }
+
+        return builder
+            .body(Body::from(bytes))
+            .map_err(|e| AppError::Internal(e.to_string()));
     }
 
     let body = Body::from_stream(resp.bytes_stream());
@@ -1169,6 +1222,17 @@ pub fn build_router(mut state: ApiState, portal_dist: Option<std::path::PathBuf>
         .max_capacity(1) // Only one entry for the whole list
         .build();
 
+    // Tiny backend cache for re-requested small media chunks.
+    state.segment_cache = Cache::builder()
+        .time_to_live(Duration::from_secs(20))
+        .weigher(
+            |_key: &String, value: &crate::server::state::CachedSegment| {
+                value.body.len().min(u32::MAX as usize) as u32
+            },
+        )
+        .max_capacity(64 * 1024 * 1024)
+        .build();
+
     // CORS: allow only same-origin and local network origins (not Any)
     let cors = CorsLayer::new()
         .allow_origin(tower_http::cors::AllowOrigin::mirror_request())
@@ -1368,6 +1432,16 @@ mod tests {
             .max_capacity(1)
             .build();
 
+        let segment_cache = moka::future::Cache::builder()
+            .time_to_live(std::time::Duration::from_secs(20))
+            .weigher(
+                |_key: &String, value: &crate::server::state::CachedSegment| {
+                    value.body.len().min(u32::MAX as usize) as u32
+                },
+            )
+            .max_capacity(64 * 1024 * 1024)
+            .build();
+
         ApiState {
             twitch,
             history,
@@ -1378,6 +1452,7 @@ mod tests {
             server_token: "test_token".to_string(),
             app_handle: None,
             download_cache,
+            segment_cache,
         }
     }
 

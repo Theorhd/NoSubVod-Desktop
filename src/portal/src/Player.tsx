@@ -16,6 +16,11 @@ const DEFAULT_SETTINGS: ExperienceSettings = {
   preferredVideoQuality: 'auto',
 };
 
+const CHAT_MESSAGES_BEFORE = 100;
+const CHAT_MESSAGES_AFTER = 170;
+const MAX_CHAT_MESSAGES = 1000;
+const CHAT_HISTORY_SECONDS = 10 * 60;
+
 function resolvePlayerTitle(vodId: string | null, liveId: string | null): string {
   if (vodId) return `VOD: ${vodId}`;
   if (liveId) return `Live: ${liveId}`;
@@ -217,8 +222,12 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
   const lastChatOffsetRef = useRef(-1);
   const pendingChatOffsetsRef = useRef(new Set<number>());
   const previousMediaKeyRef = useRef<string>(mediaKey);
+  const lastRenderedSecondRef = useRef(-1);
+  const lastRequestedOffsetRef = useRef(-1);
+  const markersLoadedVodRef = useRef<string | null>(null);
+  const markersLoadingRef = useRef(false);
 
-  const [showChat, setShowChat] = useState(window.innerWidth > 1024);
+  const [showChat, setShowChat] = useState(false);
   const [showChatSearch, setShowChatSearch] = useState(false);
   const [showMarkers, setShowMarkers] = useState(false);
   const [markers, setMarkers] = useState<VideoMarker[]>([]);
@@ -277,29 +286,47 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
     return null;
   }, [vodId, liveId]);
 
+  const playerMediaSource = useMemo(
+    () => (source ? { src: source.src, type: source.type } : null),
+    [source]
+  );
+
+  const shouldLoadChat = Boolean(vodId && showChat && !isFullscreen);
+  const shouldUpdateUiTime = showMarkers || shouldLoadChat || downloadMode;
+
   const visibleChat = useMemo(() => {
-    return chatMessages.filter(
-      (message) =>
-        message.id &&
-        message.contentOffsetSeconds <= currentTime &&
-        message.contentOffsetSeconds > currentTime - 60
-    );
-  }, [chatMessages, currentTime]);
+    if (!shouldLoadChat) return [];
+    if (chatMessages.length === 0) return [];
+
+    const firstFutureIndex = chatMessages.findIndex((m) => m.contentOffsetSeconds > currentTime);
+    const pivotIndex = firstFutureIndex === -1 ? chatMessages.length : firstFutureIndex;
+    const start = Math.max(0, pivotIndex - CHAT_MESSAGES_BEFORE);
+    const end = Math.min(chatMessages.length, pivotIndex + CHAT_MESSAGES_AFTER);
+    return chatMessages.slice(start, end);
+  }, [chatMessages, currentTime, shouldLoadChat]);
 
   const dispatchedChatIds = useRef(new Set<string>());
   useEffect(() => {
-    if (liveId) return;
+    if (liveId || !shouldLoadChat) return;
     for (const msg of visibleChat) {
       if (!dispatchedChatIds.current.has(msg.id)) {
         dispatchedChatIds.current.add(msg.id);
         globalThis.dispatchEvent(new CustomEvent('nsv-chat-message', { detail: msg }));
       }
     }
-    // Limit set size
-    if (dispatchedChatIds.current.size > 1000) {
-      dispatchedChatIds.current.clear();
+    // Bound memory without clearing everything (which would cause redispatch storms).
+    const MAX_DISPATCHED_IDS = 5000;
+    const TRIM_TO = 4000;
+    if (dispatchedChatIds.current.size > MAX_DISPATCHED_IDS) {
+      const toDrop = dispatchedChatIds.current.size - TRIM_TO;
+      let dropped = 0;
+      for (const id of dispatchedChatIds.current) {
+        dispatchedChatIds.current.delete(id);
+        dropped += 1;
+        if (dropped >= toDrop) break;
+      }
     }
-  }, [visibleChat, liveId]);
+  }, [visibleChat, liveId, shouldLoadChat]);
 
   const fetchVodChatChunk = useCallback(
     async (offset: number) => {
@@ -318,9 +345,18 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
           const known = new Set(prev.map((m) => m.id));
           const incoming = (data.messages || []).filter((m: ChatMessage) => !known.has(m.id));
           if (incoming.length === 0) return prev;
-          return [...prev, ...incoming].sort(
+
+          const merged = [...prev, ...incoming].sort(
             (a, b) => a.contentOffsetSeconds - b.contentOffsetSeconds
           );
+
+          // Keep a bounded chat window to avoid unbounded memory growth on long VOD sessions.
+          const now = currentTimeRef.current || 0;
+          const cutoff = Math.max(0, now - CHAT_HISTORY_SECONDS);
+          const recent = merged.filter((message) => message.contentOffsetSeconds >= cutoff);
+
+          if (recent.length <= MAX_CHAT_MESSAGES) return recent;
+          return recent.slice(recent.length - MAX_CHAT_MESSAGES);
         });
 
         lastChatOffsetRef.current = offset;
@@ -335,19 +371,44 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
 
   const handlePlayerTimeUpdate = useCallback(
     (time: number) => {
-      setCurrentTime(time);
-      if (!vodId) return;
+      const roundedSecond = Math.floor(time);
+      if (shouldUpdateUiTime && roundedSecond !== lastRenderedSecondRef.current) {
+        lastRenderedSecondRef.current = roundedSecond;
+        setCurrentTime(time);
+      }
+
+      if (!shouldLoadChat) return;
       const offset = Math.floor(time / 60) * 60;
+      if (offset === lastRequestedOffsetRef.current) return;
+      lastRequestedOffsetRef.current = offset;
       void fetchVodChatChunk(offset);
     },
-    [fetchVodChatChunk, vodId]
+    [fetchVodChatChunk, shouldLoadChat, shouldUpdateUiTime]
   );
 
   useEffect(() => {
+    if (shouldLoadChat) {
+      lastRequestedOffsetRef.current = -1;
+      lastChatOffsetRef.current = -1;
+      const offset = Math.floor((currentTimeRef.current || 0) / 60) * 60;
+      void fetchVodChatChunk(offset);
+      return;
+    }
+
+    pendingChatOffsetsRef.current.clear();
+    dispatchedChatIds.current.clear();
+    setChatMessages((prev) => {
+      if (prev.length <= 120) return prev;
+      return prev.slice(prev.length - 120);
+    });
+  }, [fetchVodChatChunk, shouldLoadChat]);
+
+  useEffect(() => {
+    if (!shouldLoadChat) return;
     if (chatScrollRef.current) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
-  }, [visibleChat]);
+  }, [visibleChat, shouldLoadChat]);
 
   useEffect(() => {
     const onFullScreenChanged = () => setIsFullscreen(Boolean(document.fullscreenElement));
@@ -372,6 +433,10 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
     setClipEnd(null);
     setShowDownloadMenu(false);
     lastChatOffsetRef.current = -1;
+    lastRenderedSecondRef.current = -1;
+    lastRequestedOffsetRef.current = -1;
+    markersLoadedVodRef.current = null;
+    markersLoadingRef.current = false;
     pendingChatOffsetsRef.current.clear();
   }, [mediaKey]);
 
@@ -387,9 +452,8 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
         const deviceId = localStorage.getItem('nsv_device_id');
         const authSuffix = buildAuthSuffix(token, deviceId);
 
-        const [historyRes, markersRes, infoRes, settingsRes] = await Promise.all([
+        const [historyRes, infoRes, settingsRes] = await Promise.all([
           fetch(`/api/history/${vodId}${authSuffix}`),
-          fetch(`/api/vod/${vodId}/markers${authSuffix}`),
           fetch(`/api/vod/${vodId}/info${authSuffix}`),
           fetch(`/api/settings${authSuffix}`),
         ]);
@@ -400,24 +464,25 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
           setInitialTime(resumeTime);
         }
 
-        if (!disposed && markersRes.ok) {
-          const data = await markersRes.json();
-          setMarkers(parseMarkersPayload(data));
-        } else if (!disposed) {
-          console.warn('[Player] markers request failed', {
-            status: markersRes.status,
-            statusText: markersRes.statusText,
-            vodId,
-          });
-        }
-
         if (!disposed && infoRes.ok) {
           setVodInfo(await infoRes.json());
         }
 
-        if (!disposed && settingsRes.ok) {
-          const remoteSettings = (await settingsRes.json()) as ExperienceSettings;
-          setSettings((prev) => ({ ...prev, ...remoteSettings }));
+        if (!disposed) {
+          if (settingsRes.ok) {
+            try {
+              const remoteSettings = (await settingsRes.json()) as ExperienceSettings;
+              setSettings((prev) => ({ ...prev, ...remoteSettings }));
+            } catch (error) {
+              console.error('[Player] Failed to parse VOD settings payload', error);
+            }
+          } else {
+            console.warn('[Player] VOD settings request failed', {
+              status: settingsRes.status,
+              statusText: settingsRes.statusText,
+              vodId,
+            });
+          }
         }
       } catch (error) {
         console.error('Failed to fetch VOD player data', error);
@@ -431,24 +496,82 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
   }, [vodId]);
 
   useEffect(() => {
+    if (!vodId) return;
+    if (!showMarkers) return;
+    if (markersLoadedVodRef.current === vodId) return;
+    if (markersLoadingRef.current) return;
+
+    let disposed = false;
+    markersLoadingRef.current = true;
+
+    const run = async () => {
+      try {
+        const token = localStorage.getItem('nsv_token') || sessionStorage.getItem('nsv_token');
+        const deviceId = localStorage.getItem('nsv_device_id');
+        const authSuffix = buildAuthSuffix(token, deviceId);
+
+        const markersRes = await fetch(`/api/vod/${vodId}/markers${authSuffix}`);
+        if (!disposed && markersRes.ok) {
+          const data = await markersRes.json();
+          setMarkers(parseMarkersPayload(data));
+          markersLoadedVodRef.current = vodId;
+        } else if (!disposed) {
+          console.warn('[Player] markers request failed', {
+            status: markersRes.status,
+            statusText: markersRes.statusText,
+            vodId,
+          });
+        }
+      } catch (error) {
+        if (!disposed) {
+          console.error('Failed to fetch markers', error);
+        }
+      } finally {
+        markersLoadingRef.current = false;
+      }
+    };
+
+    void run();
+    return () => {
+      disposed = true;
+    };
+  }, [showMarkers, vodId]);
+
+  useEffect(() => {
     let disposed = false;
 
     const run = async () => {
       if (!liveId) return;
 
       try {
+        const token = localStorage.getItem('nsv_token') || sessionStorage.getItem('nsv_token');
+        const deviceId = localStorage.getItem('nsv_device_id');
+        const authSuffix = buildAuthSuffix(token, deviceId);
+
         const [infoRes, settingsRes] = await Promise.all([
-          fetch(`/api/user/${encodeURIComponent(liveId)}/live`),
-          fetch('/api/settings'),
+          fetch(`/api/user/${encodeURIComponent(liveId)}/live${authSuffix}`),
+          fetch(`/api/settings${authSuffix}`),
         ]);
 
         if (!disposed && infoRes.ok) {
           setLiveInfo(await infoRes.json());
         }
 
-        if (!disposed && settingsRes.ok) {
-          const remoteSettings = (await settingsRes.json()) as ExperienceSettings;
-          setSettings((prev) => ({ ...prev, ...remoteSettings }));
+        if (!disposed) {
+          if (settingsRes.ok) {
+            try {
+              const remoteSettings = (await settingsRes.json()) as ExperienceSettings;
+              setSettings((prev) => ({ ...prev, ...remoteSettings }));
+            } catch (error) {
+              console.error('[Player] Failed to parse live settings payload', error);
+            }
+          } else {
+            console.warn('[Player] Live settings request failed', {
+              status: settingsRes.status,
+              statusText: settingsRes.statusText,
+              liveId,
+            });
+          }
         }
       } catch (error) {
         console.error('Failed to fetch live player data', error);
@@ -592,7 +715,7 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
             }}
           >
             <NSVPlayer
-              source={{ src: source.src, type: source.type }}
+              source={playerMediaSource as { src: string; type?: string }}
               streamType={source.streamType}
               title={vodInfo?.title || liveInfo?.title || playerTitle}
               startTime={initialTime}
@@ -602,9 +725,9 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
               autoPlay
               className="nsv-main-player"
               onTimeUpdate={handlePlayerTimeUpdate}
-              onDurationChange={(nextDuration) => setDuration(nextDuration)}
-              onPlayStateChange={(playing) => setIsPlaying(playing)}
-              onError={(message) => setPlayerError(message)}
+              onDurationChange={setDuration}
+              onPlayStateChange={setIsPlaying}
+              onError={setPlayerError}
             />
 
             {!liveId && showMarkers && markers.length > 0 && (

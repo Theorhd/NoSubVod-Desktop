@@ -53,6 +53,22 @@ function createDeviceId(): string {
 // ── Patch global fetch to auto-inject auth token on API calls ────────────────
 (function patchFetch() {
   const originalFetch = globalThis.fetch;
+
+  const isPlayerPlaybackContext = () => {
+    try {
+      const currentUrl = new URL(globalThis.location.href);
+      const hash = (currentUrl.hash || '').toLowerCase();
+      return (
+        currentUrl.pathname.startsWith('/player') ||
+        hash.includes('/player') ||
+        currentUrl.searchParams.has('vod') ||
+        currentUrl.searchParams.has('live')
+      );
+    } catch {
+      return false;
+    }
+  };
+
   globalThis.fetch = function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     let url: string;
     if (typeof input === 'string') {
@@ -62,6 +78,31 @@ function createDeviceId(): string {
     } else {
       url = input.url;
     }
+
+    // Hard guard: never poll screenshare state while watching player VOD/live.
+    if (url.includes('/api/screenshare/state') && isPlayerPlaybackContext()) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            active: false,
+            sessionId: null,
+            sourceType: null,
+            sourceLabel: null,
+            startedAt: null,
+            interactive: true,
+            maxViewers: 5,
+            currentViewers: 0,
+            streamReady: false,
+            streamMessage: null,
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        )
+      );
+    }
+
     // Only inject token on our own API calls
     if (url.startsWith('/api/') || url.startsWith('api/')) {
       const token =
