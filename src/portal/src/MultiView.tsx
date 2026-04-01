@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, X } from 'lucide-react';
 import NSVPlayer from './components/NSVPlayer';
 import { ExperienceSettings } from '../../shared/types';
+import { useResponsive } from './hooks/useResponsive';
 
 interface MultiPlayerSlot {
   id: string;
@@ -19,6 +20,7 @@ const DEFAULT_SETTINGS: ExperienceSettings = {
 
 export default function MultiView() {
   const navigate = useNavigate();
+  const { isMobileLayout } = useResponsive();
   const [slots, setSlots] = useState<MultiPlayerSlot[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [settings, setSettings] = useState<ExperienceSettings>(DEFAULT_SETTINGS);
@@ -145,6 +147,7 @@ export default function MultiView() {
               title={slot.title}
               preferredQuality={settings.preferredVideoQuality}
               minQuality={settings.minVideoQuality}
+              isMobileLayout={isMobileLayout}
               autoPlay
               muted
               className="nsv-main-player"

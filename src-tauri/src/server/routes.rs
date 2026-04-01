@@ -38,7 +38,7 @@ use super::{
     state::ApiState,
     types::{SubEntry, WatchlistEntry},
     validation::{
-        filter_hevc_variants_for_ios, is_ios_family_request, is_valid_id, is_valid_login,
+        filter_hevc_variants_for_ios, is_legacy_ios_request, is_valid_id, is_valid_login,
     },
 };
 use moka::future::Cache;
@@ -284,7 +284,7 @@ async fn handle_vod_master(
         .generate_master_playlist(&vod_id, &host, &state.server_token)
         .await?;
 
-    let body = if is_ios_family_request(&headers) {
+    let body = if is_legacy_ios_request(&headers) {
         filter_hevc_variants_for_ios(&playlist)
     } else {
         playlist
@@ -313,7 +313,7 @@ async fn handle_live_master(
         .generate_live_master_playlist(&login, &host, &settings, &state.server_token)
         .await?;
 
-    let body = if is_ios_family_request(&headers) {
+    let body = if is_legacy_ios_request(&headers) {
         filter_hevc_variants_for_ios(&m3u8)
     } else {
         m3u8

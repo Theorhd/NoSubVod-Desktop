@@ -649,6 +649,36 @@ fn build_stream_url(
     format!("https://{domain}/{vod_special_id}/{res_key}/index-dvr.m3u8")
 }
 
+fn quality_bandwidth_bps(res_key: &str, fps: u32, resolution: &str) -> u64 {
+    match res_key {
+        // "chunked" is the source quality for Twitch VODs.
+        "chunked" => 8_500_000,
+        "1080p60" => 6_000_000,
+        "720p60" => 4_500_000,
+        "480p30" => 1_600_000,
+        "360p30" => 900_000,
+        "160p30" => 250_000,
+        _ => {
+            let height = resolution
+                .split('x')
+                .nth(1)
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(720);
+
+            // Conservative fallback so unknown labels still sort correctly in ABR.
+            match (height, fps) {
+                (h, f) if h >= 1080 && f >= 50 => 6_000_000,
+                (h, _) if h >= 1080 => 4_500_000,
+                (h, f) if h >= 720 && f >= 50 => 4_000_000,
+                (h, _) if h >= 720 => 2_800_000,
+                (h, _) if h >= 480 => 1_600_000,
+                (h, _) if h >= 360 => 900_000,
+                _ => 300_000,
+            }
+        }
+    }
+}
+
 // ── Variant proxy validation ──────────────────────────────────────────────────
 
 fn validate_variant_target_url(url: &str) -> AppResult<String> {
@@ -2522,8 +2552,6 @@ impl TwitchService {
             "#EXTM3U\n#EXT-X-TWITCH-INFO:ORIGIN=\"s3\",B=\"false\",REGION=\"EU\",USER-IP=\"127.0.0.1\",SERVING-ID=\"{serving_id}\",CLUSTER=\"cloudfront_vod\",USER-COUNTRY=\"BE\",MANIFEST-CLUSTER=\"cloudfront_vod\""
         );
 
-        let mut start_bandwidth: u64 = 8_534_030;
-
         for (res_key, resolution, fps) in &resolutions {
             let stream_url = build_stream_url(
                 &domain,
@@ -2557,11 +2585,11 @@ impl TwitchService {
                 urlencoding_simple(&proxy_id),
                 token
             );
+            let bandwidth = quality_bandwidth_bps(res_key, *fps, resolution);
 
             playlist.push_str(&format!(
-                "\n#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID=\"{quality}\",NAME=\"{quality}\",AUTOSELECT={enabled},DEFAULT={enabled}\n#EXT-X-STREAM-INF:BANDWIDTH={start_bandwidth},CODECS=\"{codec},mp4a.40.2\",RESOLUTION={resolution},VIDEO=\"{quality}\",FRAME-RATE={fps}\n{proxy_url}"
+                "\n#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID=\"{quality}\",NAME=\"{quality}\",AUTOSELECT={enabled},DEFAULT={enabled}\n#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},CODECS=\"{codec},mp4a.40.2\",RESOLUTION={resolution},VIDEO=\"{quality}\",FRAME-RATE={fps}\n{proxy_url}"
             ));
-            start_bandwidth = start_bandwidth.saturating_sub(100);
         }
 
         Ok(playlist)

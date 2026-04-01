@@ -9,6 +9,7 @@ import ClipMode from './components/player/ClipMode';
 import PlayerInfo from './components/player/PlayerInfo';
 import { formatSafeClock as formatClock } from '../../shared/utils/formatters';
 import PlayerRTC from './PlayerRTC';
+import { useResponsive } from './hooks/useResponsive';
 
 const DEFAULT_SETTINGS: ExperienceSettings = {
   oneSync: false,
@@ -211,6 +212,7 @@ type VodLivePlayerProps = {
 };
 
 function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
+  const { isMobileLayout } = useResponsive();
   const navigate = useNavigate();
   const mediaKey = useMemo(() => {
     if (vodId) return `vod:${vodId}`;
@@ -722,6 +724,7 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
               seekTo={seekTo}
               preferredQuality={settings.preferredVideoQuality}
               minQuality={settings.minVideoQuality}
+              isMobileLayout={isMobileLayout}
               autoPlay
               className="nsv-main-player"
               onTimeUpdate={handlePlayerTimeUpdate}

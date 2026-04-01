@@ -10,9 +10,6 @@ import {
   Bell,
   X,
 } from 'lucide-react';
-import { listen } from '@tauri-apps/api/event';
-import { check } from '@tauri-apps/plugin-updater';
-import { relaunch } from '@tauri-apps/plugin-process';
 import { ExperienceSettings } from '../../shared/types';
 import Login from './Login';
 import { useAuth } from '../../shared/hooks/useAuth';
@@ -46,6 +43,10 @@ type Notification = {
   title: string;
   message: string;
 };
+
+function isTauriRuntime(): boolean {
+  return Boolean((globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+}
 
 const NotificationToast = ({
   notifications,
@@ -147,7 +148,12 @@ function AppContent() {
 
   const handleRestart = useCallback(async () => {
     try {
-      await relaunch();
+      if (isTauriRuntime()) {
+        const { relaunch } = await import('@tauri-apps/plugin-process');
+        await relaunch();
+        return;
+      }
+      globalThis.location.reload();
     } catch (err) {
       console.error('Failed to relaunch:', err);
       globalThis.location.reload();
@@ -166,9 +172,9 @@ function AppContent() {
 
         if (!settings.autoUpdate) return;
 
-        // @ts-expect-error Tauri internals are injected at runtime
-        if (!globalThis.__TAURI_INTERNALS__) return;
+        if (!isTauriRuntime()) return;
 
+        const { check } = await import('@tauri-apps/plugin-updater');
         const update = await check();
         if (update) {
           console.log(`Found update ${update.version}`);
@@ -199,8 +205,8 @@ function AppContent() {
     let unlisten: (() => void) | undefined;
 
     const setupListener = async () => {
-      // @ts-expect-error Tauri internals are injected at runtime
-      if (globalThis.__TAURI_INTERNALS__) {
+      if (isTauriRuntime()) {
+        const { listen } = await import('@tauri-apps/api/event');
         unlisten = await listen<{ title: string; message: string }>(
           'nsv-notification',
           handleNotification

@@ -4,26 +4,72 @@ import { defaultLayoutIcons, DefaultVideoLayout } from '@vidstack/react/player/l
 import Hls from 'hls.js';
 import { safeStorageGet } from '../../../shared/utils/storage';
 
-const HLS_STABILITY_CONFIG = {
-  enableWorker: true,
-  lowLatencyMode: false,
-  startLevel: -1,
-  capLevelToPlayerSize: false,
-  maxBufferLength: 8,
-  maxMaxBufferLength: 10,
-  backBufferLength: 2,
-  maxBufferSize: 10 * 1000 * 1000,
-  maxBufferHole: 0.5,
-  manifestLoadingTimeOut: 20000,
-  levelLoadingTimeOut: 20000,
-  fragLoadingTimeOut: 25000,
-  nudgeMaxRetry: 8,
-  abrEwmaDefaultEstimate: 24_000_000,
-};
+function getHlsStabilityConfig(isMobileLayout: boolean, forceHighQuality: boolean) {
+  if (forceHighQuality) {
+    return {
+      enableWorker: true,
+      lowLatencyMode: false,
+      startLevel: -1,
+      capLevelToPlayerSize: false,
+      maxBufferLength: 12,
+      maxMaxBufferLength: 16,
+      backBufferLength: 3,
+      maxBufferSize: 16 * 1000 * 1000,
+      maxBufferHole: 0.5,
+      manifestLoadingTimeOut: 20000,
+      levelLoadingTimeOut: 20000,
+      fragLoadingTimeOut: 25000,
+      nudgeMaxRetry: 8,
+      abrEwmaDefaultEstimate: 24_000_000,
+    };
+  }
+
+  if (isMobileLayout) {
+    return {
+      enableWorker: true,
+      lowLatencyMode: false,
+      startLevel: 2,
+      capLevelToPlayerSize: true,
+      maxBufferLength: 6,
+      maxMaxBufferLength: 8,
+      backBufferLength: 1,
+      maxBufferSize: 6 * 1000 * 1000,
+      maxBufferHole: 0.5,
+      manifestLoadingTimeOut: 20000,
+      levelLoadingTimeOut: 20000,
+      fragLoadingTimeOut: 25000,
+      nudgeMaxRetry: 8,
+      abrEwmaDefaultEstimate: 8_000_000,
+    };
+  }
+
+  return {
+    enableWorker: true,
+    lowLatencyMode: false,
+    startLevel: -1,
+    capLevelToPlayerSize: false,
+    maxBufferLength: 8,
+    maxMaxBufferLength: 10,
+    backBufferLength: 2,
+    maxBufferSize: 10 * 1000 * 1000,
+    maxBufferHole: 0.5,
+    manifestLoadingTimeOut: 20000,
+    levelLoadingTimeOut: 20000,
+    fragLoadingTimeOut: 25000,
+    nudgeMaxRetry: 8,
+    abrEwmaDefaultEstimate: 24_000_000,
+  };
+}
 
 type QualityEntry = {
   idx: number;
   height: number;
+};
+
+type QualitySelectionDecision = {
+  applied: boolean;
+  qualityIdx: number;
+  lockedHeight: number | null;
 };
 
 function parseHeight(value: string | undefined): number | null {
@@ -39,6 +85,156 @@ function sortedQualitiesByHeightDesc(qualities: any[]): QualityEntry[] {
     }))
     .filter((q) => q.height > 0)
     .sort((a, b) => b.height - a.height);
+}
+
+function isIosFamilyRuntime(): boolean {
+  const nav = globalThis.navigator;
+  if (!nav) return false;
+
+  const ua = (nav.userAgent || '').toLowerCase();
+  if (ua.includes('iphone') || ua.includes('ipad') || ua.includes('ipod')) {
+    return true;
+  }
+
+  // iPadOS desktop UA reports Macintosh + touch support.
+  return ua.includes('macintosh') && (nav.maxTouchPoints || 0) > 1;
+}
+
+function resolveHighQualityTarget(allowed: QualityEntry[]): QualityEntry {
+  const atLeast1080 = allowed.find((quality) => quality.height >= 1080);
+  if (atLeast1080) return atLeast1080;
+
+  const atLeast720 = allowed.find((quality) => quality.height >= 720);
+  if (atLeast720) return atLeast720;
+
+  return allowed[0];
+}
+
+function resolveAutoQualitySelection(
+  allowed: QualityEntry[],
+  streamType: NSVPlayerProps['streamType'],
+  minHeight: number | null,
+  isMobileLayout: boolean,
+  forceHighQuality: boolean
+): QualitySelectionDecision {
+  if (forceHighQuality) {
+    const highTarget = resolveHighQualityTarget(allowed);
+    return {
+      applied: true,
+      qualityIdx: highTarget.idx,
+      lockedHeight: highTarget.height,
+    };
+  }
+
+  const startupAllowed = isMobileLayout ? allowed.filter((q) => q.height <= 720) : allowed;
+  const startupTarget = startupAllowed.length > 0 ? startupAllowed[0] : allowed[0];
+
+  if (streamType === 'on-demand' || minHeight !== null) {
+    return {
+      applied: true,
+      qualityIdx: startupTarget.idx,
+      lockedHeight: null,
+    };
+  }
+
+  return {
+    applied: true,
+    qualityIdx: -1,
+    lockedHeight: null,
+  };
+}
+
+function resolveManualQualitySelection(
+  allowed: QualityEntry[],
+  preferredHeight: number | null
+): QualitySelectionDecision {
+  if (preferredHeight === null) {
+    return {
+      applied: false,
+      qualityIdx: -1,
+      lockedHeight: null,
+    };
+  }
+
+  const exact = allowed.find((q) => q.height === preferredHeight);
+  if (exact) {
+    return {
+      applied: true,
+      qualityIdx: exact.idx,
+      lockedHeight: exact.height,
+    };
+  }
+
+  const closestBelow = allowed.find((q) => q.height < preferredHeight);
+  if (closestBelow) {
+    return {
+      applied: true,
+      qualityIdx: closestBelow.idx,
+      lockedHeight: closestBelow.height,
+    };
+  }
+
+  const closestAbove = [...allowed].reverse().find((q) => q.height > preferredHeight);
+  if (closestAbove) {
+    return {
+      applied: true,
+      qualityIdx: closestAbove.idx,
+      lockedHeight: closestAbove.height,
+    };
+  }
+
+  return {
+    applied: false,
+    qualityIdx: -1,
+    lockedHeight: null,
+  };
+}
+
+function resolveQualitySelection(
+  sorted: QualityEntry[],
+  minQuality: string | undefined,
+  preferredQuality: string | undefined,
+  streamType: NSVPlayerProps['streamType'],
+  isMobileLayout: boolean,
+  forceHighQuality: boolean
+): QualitySelectionDecision {
+  if (sorted.length === 0) {
+    return {
+      applied: false,
+      qualityIdx: -1,
+      lockedHeight: null,
+    };
+  }
+
+  const effectiveMinQuality = forceHighQuality ? '720' : minQuality;
+  let effectivePreferredQuality = preferredQuality;
+  if (forceHighQuality && (!effectivePreferredQuality || effectivePreferredQuality === 'auto')) {
+    effectivePreferredQuality = '1080';
+  }
+
+  const minHeight = parseHeight(effectiveMinQuality);
+  const allowed = minHeight === null ? sorted : sorted.filter((q) => q.height >= minHeight);
+
+  if (allowed.length === 0) {
+    return {
+      applied: false,
+      qualityIdx: -1,
+      lockedHeight: null,
+    };
+  }
+
+  if (!effectivePreferredQuality || effectivePreferredQuality === 'auto') {
+    return resolveAutoQualitySelection(
+      allowed,
+      streamType,
+      minHeight,
+      isMobileLayout,
+      forceHighQuality
+    );
+  }
+
+  const preferredHeight = parseHeight(effectivePreferredQuality);
+  return resolveManualQualitySelection(allowed, preferredHeight);
 }
 
 export type NSVMediaSource = {
@@ -65,6 +261,7 @@ type NSVPlayerProps = {
   seekTo?: number | null;
   preferredQuality?: string;
   minQuality?: string;
+  isMobileLayout?: boolean;
   className?: string;
   textTracks?: NSVTextTrack[];
   onTimeUpdate?: (time: number) => void;
@@ -100,6 +297,7 @@ const NSVPlayer = React.memo(
     seekTo,
     preferredQuality,
     minQuality,
+    isMobileLayout = false,
     className,
     textTracks = [],
     onTimeUpdate,
@@ -123,6 +321,8 @@ const NSVPlayer = React.memo(
     const didApplyPreferredQualityRef = useRef(false);
     const lockedQualityHeightRef = useRef<number | null>(null);
     const hlsInstanceRef = useRef<Hls | null>(null);
+    const isIosFamily = useMemo(() => isIosFamilyRuntime(), []);
+    const forceHighQuality = isIosFamily && isMobileLayout;
 
     const src = useMemo(
       () => ({
@@ -210,70 +410,18 @@ const NSVPlayer = React.memo(
 
       try {
         const sorted = sortedQualitiesByHeightDesc(store.qualities as any[]);
-        if (sorted.length === 0) {
-          didApplyPreferredQualityRef.current = false;
-          lockedQualityHeightRef.current = null;
-          remote.changeQuality(-1);
-          return;
-        }
+        const decision = resolveQualitySelection(
+          sorted,
+          minQuality,
+          preferredQuality,
+          streamType,
+          isMobileLayout,
+          forceHighQuality
+        );
 
-        const minHeight = parseHeight(minQuality || undefined);
-        const allowed =
-          minHeight === null ? sorted : sorted.filter((quality) => quality.height >= minHeight);
-
-        if (allowed.length === 0) {
-          didApplyPreferredQualityRef.current = false;
-          lockedQualityHeightRef.current = null;
-          remote.changeQuality(-1);
-          return;
-        }
-
-        if (!preferredQuality || preferredQuality === 'auto') {
-          lockedQualityHeightRef.current = null;
-          if (streamType === 'on-demand' || minHeight !== null) {
-            remote.changeQuality(allowed[0].idx);
-          } else {
-            remote.changeQuality(-1);
-          }
-          didApplyPreferredQualityRef.current = true;
-          return;
-        }
-
-        const preferredHeight = parseHeight(preferredQuality);
-        if (preferredHeight === null) {
-          didApplyPreferredQualityRef.current = false;
-          lockedQualityHeightRef.current = null;
-          remote.changeQuality(-1);
-          return;
-        }
-
-        const exact = allowed.find((q) => q.height === preferredHeight);
-        if (exact) {
-          lockedQualityHeightRef.current = exact.height;
-          remote.changeQuality(exact.idx);
-          didApplyPreferredQualityRef.current = true;
-          return;
-        }
-
-        const closestBelow = allowed.find((q) => q.height < preferredHeight);
-        if (closestBelow) {
-          lockedQualityHeightRef.current = closestBelow.height;
-          remote.changeQuality(closestBelow.idx);
-          didApplyPreferredQualityRef.current = true;
-          return;
-        }
-
-        const closestAbove = [...allowed].reverse().find((q) => q.height > preferredHeight);
-        if (closestAbove) {
-          lockedQualityHeightRef.current = closestAbove.height;
-          remote.changeQuality(closestAbove.idx);
-          didApplyPreferredQualityRef.current = true;
-          return;
-        }
-
-        didApplyPreferredQualityRef.current = false;
-        lockedQualityHeightRef.current = null;
-        remote.changeQuality(-1);
+        didApplyPreferredQualityRef.current = decision.applied;
+        lockedQualityHeightRef.current = decision.lockedHeight;
+        remote.changeQuality(decision.qualityIdx);
       } catch (error) {
         didApplyPreferredQualityRef.current = false;
         console.error('[NSVPlayer] Failed to apply preferred quality', error);
@@ -283,10 +431,34 @@ const NSVPlayer = React.memo(
       minQuality,
       preferredQuality,
       remote,
+      isMobileLayout,
+      forceHighQuality,
       store.canSetQuality,
       store.qualities,
       streamType,
     ]);
+
+    useEffect(() => {
+      if (!forceHighQuality) return;
+      if (!store.canSetQuality) return;
+      if (!store.qualities || store.qualities.length === 0) return;
+
+      const reapplyTargetQuality = () => {
+        try {
+          const sorted = sortedQualitiesByHeightDesc(store.qualities as any[]);
+          if (sorted.length === 0) return;
+          const target = resolveHighQualityTarget(sorted);
+          lockedQualityHeightRef.current = target.height;
+          remote.changeQuality(target.idx);
+        } catch (error) {
+          console.warn('[NSVPlayer] Failed to enforce iOS high quality mode', error);
+        }
+      };
+
+      reapplyTargetQuality();
+      const timer = globalThis.setInterval(reapplyTargetQuality, 4000);
+      return () => globalThis.clearInterval(timer);
+    }, [forceHighQuality, remote, store.canSetQuality, store.qualities]);
 
     const handleHlsInstance = useCallback((instance: Hls) => {
       hlsInstanceRef.current = instance;
@@ -364,11 +536,12 @@ const NSVPlayer = React.memo(
     const onProviderChange = useCallback((provider: any) => {
       if (provider?.type === 'hls') {
         provider.library = Hls;
+        const hlsConfig = getHlsStabilityConfig(isMobileLayout, forceHighQuality);
         provider.config = provider.config
-          ? { ...provider.config, ...HLS_STABILITY_CONFIG }
-          : HLS_STABILITY_CONFIG;
+          ? { ...provider.config, ...hlsConfig }
+          : hlsConfig;
       }
-    }, []);
+    }, [isMobileLayout, forceHighQuality]);
 
     const renderedTextTracks = useMemo(
       () =>
