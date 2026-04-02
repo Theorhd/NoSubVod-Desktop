@@ -2540,9 +2540,11 @@ impl TwitchService {
         let mut playlist = format!(
             "#EXTM3U\n#EXT-X-TWITCH-INFO:ORIGIN=\"s3\",B=\"false\",REGION=\"EU\",USER-IP=\"127.0.0.1\",SERVING-ID=\"{serving_id}\",CLUSTER=\"cloudfront_vod\",USER-COUNTRY=\"BE\",MANIFEST-CLUSTER=\"cloudfront_vod\""
         );
-        let mut inserted_variants = 0usize;
 
-        for (res_key, resolution, fps) in &resolutions {
+        let mut start_bandwidth: u64 = 8_534_030;
+        let mut set = tokio::task::JoinSet::new();
+
+        for (res_key, resolution, fps) in resolutions {
             let stream_url = build_stream_url(
                 &domain,
                 &vod_special_id,
@@ -2552,34 +2554,44 @@ impl TwitchService {
                 days_diff,
                 channel_login,
             );
+            let client = self.android_tv_client.clone();
+            let res_key = res_key.to_string();
+            let resolution = resolution.to_string();
 
-            let codec = match is_valid_quality(&self.android_tv_client, &stream_url).await {
-                Some(c) => Some(c),
-                None => is_valid_quality(&self.shared_client, &stream_url).await,
-            };
-            let Some(codec) = codec else {
-                continue;
-            };
+            set.spawn(async move {
+                let codec = is_valid_quality(&client, &stream_url).await;
+                (res_key, resolution, fps, stream_url, codec)
+            });
+        }
 
-            let quality = if *res_key == "chunked" {
-                let height = resolution.split('x').nth(1).unwrap_or("1080");
-                format!("{height}p")
-            } else {
-                res_key.to_string()
-            };
-            let enabled = if *res_key == "chunked" { "YES" } else { "NO" };
+        let mut results = Vec::new();
+        while let Some(res) = set.join_next().await {
+            if let Ok(val) = res {
+                results.push(val);
+            }
+        }
 
-            let proxy_id =
-                match register_variant_proxy_target(&self.variant_cache, &stream_url).await {
-                    Ok(id) => id,
-                    Err(_) => continue,
+        // Sort results to maintain the same order as resolutions vector (highest first)
+        let order: HashMap<&str, usize> =
+            vec!["chunked", "1080p60", "720p60", "480p30", "360p30", "160p30"]
+                .into_iter()
+                .enumerate()
+                .map(|(i, k)| (k, i))
+                .collect();
+
+        results.sort_by_key(|(res_key, _, _, _, _)| {
+            order.get(res_key.as_str()).copied().unwrap_or(99)
+        });
+
+        for (res_key, resolution, fps, stream_url, codec_opt) in results {
+            if let Some(codec) = codec_opt {
+                let quality = if res_key == "chunked" {
+                    let height = resolution.split('x').nth(1).unwrap_or("1080");
+                    format!("{height}p")
+                } else {
+                    res_key.clone()
                 };
-            let proxy_url = format!(
-                "/api/stream/variant.m3u8?id={}&t={}",
-                urlencoding_simple(&proxy_id),
-                token
-            );
-            let bandwidth = quality_bandwidth_bps(res_key, *fps, resolution);
+                let enabled = if res_key == "chunked" { "YES" } else { "NO" };
 
             playlist.push_str(&format!(
                 "\n#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID=\"{quality}\",NAME=\"{quality}\",AUTOSELECT={enabled},DEFAULT={enabled}\n#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},CODECS=\"{codec},mp4a.40.2\",RESOLUTION={resolution},VIDEO=\"{quality}\",FRAME-RATE={fps}\n{proxy_url}"
