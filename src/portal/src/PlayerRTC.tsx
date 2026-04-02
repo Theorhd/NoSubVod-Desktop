@@ -1,325 +1,680 @@
-import React, { useRef, useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import {
-  ArrowLeft,
-  Activity,
-  Smartphone,
-  Play,
-  Pause,
-  RotateCcw,
-  RotateCw,
-  Volume2,
-  VolumeX,
-} from 'lucide-react';
-import type { RemoteControlPayload, ScreenShareSessionState } from '../../shared/types';
 import { useResponsive } from './hooks/useResponsive';
 import { useScreenShareState } from '../../shared/hooks/useScreenShareState';
+import type { RemoteControlPayload, ScreenShareSessionState } from '../../shared/types';
 import { useWebRTCViewer } from './hooks/useWebRTCViewer';
 import { usePlayerControls } from './hooks/usePlayerControls';
-import {
-  formatStartedAt,
-  pointerButtonFromMouseEvent,
-  normalizedPointerPosition,
-} from '../../shared/utils/player';
 
-interface RemoteControlPanelProps {
-  sendRemoteControl: (payload: RemoteControlPayload) => void;
+function formatStartedAt(startedAt: number | null): string {
+  if (!startedAt) return 'Not started';
+  const date = new Date(startedAt);
+  return date.toLocaleString();
 }
 
-const RemoteControlPanel = React.memo(({ sendRemoteControl }: RemoteControlPanelProps) => (
-  <div
-    style={{
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '24px',
-      alignItems: 'center',
-      justifyContent: 'center',
-      height: '100%',
-      minHeight: '300px',
-    }}
-  >
-    <Smartphone size={40} style={{ color: 'var(--primary)', opacity: 0.5, marginBottom: '8px' }} />
+const pointerButtonFromMouseEvent = (button: number): 'left' | 'middle' | 'right' => {
+  if (button === 1) return 'middle';
+  if (button === 2) return 'right';
+  return 'left';
+};
 
-    <div style={{ display: 'flex', gap: '16px' }}>
-      <button
-        className="secondary-btn"
-        style={{ width: '64px', height: '64px', borderRadius: '50%' }}
-        onClick={() => sendRemoteControl({ command: 'seek', value: -10 })}
-      >
-        <RotateCcw size={24} />
-      </button>
-      <button
-        className="action-btn"
-        style={{ width: '80px', height: '80px', borderRadius: '50%', background: 'var(--primary)' }}
-        onClick={() => sendRemoteControl({ command: 'play' })}
-      >
-        <Play size={32} fill="currentColor" />
-      </button>
-      <button
-        className="action-btn"
-        style={{
-          width: '80px',
-          height: '80px',
-          borderRadius: '50%',
-          background: 'var(--surface-elevated)',
-        }}
-        onClick={() => sendRemoteControl({ command: 'pause' })}
-      >
-        <Pause size={32} fill="currentColor" />
-      </button>
-      <button
-        className="secondary-btn"
-        style={{ width: '64px', height: '64px', borderRadius: '50%' }}
-        onClick={() => sendRemoteControl({ command: 'seek', value: 10 })}
-      >
-        <RotateCw size={24} />
-      </button>
-    </div>
+const normalizedPointerPosition = (
+  event: React.MouseEvent<HTMLButtonElement>,
+  surface: HTMLButtonElement | null
+) => {
+  if (!surface) {
+    return { x: 0.5, y: 0.5 };
+  }
 
-    <div style={{ width: '100%', padding: '0 20px', marginTop: '12px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-        <Volume2 size={18} />
-        <span style={{ fontSize: '0.8rem', fontWeight: 700 }}>Host Volume</span>
-      </div>
-      <input
-        type="range"
-        min={0}
-        max={1}
-        step={0.1}
-        defaultValue={1}
-        style={{ width: '100%' }}
-        onChange={(e) =>
-          sendRemoteControl({ command: 'volume', value: Number.parseFloat(e.target.value) })
-        }
-      />
-    </div>
+  const rect = surface.getBoundingClientRect();
+  const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)));
+  const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / Math.max(1, rect.height)));
 
-    <button
-      className="secondary-btn"
-      style={{ width: '100%', padding: '14px', borderRadius: 'var(--radius-md)', fontWeight: 700 }}
-      onClick={() => sendRemoteControl({ command: 'mute' })}
-    >
-      Mute / Unmute Host
-    </button>
+  return {
+    x: Number.isFinite(x) ? x : 0.5,
+    y: Number.isFinite(y) ? y : 0.5,
+  };
+};
 
-    <p
-      style={{
-        fontSize: '0.75rem',
-        color: 'var(--text-muted)',
-        textAlign: 'center',
-        lineHeight: '1.4',
-      }}
-    >
-      Ces commandes contrôlent directement le lecteur vidéo sur la machine hôte.
-    </p>
-  </div>
-));
-
-RemoteControlPanel.displayName = 'RemoteControlPanel';
-
-interface SessionInfoPanelProps {
-  state: any;
-  signalStatus: string;
-}
-
-const SessionInfoPanel = React.memo(({ state, signalStatus }: SessionInfoPanelProps) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-    <section>
-      <div
-        style={{
-          fontSize: '0.75rem',
-          color: 'var(--text-muted)',
-          textTransform: 'uppercase',
-          marginBottom: '8px',
-          fontWeight: 800,
-        }}
-      >
-        Host Device
-      </div>
-      <div style={{ fontWeight: 700 }}>{state.sourceLabel || 'N/A'}</div>
-      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-        {state.sourceType} session
-      </div>
-    </section>
-
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-      <section>
-        <div
-          style={{
-            fontSize: '0.75rem',
-            color: 'var(--text-muted)',
-            textTransform: 'uppercase',
-            marginBottom: '4px',
-            fontWeight: 800,
-          }}
-        >
-          Viewers
-        </div>
-        <div style={{ fontSize: '1.1rem', fontWeight: 700 }}>
-          {state.currentViewers}{' '}
-          <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>/ {state.maxViewers}</span>
-        </div>
-      </section>
-      <section>
-        <div
-          style={{
-            fontSize: '0.75rem',
-            color: 'var(--text-muted)',
-            textTransform: 'uppercase',
-            marginBottom: '4px',
-            fontWeight: 800,
-          }}
-        >
-          Signaling
-        </div>
-        <div style={{ fontSize: '0.9rem', color: 'var(--success)', fontWeight: 600 }}>
-          {signalStatus}
-        </div>
-      </section>
-    </div>
-
-    <section>
-      <div
-        style={{
-          fontSize: '0.75rem',
-          color: 'var(--text-muted)',
-          textTransform: 'uppercase',
-          marginBottom: '8px',
-          fontWeight: 800,
-        }}
-      >
-        Started At
-      </div>
-      <div style={{ fontSize: '0.9rem' }}>{formatStartedAt(state.startedAt)}</div>
-    </section>
-
-    <div
-      className="card glass"
-      style={{ marginTop: 'auto', padding: '12px', fontSize: '0.8rem', color: 'var(--text-muted)' }}
-    >
-      <Activity size={14} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
-      {state.interactive
-        ? 'Inputs are forwarded to host window.'
-        : 'Remote interaction is disabled.'}
-    </div>
-  </div>
-));
-
-SessionInfoPanel.displayName = 'SessionInfoPanel';
-
-interface PlayerRTCTopBarProps {
-  onBack: () => void;
-  active: boolean;
+type PlayerRTCViewProps = {
+  isMobileLayout: boolean;
+  useNativeMobilePlayer: boolean;
   statusLabel: string;
   rtcStatus: string;
-}
-
-const PlayerRTCTopBar = React.memo(
-  ({ onBack, active, statusLabel, rtcStatus }: PlayerRTCTopBarProps) => (
-    <div className="top-bar glass">
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flex: 1 }}>
-        <button
-          onClick={onBack}
-          className="secondary-btn"
-          style={{ width: '40px', height: '40px', padding: 0, borderRadius: '50%' }}
-        >
-          <ArrowLeft size={20} />
-        </button>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <h2 style={{ fontSize: '1rem', fontWeight: 800, margin: 0 }}>Screen Share</h2>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              fontSize: '0.75rem',
-              color: 'var(--text-muted)',
-            }}
-          >
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <div
-                style={{
-                  width: '6px',
-                  height: '6px',
-                  borderRadius: '50%',
-                  background: active ? 'var(--success)' : 'var(--text-muted)',
-                }}
-              />
-              {statusLabel}
-            </span>
-            <span>•</span>
-            <span>{rtcStatus}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-);
-
-PlayerRTCTopBar.displayName = 'PlayerRTCTopBar';
-
-interface PlayerControlsOverlayProps {
+  signalStatus: string;
+  hasRemoteStream: boolean;
+  controlsVisible: boolean;
+  isFullscreen: boolean;
   volume: number;
   isMuted: boolean;
+  streamError: string;
+  state: {
+    active: boolean;
+    sessionId: string | null;
+    sourceType: string | null;
+    sourceLabel: string | null;
+    startedAt: number | null;
+    interactive: boolean;
+    maxViewers: number;
+    currentViewers: number;
+    streamReady: boolean;
+    streamMessage: string | null;
+  };
+  remoteVideoRef: React.RefObject<HTMLVideoElement | null>;
+  viewerSurfaceRef: React.RefObject<HTMLButtonElement | null>;
+  playerFrameRef: React.RefObject<HTMLDivElement | null>;
+  handleBack: () => void;
+  handleViewerMouseMove: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  handleViewerMouseDown: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  handleViewerMouseUp: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  handleViewerWheel: (event: React.WheelEvent<HTMLButtonElement>) => void;
+  handleViewerKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
+  handleViewerKeyUp: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
+  revealControls: () => void;
+  toggleMute: () => void;
+  handleVolumeChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  toggleFullscreen: () => Promise<void>;
+  sendRemoteControl: (payload: RemoteControlPayload) => void;
+};
+
+type PlayerRTCHeaderProps = Readonly<{
+  isMobileLayout: boolean;
+  statusLabel: string;
+  rtcStatus: string;
+  signalStatus: string;
+  handleBack: () => void;
+}>;
+
+type PlayerRTCOverlayControlsProps = Readonly<{
+  isMobileLayout: boolean;
+  isMuted: boolean;
+  volume: number;
   isFullscreen: boolean;
   toggleMute: () => void;
-  handleVolumeChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  toggleFullscreen: () => void;
+  revealControls: () => void;
+  handleVolumeChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  toggleFullscreen: () => Promise<void>;
+}>;
+
+type PlayerRTCViewportProps = Readonly<
+  Omit<PlayerRTCViewProps, 'statusLabel' | 'rtcStatus' | 'signalStatus' | 'handleBack' | 'sendRemoteControl'>
+>;
+
+type PlayerRTCSidebarProps = Readonly<{
+  isMobileLayout: boolean;
+  statusLabel: string;
+  signalStatus: string;
+  rtcStatus: string;
+  hasRemoteStream: boolean;
+  sendRemoteControl: (payload: RemoteControlPayload) => void;
+  state: PlayerRTCViewProps['state'];
+}>;
+
+function PlayerRTCTransportControls({
+  hasRemoteStream,
+  sendRemoteControl,
+}: Readonly<{
+  hasRemoteStream: boolean;
+  sendRemoteControl: (payload: RemoteControlPayload) => void;
+}>) {
+  const buttonStyle: React.CSSProperties = {
+    border: '1px solid #36466f',
+    background: '#1f2a46',
+    color: '#eff3ff',
+    borderRadius: '7px',
+    padding: '8px 10px',
+    cursor: hasRemoteStream ? 'pointer' : 'not-allowed',
+    fontSize: '12px',
+    fontWeight: 700,
+    minWidth: '72px',
+    opacity: hasRemoteStream ? 1 : 0.5,
+  };
+
+  return (
+    <div
+      style={{
+        border: '1px solid #2f3f66',
+        borderRadius: '10px',
+        padding: '10px',
+        background: 'rgba(20, 28, 45, 0.5)',
+      }}
+    >
+      <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '8px' }}>Contrôles</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+        <button
+          type="button"
+          style={buttonStyle}
+          disabled={!hasRemoteStream}
+          onClick={() => sendRemoteControl({ command: 'seek', value: -10 })}
+        >
+          ← 10s
+        </button>
+        <button
+          type="button"
+          style={buttonStyle}
+          disabled={!hasRemoteStream}
+          onClick={() => sendRemoteControl({ command: 'seek', value: 10 })}
+        >
+          10s →
+        </button>
+        <button
+          type="button"
+          style={buttonStyle}
+          disabled={!hasRemoteStream}
+          onClick={() => sendRemoteControl({ command: 'play' })}
+        >
+          Play
+        </button>
+        <button
+          type="button"
+          style={buttonStyle}
+          disabled={!hasRemoteStream}
+          onClick={() => sendRemoteControl({ command: 'pause' })}
+        >
+          Pause
+        </button>
+      </div>
+    </div>
+  );
 }
 
-const PlayerControlsOverlay = React.memo(
-  ({
-    volume,
-    isMuted,
-    isFullscreen,
-    toggleMute,
-    handleVolumeChange,
-    toggleFullscreen,
-  }: PlayerControlsOverlayProps) => (
+function PlayerRTCHeader({
+  isMobileLayout,
+  statusLabel,
+  rtcStatus,
+  signalStatus,
+  handleBack,
+}: PlayerRTCHeaderProps) {
+  return (
+    <div
+      style={{
+        backgroundColor: '#18181b',
+        padding: isMobileLayout ? '10px 12px' : '10px 20px',
+        display: 'flex',
+        alignItems: 'center',
+        borderBottom: '1px solid #3a3a3d',
+        zIndex: 10,
+        flexShrink: 0,
+        gap: isMobileLayout ? '8px' : '10px',
+      }}
+    >
+      <button
+        onClick={handleBack}
+        style={{
+          color: '#efeff1',
+          fontSize: '14px',
+          fontWeight: 'bold',
+          padding: '5px 10px',
+          backgroundColor: '#3a3a3d',
+          borderRadius: '4px',
+          border: 'none',
+          cursor: 'pointer',
+        }}
+        type="button"
+      >
+        Back
+      </button>
+
+      <h2
+        style={{
+          color: 'white',
+          fontSize: '14px',
+          margin: 0,
+          flexGrow: 1,
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}
+      >
+        Screen Share
+      </h2>
+
+      <span style={{ color: '#efeff1', fontSize: '12px' }}>
+        {isMobileLayout
+          ? `${statusLabel} · ${rtcStatus}`
+          : `${statusLabel} · ${signalStatus} · ${rtcStatus}`}
+      </span>
+    </div>
+  );
+}
+
+function PlayerRTCOverlayControls({
+  isMobileLayout,
+  isMuted,
+  volume,
+  isFullscreen,
+  toggleMute,
+  revealControls,
+  handleVolumeChange,
+  toggleFullscreen,
+}: PlayerRTCOverlayControlsProps) {
+  return (
     <div
       style={{
         position: 'absolute',
-        bottom: '24px',
         left: '50%',
+        bottom: isMobileLayout ? '8px' : '14px',
         transform: 'translateX(-50%)',
+        width: isMobileLayout ? 'calc(100% - 16px)' : 'min(620px, calc(100% - 28px))',
+        background: 'linear-gradient(180deg, rgba(16, 18, 28, 0.84) 0%, rgba(9, 10, 16, 0.9) 100%)',
+        border: '1px solid rgba(150, 162, 220, 0.28)',
+        borderRadius: '10px',
+        padding: '8px 10px',
         display: 'flex',
-        gap: '12px',
-        padding: '12px',
-        borderRadius: 'var(--radius-lg)',
-        background: 'rgba(7, 8, 15, 0.8)',
-        backdropFilter: 'blur(12px)',
-        border: '1px solid var(--border)',
-        zIndex: 100,
+        alignItems: 'center',
+        gap: '10px',
+        flexWrap: isMobileLayout ? 'wrap' : 'nowrap',
+        backdropFilter: 'blur(6px)',
       }}
     >
       <button
-        onClick={toggleMute}
-        className="secondary-btn"
-        style={{ width: '40px', height: '40px', padding: 0 }}
+        type="button"
+        onClick={() => {
+          toggleMute();
+          revealControls();
+        }}
+        style={{
+          border: '1px solid #36466f',
+          background: '#1f2a46',
+          color: '#eff3ff',
+          borderRadius: '7px',
+          padding: '6px 10px',
+          cursor: 'pointer',
+          fontSize: '12px',
+          fontWeight: 600,
+        }}
+        aria-label={isMuted ? 'Activer le son' : 'Couper le son'}
       >
-        {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+        {isMuted || volume <= 0 ? 'Son coupe' : 'Son actif'}
       </button>
+
       <input
         type="range"
         min={0}
         max={1}
         step={0.01}
         value={isMuted ? 0 : volume}
-        onChange={handleVolumeChange}
-        style={{ width: '120px' }}
+        onChange={(event) => {
+          handleVolumeChange(event);
+          revealControls();
+        }}
+        aria-label="Volume"
+        style={{
+          flex: isMobileLayout ? '1 1 100%' : 1,
+          accentColor: '#8ca6ff',
+          cursor: 'pointer',
+          order: isMobileLayout ? 3 : 0,
+        }}
       />
+
+      <span style={{ color: '#c9d2f3', fontSize: '12px', minWidth: '38px', textAlign: 'right' }}>
+        {Math.round((isMuted ? 0 : volume) * 100)}%
+      </span>
+
       <button
-        onClick={() => toggleFullscreen()}
-        className="action-btn"
-        style={{ fontSize: '0.85rem' }}
+        type="button"
+        onClick={() => {
+          void toggleFullscreen();
+          revealControls();
+        }}
+        style={{
+          border: '1px solid #36466f',
+          background: '#1f2a46',
+          color: '#eff3ff',
+          borderRadius: '7px',
+          padding: '6px 10px',
+          cursor: 'pointer',
+          fontSize: '12px',
+          fontWeight: 600,
+        }}
+        aria-label={isFullscreen ? 'Quitter le plein ecran' : 'Activer le plein ecran'}
       >
-        {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+        {isFullscreen ? 'Quitter plein ecran' : 'Plein ecran'}
       </button>
     </div>
-  )
-);
+  );
+}
 
-PlayerControlsOverlay.displayName = 'PlayerControlsOverlay';
+function PlayerRTCViewport({
+  isMobileLayout,
+  useNativeMobilePlayer,
+  hasRemoteStream,
+  controlsVisible,
+  isFullscreen,
+  volume,
+  isMuted,
+  streamError,
+  state,
+  remoteVideoRef,
+  viewerSurfaceRef,
+  playerFrameRef,
+  handleViewerMouseMove,
+  handleViewerMouseDown,
+  handleViewerMouseUp,
+  handleViewerWheel,
+  handleViewerKeyDown,
+  handleViewerKeyUp,
+  revealControls,
+  toggleMute,
+  handleVolumeChange,
+  toggleFullscreen,
+}: PlayerRTCViewportProps) {
+  const remoteStreamNode = useNativeMobilePlayer ? (
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#000',
+      }}
+    >
+      <video
+        ref={remoteVideoRef}
+        className="screen-share-video"
+        autoPlay
+        playsInline
+        muted={isMuted}
+        controls
+        controlsList="nodownload noplaybackrate"
+        style={{
+          width: '100%',
+          height: '100%',
+          objectFit: 'contain',
+          backgroundColor: '#000',
+        }}
+      >
+        <track kind="captions" />
+      </video>
+    </div>
+  ) : (
+    <button
+      ref={viewerSurfaceRef}
+      type="button"
+      className="screen-share-remote-surface"
+      style={{
+        touchAction: 'none',
+        border: 'none',
+        padding: 0,
+        background: 'transparent',
+        width: '100%',
+        height: '100%',
+        display: 'block',
+      }}
+      aria-label="Interactive remote stream"
+      onMouseMove={handleViewerMouseMove}
+      onMouseDown={handleViewerMouseDown}
+      onMouseUp={handleViewerMouseUp}
+      onWheelCapture={handleViewerWheel}
+      onKeyDown={handleViewerKeyDown}
+      onKeyUp={handleViewerKeyUp}
+      onTouchStart={revealControls}
+      onContextMenu={(event) => event.preventDefault()}
+      onClick={() => viewerSurfaceRef.current?.focus()}
+    >
+      <video
+        ref={remoteVideoRef}
+        className="screen-share-video"
+        autoPlay
+        playsInline
+        style={{
+          width: '100%',
+          height: '100%',
+          objectFit: 'contain',
+          backgroundColor: '#000',
+        }}
+      >
+        <track kind="captions" />
+      </video>
+    </button>
+  );
+
+  return (
+    <div
+      ref={playerFrameRef}
+      style={{
+        flex: 1,
+        minHeight: isMobileLayout ? '50vh' : undefined,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        justifyContent: 'stretch',
+        backgroundColor: '#000',
+        position: 'relative',
+        overflow: 'hidden',
+        cursor: isFullscreen && hasRemoteStream && !controlsVisible ? 'none' : 'default',
+      }}
+    >
+      {hasRemoteStream ? (
+        remoteStreamNode
+      ) : (
+        <div
+          style={{
+            color: '#efeff1',
+            textAlign: 'center',
+            padding: '24px',
+          }}
+        >
+          <div style={{ fontSize: '18px', marginBottom: '8px' }}>Waiting for host stream...</div>
+          <div style={{ color: '#a1a1aa', fontSize: '14px' }}>
+            {state.streamMessage ||
+              'When the host starts sharing, the WebRTC feed will appear here.'}
+          </div>
+        </div>
+      )}
+
+      {hasRemoteStream && controlsVisible && !useNativeMobilePlayer && (
+        <PlayerRTCOverlayControls
+          isMobileLayout={isMobileLayout}
+          isMuted={isMuted}
+          volume={volume}
+          isFullscreen={isFullscreen}
+          toggleMute={toggleMute}
+          revealControls={revealControls}
+          handleVolumeChange={handleVolumeChange}
+          toggleFullscreen={toggleFullscreen}
+        />
+      )}
+
+      {streamError && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 12,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            padding: '8px 12px',
+            borderRadius: '6px',
+            color: '#ff9c9c',
+            fontSize: '13px',
+          }}
+        >
+          {streamError}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlayerRTCSidebar({
+  isMobileLayout,
+  statusLabel,
+  signalStatus,
+  rtcStatus,
+  hasRemoteStream,
+  sendRemoteControl,
+  state,
+}: PlayerRTCSidebarProps) {
+  return (
+    <div
+      style={{
+        width: isMobileLayout ? '100%' : '320px',
+        backgroundColor: '#0e0e10',
+        borderLeft: isMobileLayout ? 'none' : '1px solid #3a3a3d',
+        borderTop: isMobileLayout ? '1px solid #3a3a3d' : 'none',
+        padding: isMobileLayout ? '12px' : '16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
+        flexShrink: 0,
+        maxHeight: isMobileLayout ? '38vh' : 'none',
+        overflowY: isMobileLayout ? 'auto' : 'visible',
+      }}
+    >
+      <PlayerRTCTransportControls
+        hasRemoteStream={hasRemoteStream}
+        sendRemoteControl={sendRemoteControl}
+      />
+
+      <div>
+        <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Session</div>
+        <div style={{ color: '#efeff1', fontSize: '14px', fontWeight: 'bold' }}>
+          {state.sessionId || 'Not started'}
+        </div>
+      </div>
+
+      <div>
+        <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Source</div>
+        <div style={{ color: '#efeff1', fontSize: '14px', fontWeight: 'bold' }}>
+          {state.sourceLabel || 'No source'} ({state.sourceType || 'n/a'})
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+        <div>
+          <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Status</div>
+          <div style={{ color: '#efeff1', fontSize: '14px' }}>{statusLabel}</div>
+        </div>
+        <div>
+          <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Viewers</div>
+          <div style={{ color: '#efeff1', fontSize: '14px' }}>
+            {state.currentViewers}/{state.maxViewers}
+          </div>
+        </div>
+        <div>
+          <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Signal</div>
+          <div style={{ color: '#efeff1', fontSize: '14px' }}>{signalStatus}</div>
+        </div>
+        <div>
+          <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>WebRTC</div>
+          <div style={{ color: '#efeff1', fontSize: '14px' }}>{rtcStatus}</div>
+        </div>
+      </div>
+
+      <div>
+        <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Started</div>
+        <div style={{ color: '#efeff1', fontSize: '14px' }}>{formatStartedAt(state.startedAt)}</div>
+      </div>
+
+      <div style={{ color: '#a1a1aa', fontSize: '12px', marginTop: '8px' }}>
+        {state.interactive
+          ? 'Pointer/keyboard input forwarded to host.'
+          : 'Remote control disabled by host.'}
+      </div>
+    </div>
+  );
+}
+
+function renderPlayerRTCView(props: PlayerRTCViewProps) {
+  const {
+    isMobileLayout,
+    useNativeMobilePlayer,
+    statusLabel,
+    rtcStatus,
+    signalStatus,
+    hasRemoteStream,
+    controlsVisible,
+    isFullscreen,
+    volume,
+    isMuted,
+    streamError,
+    state,
+    remoteVideoRef,
+    viewerSurfaceRef,
+    playerFrameRef,
+    handleBack,
+    handleViewerMouseMove,
+    handleViewerMouseDown,
+    handleViewerMouseUp,
+    handleViewerWheel,
+    handleViewerKeyDown,
+    handleViewerKeyUp,
+    revealControls,
+    toggleMute,
+    handleVolumeChange,
+    toggleFullscreen,
+    sendRemoteControl,
+  } = props;
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        position: 'fixed',
+        inset: 0,
+        width: '100%',
+        height: '100dvh',
+        backgroundColor: '#07080f',
+        overflow: 'hidden',
+      }}
+    >
+      <PlayerRTCHeader
+        isMobileLayout={isMobileLayout}
+        statusLabel={statusLabel}
+        rtcStatus={rtcStatus}
+        signalStatus={signalStatus}
+        handleBack={handleBack}
+      />
+
+      <div
+        style={{
+          display: 'flex',
+          flex: 1,
+          overflow: 'hidden',
+          flexDirection: isMobileLayout ? 'column' : 'row',
+        }}
+      >
+        <PlayerRTCViewport
+          isMobileLayout={isMobileLayout}
+          useNativeMobilePlayer={useNativeMobilePlayer}
+          hasRemoteStream={hasRemoteStream}
+          controlsVisible={controlsVisible}
+          isFullscreen={isFullscreen}
+          volume={volume}
+          isMuted={isMuted}
+          streamError={streamError}
+          state={state}
+          remoteVideoRef={remoteVideoRef}
+          viewerSurfaceRef={viewerSurfaceRef}
+          playerFrameRef={playerFrameRef}
+          handleViewerMouseMove={handleViewerMouseMove}
+          handleViewerMouseDown={handleViewerMouseDown}
+          handleViewerMouseUp={handleViewerMouseUp}
+          handleViewerWheel={handleViewerWheel}
+          handleViewerKeyDown={handleViewerKeyDown}
+          handleViewerKeyUp={handleViewerKeyUp}
+          revealControls={revealControls}
+          toggleMute={toggleMute}
+          handleVolumeChange={handleVolumeChange}
+          toggleFullscreen={toggleFullscreen}
+        />
+
+        <PlayerRTCSidebar
+          isMobileLayout={isMobileLayout}
+          statusLabel={statusLabel}
+          signalStatus={signalStatus}
+          rtcStatus={rtcStatus}
+          hasRemoteStream={hasRemoteStream}
+          sendRemoteControl={sendRemoteControl}
+          state={state}
+        />
+      </div>
+    </div>
+  );
+}
 
 export default function PlayerRTC() {
   const navigate = useNavigate();
@@ -327,13 +682,11 @@ export default function PlayerRTC() {
   const sessionIdParam = searchParams.get('sessionId');
 
   const { isMobileLayout, isTouchDevice } = useResponsive();
-
   const fetchScreenShareState = useCallback(async () => {
     const response = await fetch('/api/screenshare/state');
     if (!response.ok) throw new Error('Failed to fetch state');
     return (await response.json()) as ScreenShareSessionState;
   }, []);
-
   const { state, setState } = useScreenShareState(fetchScreenShareState, 3000);
 
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -341,16 +694,8 @@ export default function PlayerRTC() {
   const playerFrameRef = useRef<HTMLDivElement | null>(null);
   const lastPointerMoveRef = useRef(0);
 
-  const [activeTab, setActiveTab] = useState<'info' | 'remote'>(isTouchDevice ? 'remote' : 'info');
-
-  const {
-    signalStatus,
-    rtcStatus,
-    hasRemoteStream,
-    streamError,
-    sendRemoteInput,
-    sendRemoteControl,
-  } = useWebRTCViewer(sessionIdParam, state, setState, remoteVideoRef);
+  const { signalStatus, rtcStatus, hasRemoteStream, streamError, sendRemoteInput, sendRemoteControl } =
+    useWebRTCViewer(sessionIdParam, state, setState, remoteVideoRef);
 
   const {
     isFullscreen,
@@ -362,32 +707,6 @@ export default function PlayerRTC() {
     handleVolumeChange,
     revealControls,
   } = usePlayerControls(hasRemoteStream, remoteVideoRef, playerFrameRef);
-
-  useEffect(() => {
-    const video = remoteVideoRef.current;
-    if (!video || !hasRemoteStream) return;
-
-    let lastSentCommand = '';
-
-    const onPlay = () => {
-      if (lastSentCommand === 'play') return;
-      lastSentCommand = 'play';
-      sendRemoteControl({ command: 'play' });
-    };
-    const onPause = () => {
-      if (lastSentCommand === 'pause') return;
-      lastSentCommand = 'pause';
-      sendRemoteControl({ command: 'pause' });
-    };
-
-    video.addEventListener('play', onPlay);
-    video.addEventListener('pause', onPause);
-
-    return () => {
-      video.removeEventListener('play', onPlay);
-      video.removeEventListener('pause', onPause);
-    };
-  }, [hasRemoteStream, sendRemoteControl]);
 
   useEffect(() => {
     if (hasRemoteStream && viewerSurfaceRef.current) {
@@ -402,258 +721,124 @@ export default function PlayerRTC() {
 
   const useNativeMobilePlayer = isMobileLayout || isTouchDevice;
 
-  const handleViewerMouseMove = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>) => {
-      revealControls();
-      const now = performance.now();
-      if (now - lastPointerMoveRef.current < 8) return;
-      lastPointerMoveRef.current = now;
+  const handleViewerMouseMove = (event: React.MouseEvent<HTMLButtonElement>) => {
+    revealControls();
+    // eslint-disable-next-line react-hooks/purity
+    const now = performance.now();
+    if (now - lastPointerMoveRef.current < 8) {
+      return;
+    }
+    lastPointerMoveRef.current = now;
 
-      const pos = normalizedPointerPosition(event, viewerSurfaceRef.current);
-      sendRemoteInput({ kind: 'pointer', action: 'move', x: pos.x, y: pos.y });
-    },
-    [revealControls, sendRemoteInput]
-  );
+    const pos = normalizedPointerPosition(event, viewerSurfaceRef.current);
+    sendRemoteInput({
+      kind: 'pointer',
+      action: 'move',
+      x: pos.x,
+      y: pos.y,
+    });
+  };
 
-  const handleViewerMouseDown = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>) => {
-      revealControls();
-      const pos = normalizedPointerPosition(event, viewerSurfaceRef.current);
-      sendRemoteInput({
-        kind: 'pointer',
-        action: 'down',
-        button: pointerButtonFromMouseEvent(event.button),
-        x: pos.x,
-        y: pos.y,
-      });
-    },
-    [revealControls, sendRemoteInput]
-  );
+  const handleViewerMouseDown = (event: React.MouseEvent<HTMLButtonElement>) => {
+    revealControls();
+    const pos = normalizedPointerPosition(event, viewerSurfaceRef.current);
+    sendRemoteInput({
+      kind: 'pointer',
+      action: 'down',
+      button: pointerButtonFromMouseEvent(event.button),
+      x: pos.x,
+      y: pos.y,
+    });
+  };
 
-  const handleViewerMouseUp = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>) => {
-      revealControls();
-      const pos = normalizedPointerPosition(event, viewerSurfaceRef.current);
-      sendRemoteInput({
-        kind: 'pointer',
-        action: 'up',
-        button: pointerButtonFromMouseEvent(event.button),
-        x: pos.x,
-        y: pos.y,
-      });
-    },
-    [revealControls, sendRemoteInput]
-  );
+  const handleViewerMouseUp = (event: React.MouseEvent<HTMLButtonElement>) => {
+    revealControls();
+    const pos = normalizedPointerPosition(event, viewerSurfaceRef.current);
+    sendRemoteInput({
+      kind: 'pointer',
+      action: 'up',
+      button: pointerButtonFromMouseEvent(event.button),
+      x: pos.x,
+      y: pos.y,
+    });
+  };
 
-  const handleViewerWheel = useCallback(
-    (event: React.WheelEvent<HTMLButtonElement>) => {
-      revealControls();
-      const surface = viewerSurfaceRef.current;
-      const rect = surface?.getBoundingClientRect();
-      const x = rect
-        ? Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)))
-        : 0.5;
-      const y = rect
-        ? Math.min(1, Math.max(0, (event.clientY - rect.top) / Math.max(1, rect.height)))
-        : 0.5;
-      sendRemoteInput({
-        kind: 'pointer',
-        action: 'wheel',
-        x,
-        y,
-        deltaX: event.deltaX,
-        deltaY: event.deltaY,
-      });
-    },
-    [revealControls, sendRemoteInput]
-  );
+  const handleViewerWheel = (event: React.WheelEvent<HTMLButtonElement>) => {
+    revealControls();
+    const surface = viewerSurfaceRef.current;
+    const rect = surface?.getBoundingClientRect();
+    const x = rect
+      ? Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)))
+      : 0.5;
+    const y = rect
+      ? Math.min(1, Math.max(0, (event.clientY - rect.top) / Math.max(1, rect.height)))
+      : 0.5;
+    sendRemoteInput({
+      kind: 'pointer',
+      action: 'wheel',
+      x,
+      y,
+      deltaX: event.deltaX,
+      deltaY: event.deltaY,
+    });
+  };
 
-  const handleViewerKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLButtonElement>) => {
-      revealControls();
-      if (event.repeat) return;
-      sendRemoteInput({ kind: 'keyboard', action: 'down', key: event.key });
-    },
-    [revealControls, sendRemoteInput]
-  );
+  const handleViewerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    revealControls();
+    if (event.repeat) {
+      return;
+    }
+    sendRemoteInput({
+      kind: 'keyboard',
+      action: 'down',
+      key: event.key,
+    });
+  };
 
-  const handleViewerKeyUp = useCallback(
-    (event: React.KeyboardEvent<HTMLButtonElement>) => {
-      revealControls();
-      sendRemoteInput({ kind: 'keyboard', action: 'up', key: event.key });
-    },
-    [revealControls, sendRemoteInput]
-  );
+  const handleViewerKeyUp = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    revealControls();
+    sendRemoteInput({
+      kind: 'keyboard',
+      action: 'up',
+      key: event.key,
+    });
+  };
 
-  const handleBack = useCallback(() => {
+  const handleBack = () => {
     if (globalThis.history.length > 1) {
       navigate(-1);
     } else {
       navigate('/screen-share');
     }
-  }, [navigate]);
-
-  const renderPlayerFeed = () => {
-    if (!hasRemoteStream) {
-      return (
-        <div style={{ textAlign: 'center', padding: '40px' }}>
-          <Activity
-            size={48}
-            className="spinning"
-            style={{ color: 'var(--primary)', marginBottom: '16px', opacity: 0.5 }}
-          />
-          <div style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '8px' }}>
-            Waiting for host stream...
-          </div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-            {state.streamMessage || 'The host WebRTC feed will appear here soon.'}
-          </div>
-        </div>
-      );
-    }
-
-    const videoElement = (
-      <video
-        ref={remoteVideoRef}
-        autoPlay
-        playsInline
-        muted={useNativeMobilePlayer ? isMuted : undefined}
-        controls={useNativeMobilePlayer}
-        style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-      >
-        <track kind="captions" />
-      </video>
-    );
-
-    if (useNativeMobilePlayer) return videoElement;
-
-    return (
-      <button
-        ref={viewerSurfaceRef}
-        type="button"
-        style={{
-          touchAction: 'none',
-          border: 'none',
-          padding: 0,
-          background: 'transparent',
-          width: '100%',
-          height: '100%',
-          display: 'block',
-        }}
-        onMouseMove={handleViewerMouseMove}
-        onMouseDown={handleViewerMouseDown}
-        onMouseUp={handleViewerMouseUp}
-        onWheelCapture={handleViewerWheel}
-        onKeyDown={handleViewerKeyDown}
-        onKeyUp={handleViewerKeyUp}
-        onTouchStart={revealControls}
-        onContextMenu={(e) => e.preventDefault()}
-        onClick={() => viewerSurfaceRef.current?.focus()}
-      >
-        {videoElement}
-      </button>
-    );
   };
 
-  return (
-    <div className="player-container">
-      <PlayerRTCTopBar
-        onBack={handleBack}
-        active={state.active}
-        statusLabel={statusLabel}
-        rtcStatus={rtcStatus}
-      />
-
-      <div
-        style={{
-          display: 'flex',
-          flex: 1,
-          overflow: 'hidden',
-          flexDirection: isMobileLayout ? 'column' : 'row',
-        }}
-      >
-        <div
-          ref={playerFrameRef}
-          style={{
-            flex: 1,
-            backgroundColor: '#000',
-            position: 'relative',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            overflow: 'hidden',
-          }}
-        >
-          {renderPlayerFeed()}
-
-          {hasRemoteStream && controlsVisible && !useNativeMobilePlayer && (
-            <PlayerControlsOverlay
-              volume={volume}
-              isMuted={isMuted}
-              isFullscreen={isFullscreen}
-              toggleMute={toggleMute}
-              handleVolumeChange={handleVolumeChange}
-              toggleFullscreen={toggleFullscreen}
-            />
-          )}
-
-          {streamError && (
-            <div
-              className="glass"
-              style={{
-                position: 'absolute',
-                bottom: '20px',
-                padding: '12px 20px',
-                borderRadius: 'var(--radius-md)',
-                color: 'var(--danger)',
-                fontWeight: 600,
-              }}
-            >
-              {streamError}
-            </div>
-          )}
-        </div>
-
-        <div
-          className="glass"
-          style={{
-            width: isMobileLayout ? '100%' : '360px',
-            display: 'flex',
-            flexDirection: 'column',
-            borderLeft: isMobileLayout ? 'none' : '1px solid var(--border)',
-            borderTop: isMobileLayout ? '1px solid var(--border)' : 'none',
-          }}
-        >
-          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
-            {(['info', 'remote'] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                style={{
-                  flex: 1,
-                  padding: '16px',
-                  border: 'none',
-                  background: activeTab === tab ? 'rgba(143, 87, 255, 0.1)' : 'transparent',
-                  color: activeTab === tab ? 'var(--primary)' : 'var(--text-muted)',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  borderBottom: activeTab === tab ? '2px solid var(--primary)' : 'none',
-                }}
-              >
-                {tab === 'info' ? 'Session Info' : 'Remote Control'}
-              </button>
-            ))}
-          </div>
-
-          <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
-            {activeTab === 'info' ? (
-              <SessionInfoPanel state={state} signalStatus={signalStatus} />
-            ) : (
-              <RemoteControlPanel sendRemoteControl={sendRemoteControl} />
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  return renderPlayerRTCView({
+    isMobileLayout,
+    useNativeMobilePlayer,
+    statusLabel,
+    rtcStatus,
+    signalStatus,
+    hasRemoteStream,
+    controlsVisible,
+    isFullscreen,
+    volume,
+    isMuted,
+    streamError,
+    state,
+    remoteVideoRef,
+    viewerSurfaceRef,
+    playerFrameRef,
+    handleBack,
+    handleViewerMouseMove,
+    handleViewerMouseDown,
+    handleViewerMouseUp,
+    handleViewerWheel,
+    handleViewerKeyDown,
+    handleViewerKeyUp,
+    revealControls,
+    toggleMute,
+    handleVolumeChange,
+    toggleFullscreen,
+    sendRemoteControl,
+  });
 }

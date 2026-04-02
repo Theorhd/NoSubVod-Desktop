@@ -13,6 +13,7 @@ import {
 import { ExperienceSettings } from '../../shared/types';
 import Login from './Login';
 import { useAuth } from '../../shared/hooks/useAuth';
+import { useScreenShareState } from '../../shared/hooks/useScreenShareState';
 import { ErrorBoundary } from '../../shared/components/ErrorBoundary';
 import { ExtensionProvider, useExtensions } from './ExtensionContext';
 
@@ -183,6 +184,14 @@ function AppContent() {
   const { contributions } = useExtensions();
   const [installedUpdate, setInstalledUpdate] = useState<{ version: string } | null>(null);
 
+  const fetchScreenShareState = useCallback(async () => {
+    const response = await fetch('/api/screenshare/state');
+    if (!response.ok) throw new Error('Failed to fetch screen share state');
+    return await response.json();
+  }, []);
+
+  const { state: screenShareState } = useScreenShareState(fetchScreenShareState, 3000);
+
   const handleRestart = useCallback(async () => {
     try {
       if (isTauriRuntime()) {
@@ -227,8 +236,6 @@ function AppContent() {
     const timer = setTimeout(checkUpdate, 5000);
     return () => clearTimeout(timer);
   }, [isAuthenticated]);
-
-  const screenShareState = useMemo(() => ({ active: false }), []);
 
   useEffect(() => {
     try {

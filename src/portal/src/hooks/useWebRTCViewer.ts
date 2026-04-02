@@ -10,6 +10,15 @@ const rtcConfig: RTCConfiguration = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
 };
 
+function hasLiveUnmutedTrack(stream: MediaStream): boolean {
+  for (const track of stream.getTracks()) {
+    if (track.readyState === 'live' && !track.muted) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function useWebRTCViewer(
   sessionIdParam: string | null,
   state: ScreenShareSessionState,
@@ -26,6 +35,100 @@ export function useWebRTCViewer(
   const hostClientIdRef = useRef<string | null>(null);
   const viewerPeerRef = useRef<RTCPeerConnection | null>(null);
   const remoteInboundStreamRef = useRef<MediaStream | null>(null);
+  const lastPlaybackTimeRef = useRef(0);
+  const frozenTickCountRef = useRef(0);
+  const lastHardRecoveryAtRef = useRef(0);
+
+  const recoverRemotePlayback = useCallback(() => {
+    const video = remoteVideoRef.current;
+    if (!video) {
+      return;
+    }
+
+    const inbound = remoteInboundStreamRef.current;
+    const currentObject = video.srcObject as MediaStream | null;
+
+    if (inbound && currentObject !== inbound) {
+      video.srcObject = inbound;
+    }
+
+    if (video.paused || video.readyState < 2) {
+      void video.play().catch(() => undefined);
+    }
+  }, [remoteVideoRef]);
+
+  const forceViewerReconnect = useCallback(() => {
+    const now = Date.now();
+    if (now - lastHardRecoveryAtRef.current < 8000) {
+      return;
+    }
+    lastHardRecoveryAtRef.current = now;
+
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) {
+      // Closing signaling forces a clean reconnect + fresh join/offer cycle.
+      ws.close();
+      return;
+    }
+
+    if (ws?.readyState === WebSocket.CONNECTING) {
+      ws.close();
+    }
+  }, []);
+
+  const evaluatePlaybackHealth = useCallback(
+    (video: HTMLVideoElement) => {
+      const currentTime = video.currentTime || 0;
+      const ready = video.readyState >= 2;
+
+      if (!video.paused && ready) {
+        if (Math.abs(currentTime - lastPlaybackTimeRef.current) < 0.001) {
+          frozenTickCountRef.current += 1;
+        } else {
+          frozenTickCountRef.current = 0;
+        }
+
+        if (frozenTickCountRef.current >= 3) {
+          recoverRemotePlayback();
+        }
+
+        if (frozenTickCountRef.current >= 6) {
+          setStreamError('Flux bloque detecte. Reconnexion du viewer...');
+          forceViewerReconnect();
+          frozenTickCountRef.current = 0;
+        }
+      } else if (!video.paused && !ready) {
+        frozenTickCountRef.current += 1;
+        if (frozenTickCountRef.current >= 4) {
+          recoverRemotePlayback();
+        }
+        if (frozenTickCountRef.current >= 7) {
+          setStreamError('Video noire detectee. Reconnexion du viewer...');
+          forceViewerReconnect();
+          frozenTickCountRef.current = 0;
+        }
+      }
+
+      lastPlaybackTimeRef.current = currentTime;
+    },
+    [forceViewerReconnect, recoverRemotePlayback]
+  );
+
+  const attachInboundStreamToVideo = useCallback(
+    (stream: MediaStream) => {
+      const video = remoteVideoRef.current;
+      if (!video) {
+        return;
+      }
+
+      if (video.srcObject !== stream) {
+        video.srcObject = stream;
+      }
+
+      void video.play().catch(() => undefined);
+    },
+    [remoteVideoRef]
+  );
 
   const getAuthQuery = useCallback(() => {
     const token =
@@ -112,26 +215,19 @@ export function useWebRTCViewer(
         setStreamError('');
       }
 
-      let retries = 0;
-      const attachStream = () => {
-        if (!remoteVideoRef.current) {
-          if (retries < 20) {
-            retries++;
-            setTimeout(attachStream, 50);
-          }
-          return;
-        }
+      // Re-assign a new MediaStream instance so the video element picks up newly added tracks.
+      const newStream = event.streams?.[0] ?? new MediaStream(inbound.getTracks());
+      globalThis.setTimeout(() => attachInboundStreamToVideo(newStream), 10);
 
-        // Re-assign a new MediaStream instance so the video element picks up newly added tracks (like audio after video).
-        const newStream = event.streams?.[0] ?? new MediaStream(inbound.getTracks());
-        if (remoteVideoRef.current.srcObject !== newStream) {
-          remoteVideoRef.current.srcObject = newStream;
+      const onTrackEnded = () => {
+        if (!hasLiveUnmutedTrack(inbound)) {
+          setHasRemoteStream(false);
         }
-
-        remoteVideoRef.current.play()?.catch(console.warn);
       };
-      // Give the browser a microtask to settle tracks before attaching.
-      setTimeout(attachStream, 10);
+
+      incomingTrack.addEventListener('ended', onTrackEnded);
+      incomingTrack.addEventListener('mute', recoverRemotePlayback);
+      incomingTrack.addEventListener('unmute', recoverRemotePlayback);
     };
 
     peer.onconnectionstatechange = () => {
@@ -158,7 +254,7 @@ export function useWebRTCViewer(
     };
 
     return peer;
-  }, [remoteVideoRef, sendWs]);
+  }, [attachInboundStreamToVideo, recoverRemotePlayback, sendWs]);
 
   const handleSignalSdp = useCallback(
     async (from: string, sdp: RTCSessionDescriptionInit) => {
@@ -379,6 +475,59 @@ export function useWebRTCViewer(
       cleanupViewerPeer();
     };
   }, [sessionIdParam, getAuthQuery, cleanupViewerPeer]);
+
+  useEffect(() => {
+    if (!hasRemoteStream) {
+      return;
+    }
+
+    const onViewportChanged = () => {
+      // Mobile fullscreen + orientation can pause rendering while stream is still alive.
+      // Try to rebind and resume playback immediately.
+      recoverRemotePlayback();
+      frozenTickCountRef.current = 0;
+    };
+
+    const onVisibilityChanged = () => {
+      if (document.visibilityState === 'visible') {
+        onViewportChanged();
+      }
+    };
+
+    globalThis.addEventListener('orientationchange', onViewportChanged);
+    globalThis.addEventListener('resize', onViewportChanged);
+    globalThis.addEventListener('pageshow', onViewportChanged);
+    document.addEventListener('fullscreenchange', onViewportChanged);
+    document.addEventListener('visibilitychange', onVisibilityChanged);
+
+    return () => {
+      globalThis.removeEventListener('orientationchange', onViewportChanged);
+      globalThis.removeEventListener('resize', onViewportChanged);
+      globalThis.removeEventListener('pageshow', onViewportChanged);
+      document.removeEventListener('fullscreenchange', onViewportChanged);
+      document.removeEventListener('visibilitychange', onVisibilityChanged);
+    };
+  }, [hasRemoteStream, recoverRemotePlayback]);
+
+  useEffect(() => {
+    if (!hasRemoteStream) {
+      frozenTickCountRef.current = 0;
+      lastPlaybackTimeRef.current = 0;
+      return;
+    }
+
+    const timer = globalThis.setInterval(() => {
+      const video = remoteVideoRef.current;
+      if (!video || document.visibilityState !== 'visible') {
+        return;
+      }
+      evaluatePlaybackHealth(video);
+    }, 1500);
+
+    return () => {
+      globalThis.clearInterval(timer);
+    };
+  }, [evaluatePlaybackHealth, hasRemoteStream, remoteVideoRef]);
 
   return {
     signalStatus,

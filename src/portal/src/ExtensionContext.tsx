@@ -110,6 +110,32 @@ export function ExtensionProvider({
     }
   }, [registerContribution]);
 
+  const loadExtensionsMetadata = useCallback(async () => {
+    try {
+      const [extRes, setsRes] = await Promise.all([
+        fetch('/api/extensions'),
+        fetch('/api/settings'),
+      ]);
+
+      if (!extRes.ok || !setsRes.ok) throw new Error('Failed to fetch extensions or settings');
+
+      const allExtensions: Extension[] = await extRes.json();
+      const settings = await setsRes.json();
+      const enabledIds = settings.enabledExtensions || allExtensions.map((e) => e.manifest.id);
+
+      setExtensions(allExtensions);
+      setEnabledExtensions(enabledIds);
+      setContributions([]);
+    } catch (error) {
+      console.error('Error loading extension metadata:', error);
+      setExtensions([]);
+      setEnabledExtensions([]);
+      setContributions([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   const toggleExtension = useCallback(
     async (id: string, enabled: boolean) => {
       try {
@@ -146,10 +172,7 @@ export function ExtensionProvider({
 
   useEffect(() => {
     if (suspendLoading) {
-      setExtensions([]);
-      setEnabledExtensions([]);
-      setContributions([]);
-      setIsLoading(false);
+      void loadExtensionsMetadata();
       return;
     }
 
@@ -194,7 +217,7 @@ export function ExtensionProvider({
     };
 
     loadExtensions();
-  }, [loadExtensions, registerContribution, suspendLoading]);
+  }, [loadExtensions, loadExtensionsMetadata, registerContribution, suspendLoading]);
 
   const contextValue = useMemo(
     () => ({
