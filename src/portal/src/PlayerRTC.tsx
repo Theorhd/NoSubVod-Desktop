@@ -97,7 +97,10 @@ type PlayerRTCOverlayControlsProps = Readonly<{
 }>;
 
 type PlayerRTCViewportProps = Readonly<
-  Omit<PlayerRTCViewProps, 'statusLabel' | 'rtcStatus' | 'signalStatus' | 'handleBack' | 'sendRemoteControl'>
+  Omit<
+    PlayerRTCViewProps,
+    'statusLabel' | 'rtcStatus' | 'signalStatus' | 'handleBack' | 'sendRemoteControl'
+  >
 >;
 
 type PlayerRTCSidebarProps = Readonly<{
@@ -694,8 +697,14 @@ export default function PlayerRTC() {
   const playerFrameRef = useRef<HTMLDivElement | null>(null);
   const lastPointerMoveRef = useRef(0);
 
-  const { signalStatus, rtcStatus, hasRemoteStream, streamError, sendRemoteInput, sendRemoteControl } =
-    useWebRTCViewer(sessionIdParam, state, setState, remoteVideoRef);
+  const {
+    signalStatus,
+    rtcStatus,
+    hasRemoteStream,
+    streamError,
+    sendRemoteInput,
+    sendRemoteControl,
+  } = useWebRTCViewer(sessionIdParam, state, setState, remoteVideoRef);
 
   const {
     isFullscreen,
