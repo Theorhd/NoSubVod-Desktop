@@ -4,6 +4,7 @@ import { ArrowLeft, X } from 'lucide-react';
 import NSVPlayer from './components/NSVPlayer';
 import { ExperienceSettings } from '../../shared/types';
 import { useResponsive } from './hooks/useResponsive';
+import { normalizeExperienceSettings } from './utils/experienceSettings';
 
 interface MultiPlayerSlot {
   id: string;
@@ -14,8 +15,7 @@ interface MultiPlayerSlot {
 
 const DEFAULT_SETTINGS: ExperienceSettings = {
   oneSync: false,
-  minVideoQuality: 'none',
-  preferredVideoQuality: 'auto',
+  defaultVideoQuality: 'auto',
 };
 
 export default function MultiView() {
@@ -29,7 +29,7 @@ export default function MultiView() {
     fetch('/api/settings')
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data) setSettings((prev) => ({ ...prev, ...data }));
+        if (data) setSettings((prev) => ({ ...prev, ...normalizeExperienceSettings(data) }));
       })
       .catch(console.error);
   }, []);
@@ -145,8 +145,7 @@ export default function MultiView() {
               }}
               streamType={slot.type === 'live' ? 'live' : 'on-demand'}
               title={slot.title}
-              preferredQuality={settings.preferredVideoQuality}
-              minQuality={settings.minVideoQuality}
+              defaultQuality={settings.defaultVideoQuality}
               isMobileLayout={isMobileLayout}
               autoPlay
               muted

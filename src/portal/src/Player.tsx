@@ -10,16 +10,16 @@ import PlayerInfo from './components/player/PlayerInfo';
 import { formatSafeClock as formatClock } from '../../shared/utils/formatters';
 import PlayerRTC from './PlayerRTC';
 import { useResponsive } from './hooks/useResponsive';
+import { normalizeExperienceSettings } from './utils/experienceSettings';
 
 const DEFAULT_SETTINGS: ExperienceSettings = {
   oneSync: false,
-  minVideoQuality: 'none',
-  preferredVideoQuality: 'auto',
+  defaultVideoQuality: 'auto',
 };
 
 const CHAT_MESSAGES_BEFORE = 100;
 const CHAT_MESSAGES_AFTER = 170;
-const MAX_CHAT_MESSAGES = 1000;
+const MAX_CHAT_MESSAGES = 700;
 const CHAT_HISTORY_SECONDS = 10 * 60;
 
 function resolvePlayerTitle(vodId: string | null, liveId: string | null): string {
@@ -317,8 +317,8 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
       }
     }
     // Bound memory without clearing everything (which would cause redispatch storms).
-    const MAX_DISPATCHED_IDS = 5000;
-    const TRIM_TO = 4000;
+    const MAX_DISPATCHED_IDS = 2500;
+    const TRIM_TO = 1800;
     if (dispatchedChatIds.current.size > MAX_DISPATCHED_IDS) {
       const toDrop = dispatchedChatIds.current.size - TRIM_TO;
       let dropped = 0;
@@ -339,7 +339,7 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
       pendingChatOffsetsRef.current.add(offset);
 
       try {
-        const res = await fetch(`/api/vod/${vodId}/chat?offset=${offset}`);
+        const res = await fetch(`/api/vod/${vodId}/chat?offset=${offset}&limit=120`);
         if (!res.ok) return;
 
         const data = await res.json();
@@ -474,7 +474,7 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
           if (settingsRes.ok) {
             try {
               const remoteSettings = (await settingsRes.json()) as ExperienceSettings;
-              setSettings((prev) => ({ ...prev, ...remoteSettings }));
+              setSettings((prev) => ({ ...prev, ...normalizeExperienceSettings(remoteSettings) }));
             } catch (error) {
               console.error('[Player] Failed to parse VOD settings payload', error);
             }
@@ -563,7 +563,7 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
           if (settingsRes.ok) {
             try {
               const remoteSettings = (await settingsRes.json()) as ExperienceSettings;
-              setSettings((prev) => ({ ...prev, ...remoteSettings }));
+              setSettings((prev) => ({ ...prev, ...normalizeExperienceSettings(remoteSettings) }));
             } catch (error) {
               console.error('[Player] Failed to parse live settings payload', error);
             }
@@ -722,8 +722,7 @@ function VodLivePlayer({ vodId, liveId, downloadMode }: VodLivePlayerProps) {
               title={vodInfo?.title || liveInfo?.title || playerTitle}
               startTime={initialTime}
               seekTo={seekTo}
-              preferredQuality={settings.preferredVideoQuality}
-              minQuality={settings.minVideoQuality}
+              defaultQuality={settings.defaultVideoQuality}
               isMobileLayout={isMobileLayout}
               autoPlay
               className="nsv-main-player"

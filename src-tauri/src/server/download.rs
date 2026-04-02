@@ -11,6 +11,7 @@ use tracing::{info, instrument};
 
 use super::http_utils::{get_bytes_checked, get_text_checked};
 use super::url_utils::{extract_origin, resolve_url};
+use crate::server::error::AppError;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -36,6 +37,8 @@ pub struct DownloadProgress {
 // ── Manager ───────────────────────────────────────────────────────────────────
 
 pub type ActiveDownloads = Arc<RwLock<HashMap<Arc<str>, Arc<RwLock<DownloadProgress>>>>>;
+
+const MAX_TRACKED_DOWNLOADS: usize = 256;
 
 pub struct DownloadManager {
     /// Granular locking: the map itself is RwLocked, and each progress entry is also RwLocked.
@@ -91,10 +94,26 @@ impl DownloadManager {
         };
         let progress_arc = Arc::new(RwLock::new(progress));
 
-        self.active_downloads
-            .write()
-            .await
-            .insert(vod_id.clone(), progress_arc.clone());
+        self.active_downloads.write().await.retain(|_, progress| {
+            if let Ok(lock) = progress.try_read() {
+                !matches!(
+                    lock.status,
+                    DownloadStatus::Finished | DownloadStatus::Error(_)
+                )
+            } else {
+                true
+            }
+        });
+
+        {
+            let mut lock = self.active_downloads.write().await;
+            if !lock.contains_key(&vod_id) && lock.len() >= MAX_TRACKED_DOWNLOADS {
+                return Err(AppError::BadRequest(
+                    "Too many tracked downloads, clear finished items first".to_string(),
+                ));
+            }
+            lock.insert(vod_id.clone(), progress_arc.clone());
+        }
 
         let active_downloads = self.active_downloads.clone();
         let vod_id_task = vod_id.clone();

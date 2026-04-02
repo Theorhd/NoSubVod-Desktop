@@ -202,6 +202,8 @@ pub struct ExperienceSettings {
     pub adblock_proxy: Option<String>,
     #[serde(rename = "adblockProxyMode", default)]
     pub adblock_proxy_mode: Option<String>, // "auto" or "manual"
+    #[serde(rename = "defaultVideoQuality", default)]
+    pub default_video_quality: Option<String>,
     #[serde(rename = "minVideoQuality", default)]
     pub min_video_quality: Option<String>,
     #[serde(rename = "preferredVideoQuality", default)]

@@ -325,6 +325,7 @@ impl HistoryStore {
         adblock_enabled: Option<bool>,
         adblock_proxy: Option<Option<String>>,
         adblock_proxy_mode: Option<Option<String>>,
+        default_video_quality: Option<Option<String>>,
         min_video_quality: Option<Option<String>>,
         preferred_video_quality: Option<Option<String>>,
         download_local_path: Option<Option<String>>,
@@ -346,6 +347,9 @@ impl HistoryStore {
             }
             if let Some(v) = adblock_proxy_mode {
                 data.settings.adblock_proxy_mode = v;
+            }
+            if let Some(v) = default_video_quality {
+                data.settings.default_video_quality = v;
             }
             if let Some(v) = min_video_quality {
                 data.settings.min_video_quality = v;

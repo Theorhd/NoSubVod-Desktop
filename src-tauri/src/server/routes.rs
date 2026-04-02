@@ -235,7 +235,11 @@ async fn handle_vod_chat(
     }
 
     let offset = q.offset.unwrap_or(0.0);
-    let data = state.twitch.fetch_video_chat(&vod_id, offset).await?;
+    let limit = q.limit.unwrap_or(120).clamp(20, 200);
+    let data = state
+        .twitch
+        .fetch_video_chat(&vod_id, offset, limit)
+        .await?;
     Ok(Json(data).into_response())
 }
 
@@ -330,10 +334,24 @@ async fn handle_proxy_variant(
     };
 
     let settings = state.history.get_settings().await;
-    let body = state
+    let body = match state
         .twitch
         .proxy_variant_playlist(&id, &settings, &state.server_token)
-        .await?;
+        .await
+    {
+        Ok(body) => body,
+        Err(first_error) => {
+            tracing::warn!(
+                error = %first_error,
+                "Transient variant playlist failure, retrying once"
+            );
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            state
+                .twitch
+                .proxy_variant_playlist(&id, &settings, &state.server_token)
+                .await?
+        }
+    };
     Ok(m3u8_response(body))
 }
 
@@ -355,6 +373,9 @@ async fn handle_proxy_segment(
             if let Some(ct) = cached.content_type {
                 builder = builder.header(reqwest::header::CONTENT_TYPE, ct);
             }
+            builder = builder
+                .header("x-cache-status", "HIT")
+                .header(header::CACHE_CONTROL, "no-store");
             return builder
                 .body(Body::from(cached.body))
                 .map_err(|e| AppError::Internal(e.to_string()));
@@ -373,11 +394,11 @@ async fn handle_proxy_segment(
     };
 
     let mut builder = Response::builder();
+    builder = builder
+        .header("x-cache-status", "MISS")
+        .header(header::CACHE_CONTROL, "no-store");
     if let Some(ct) = resp.headers().get(reqwest::header::CONTENT_TYPE) {
         builder = builder.header(reqwest::header::CONTENT_TYPE, ct);
-    }
-    if let Some(cc) = resp.headers().get(reqwest::header::CACHE_CONTROL) {
-        builder = builder.header(reqwest::header::CACHE_CONTROL, cc);
     }
 
     let content_type = resp
@@ -500,6 +521,7 @@ async fn handle_update_settings(
                 patch.adblock_enabled,
                 patch.adblock_proxy,
                 patch.adblock_proxy_mode,
+                patch.default_video_quality,
                 patch.min_video_quality,
                 patch.preferred_video_quality,
                 patch.download_local_path,
@@ -1178,6 +1200,21 @@ struct DevNotifyBody {
     message: String,
 }
 
+#[derive(Serialize)]
+struct RuntimeCapabilities {
+    platform: &'static str,
+    screen_capture_host_supported: bool,
+    webrtc_supported: bool,
+}
+
+async fn handle_get_capabilities() -> impl IntoResponse {
+    Json(RuntimeCapabilities {
+        platform: std::env::consts::OS,
+        screen_capture_host_supported: cfg!(target_os = "windows"),
+        webrtc_supported: true,
+    })
+}
+
 async fn handle_dev_notify(
     State(state): State<ApiState>,
     Json(body): Json<DevNotifyBody>,
@@ -1224,13 +1261,13 @@ pub fn build_router(mut state: ApiState, portal_dist: Option<std::path::PathBuf>
 
     // Tiny backend cache for re-requested small media chunks.
     state.segment_cache = Cache::builder()
-        .time_to_live(Duration::from_secs(20))
+        .time_to_live(Duration::from_secs(15))
         .weigher(
             |_key: &String, value: &crate::server::state::CachedSegment| {
                 value.body.len().min(u32::MAX as usize) as u32
             },
         )
-        .max_capacity(64 * 1024 * 1024)
+        .max_capacity(32 * 1024 * 1024)
         .build();
 
     // CORS: allow only same-origin and local network origins (not Any)
@@ -1296,6 +1333,7 @@ pub fn build_router(mut state: ApiState, portal_dist: Option<std::path::PathBuf>
             "/settings",
             get(handle_get_settings).post(handle_update_settings),
         )
+        .route("/capabilities", get(handle_get_capabilities))
         .route("/screenshare/state", get(handle_get_screenshare_state))
         .route("/screenshare/start", post(handle_start_screenshare))
         .route("/screenshare/stop", post(handle_stop_screenshare))

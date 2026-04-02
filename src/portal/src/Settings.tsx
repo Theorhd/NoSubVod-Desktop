@@ -2,14 +2,14 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { ExperienceSettings, ProxyInfo, TrustedDevice, TwitchStatus } from '../../shared/types';
 import { TopBar } from './components/TopBar';
 import { useExtensions } from './ExtensionContext';
+import { normalizeExperienceSettings } from './utils/experienceSettings';
 
 const defaultSettings: ExperienceSettings = {
   oneSync: false,
   adblockEnabled: false,
   adblockProxy: '',
   adblockProxyMode: 'auto',
-  minVideoQuality: 'none',
-  preferredVideoQuality: 'auto',
+  defaultVideoQuality: 'auto',
   launchAtLogin: false,
   enabledExtensions: [],
 };
@@ -138,42 +138,21 @@ ExtensionsSection.displayName = 'ExtensionsSection';
 const VideoPlayerSection = React.memo(({ settings, setSettings, setSuccess }: SectionProps) => (
   <div className="card settings-card">
     <h2>Video Player</h2>
-    <p className="settings-description">Configure la qualité par défaut du lecteur vidéo.</p>
+    <p className="settings-description">
+      Configure la qualité demandée au démarrage. Le changement de qualité reste manuel dans le
+      player.
+    </p>
 
     <div className="settings-group">
-      <label htmlFor="minVideoQuality" className="settings-label">
-        Qualité Minimale Autorisée
+      <label htmlFor="defaultVideoQuality" className="settings-label">
+        Qualité Par Défaut
       </label>
       <select
-        id="minVideoQuality"
+        id="defaultVideoQuality"
         className="settings-select"
-        value={settings.minVideoQuality || 'none'}
+        value={settings.defaultVideoQuality || 'auto'}
         onChange={(e) => {
-          setSettings((prev) => ({ ...prev, minVideoQuality: e.target.value }));
-          setSuccess('');
-        }}
-      >
-        <option value="none">Aucune (Laisser Twitch choisir)</option>
-        <option value="480">480p</option>
-        <option value="720">720p</option>
-        <option value="1080">1080p</option>
-      </select>
-      <small className="help-text">
-        Les résolutions inférieures seront masquées du lecteur. Si la connexion est mauvaise, cela
-        peut causer des coupures.
-      </small>
-    </div>
-
-    <div className="settings-group mt-2">
-      <label htmlFor="preferredVideoQuality" className="settings-label">
-        Qualité Préférée au Lancement
-      </label>
-      <select
-        id="preferredVideoQuality"
-        className="settings-select"
-        value={settings.preferredVideoQuality || 'auto'}
-        onChange={(e) => {
-          setSettings((prev) => ({ ...prev, preferredVideoQuality: e.target.value }));
+          setSettings((prev) => ({ ...prev, defaultVideoQuality: e.target.value }));
           setSuccess('');
         }}
       >
@@ -532,7 +511,7 @@ export default function Settings() {
         fetch('/api/auth/twitch/status').then((r) => (r.ok ? r.json() : null)),
         fetch('/api/trusted-devices').then((r) => (r.ok ? r.json() : [])),
       ]);
-      setSettings({ ...defaultSettings, ...sets });
+      setSettings({ ...defaultSettings, ...normalizeExperienceSettings(sets) });
       setActiveProxy(ads);
       setProxies(pxs);
       setTwitchStatus(tw);
@@ -547,13 +526,18 @@ export default function Settings() {
   useEffect(() => {
     void fetchSettingsData();
     const interval = setInterval(async () => {
-      const [ads, pxs] = await Promise.all([
-        fetch('/api/adblock/status').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/adblock/proxies').then((r) => (r.ok ? r.json() : [])),
-      ]);
-      setActiveProxy(ads);
-      setProxies(pxs);
-    }, 10000);
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const [ads, pxs] = await Promise.all([
+          fetch('/api/adblock/status').then((r) => (r.ok ? r.json() : null)),
+          fetch('/api/adblock/proxies').then((r) => (r.ok ? r.json() : [])),
+        ]);
+        setActiveProxy(ads);
+        setProxies(pxs);
+      } catch {
+        // Keep previous values; a later tick will retry.
+      }
+    }, 30000);
     return () => clearInterval(interval);
   }, [fetchSettingsData]);
 

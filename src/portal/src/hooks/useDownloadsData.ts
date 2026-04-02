@@ -8,6 +8,9 @@ export function useDownloadsData() {
   const [files, setFiles] = useState<DownloadedFile[]>([]);
   const [activeDownloads, setActiveDownloads] = useState<ActiveDownload[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isPageVisible, setIsPageVisible] = useState(() =>
+    typeof document === 'undefined' ? true : document.visibilityState === 'visible'
+  );
 
   const fetchDownloads = useCallback(async () => {
     try {
@@ -42,7 +45,23 @@ export function useDownloadsData() {
     void fetchDownloads();
   }, [fetchDownloads]);
 
-  useInterval(fetchDownloads, 2000);
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      setIsPageVisible(document.visibilityState === 'visible');
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, []);
+
+  let downloadsPollingDelay = 5000;
+  if (isPageVisible === false) {
+    downloadsPollingDelay = 12000;
+  } else if (activeDownloads.length > 0) {
+    downloadsPollingDelay = 2000;
+  }
+
+  useInterval(fetchDownloads, downloadsPollingDelay);
 
   const resolveDownloadUrl = useCallback((url: string) => {
     if (!url) return '';

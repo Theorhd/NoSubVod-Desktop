@@ -9,6 +9,7 @@ import {
   pointerButtonFromMouseEvent,
   normalizedPointerPosition,
 } from '../../shared/utils/player';
+import { canUseDisplayCapture, isIOSFamily } from './utils/capabilities';
 
 type JoinRole = 'host' | 'viewer';
 
@@ -390,6 +391,20 @@ export default function ScreenShare() {
   const startHostWebRtc = useCallback(async () => {
     setStreamError('');
     try {
+      if (!canUseDisplayCapture()) {
+        setStreamError('Display capture is not available on this device/browser.');
+        setRtcStatus('Host capture unsupported');
+        return;
+      }
+
+      if (isIOSFamily()) {
+        setStreamError(
+          'iOS has limited display capture support. Prefer viewer mode on iPhone/iPad.'
+        );
+        setRtcStatus('Host capture limited');
+        return;
+      }
+
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           width: { ideal: 1920, max: 3840 },
@@ -468,7 +483,12 @@ export default function ScreenShare() {
     }
   }, [getAuthQuery, hasRemoteStream, snapshotAvailable, state.active, state.sourceType]);
 
-  useInterval(loadSnapshot, 450);
+  const snapshotPollingDelay =
+    state.active && state.sourceType === 'browser' && !hasRemoteStream && snapshotAvailable
+      ? 1000
+      : null;
+
+  useInterval(loadSnapshot, snapshotPollingDelay);
 
   useEffect(() => {
     const host = globalThis.location.host;
@@ -778,7 +798,7 @@ export default function ScreenShare() {
             <div className="screen-share-host-actions">
               <button
                 className="action-btn"
-                disabled={hostStreaming}
+                disabled={hostStreaming || !canUseDisplayCapture() || isIOSFamily()}
                 onClick={startHostWebRtc}
                 type="button"
               >

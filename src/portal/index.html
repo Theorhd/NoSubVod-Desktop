@@ -8,24 +8,9 @@
   </head>
   <body>
     <div id="root"></div>
-    <script>
-      (function initOptionalEruda() {
-        let debugMode = false;
-        try {
-          if (debugMode !== true) return;
-
-          var script = document.createElement('script');
-          script.src = 'https://cdn.jsdelivr.net/npm/eruda';
-          script.onload = function () {
-            if (globalThis.eruda && typeof globalThis.eruda.init === 'function') {
-              globalThis.eruda.init();
-            }
-          };
-          document.head.appendChild(script);
-        } catch {
-          // Ignore optional debug tooling errors.
-        }
-      })();
+    <script type="module">
+      import { initEruda } from './src/utils/debug.ts';
+      initEruda(true);
     </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>

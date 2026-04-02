@@ -103,6 +103,8 @@ export interface ExperienceSettings {
   adblockEnabled?: boolean;
   adblockProxy?: string;
   adblockProxyMode?: 'auto' | 'manual';
+  defaultVideoQuality?: string;
+  // Legacy fields kept for backward compatibility with older persisted settings.
   minVideoQuality?: string;
   preferredVideoQuality?: string;
   downloadLocalPath?: string;

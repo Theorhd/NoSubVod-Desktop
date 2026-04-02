@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { QrCode, KeyRound, ArrowRight, ShieldCheck } from 'lucide-react';
 import { safeStorageSet } from '../../shared/utils/storage';
+import { canUseGetUserMedia } from './utils/capabilities';
 
 type CameraStatus = 'idle' | 'requesting' | 'granted' | 'denied' | 'unsupported' | 'insecure';
 
@@ -164,9 +165,7 @@ export default function Login() {
         return;
       }
 
-      const hasMediaDevices =
-        typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
-      if (!hasMediaDevices) {
+      if (!canUseGetUserMedia()) {
         setCameraStatus('unsupported');
         setError('Votre navigateur ne supporte pas la camera. Utilisez la saisie du token.');
         return;

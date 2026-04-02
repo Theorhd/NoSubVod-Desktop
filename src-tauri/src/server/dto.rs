@@ -7,6 +7,7 @@ use serde_json::Value;
 pub struct ChatQuery {
     pub offset: Option<f64>,
     pub keyword: Option<String>,
+    pub limit: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -82,6 +83,8 @@ pub struct SettingsPatch {
     pub adblock_proxy: Option<Option<String>>,
     #[serde(rename = "adblockProxyMode")]
     pub adblock_proxy_mode: Option<Option<String>>,
+    #[serde(rename = "defaultVideoQuality")]
+    pub default_video_quality: Option<Option<String>>,
     #[serde(rename = "minVideoQuality")]
     pub min_video_quality: Option<Option<String>>,
     #[serde(rename = "preferredVideoQuality")]

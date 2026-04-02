@@ -13,6 +13,13 @@ type LiveChatMessage = {
   message?: string;
 };
 
+type LiveChatBatch = {
+  type?: string;
+  messages?: LiveChatMessage[];
+};
+
+const MAX_LIVE_CHAT_MESSAGES = 300;
+
 function buildAuthQueryFromStorage(): string {
   const token = localStorage.getItem('nsv_token');
   const deviceId = localStorage.getItem('nsv_device_id');
@@ -80,26 +87,38 @@ const LiveChatComponent: React.FC<LiveChatComponentProps> = ({ liveId, chatScrol
   const handleWsMessage = useCallback(
     (event: MessageEvent) => {
       try {
-        const data = JSON.parse(event.data) as LiveChatMessage;
-        if (data.type === 'clear_chat') {
-          setMessages([]);
-          return;
-        }
-
-        if (data.type === 'clear_msg' && data.id) {
-          setMessages((prev) => prev.filter((msg) => msg.id !== data.id));
-          return;
-        }
-
-        if (!data.id) {
-          return;
-        }
+        const payload = JSON.parse(event.data) as LiveChatMessage | LiveChatBatch;
+        const maybeBatch = payload as LiveChatBatch;
+        const incoming =
+          payload?.type === 'batch' && Array.isArray(maybeBatch.messages)
+            ? maybeBatch.messages
+            : [payload as LiveChatMessage];
 
         setMessages((prev) => {
-          const next = [...prev, data];
-          // Dispatch for extensions
-          globalThis.dispatchEvent(new CustomEvent('nsv-chat-message', { detail: data }));
-          return next.length > 150 ? next.slice(-150) : next;
+          let next = prev;
+          for (const data of incoming) {
+            if (data.type === 'clear_chat') {
+              next = [];
+              continue;
+            }
+
+            if (data.type === 'clear_msg' && data.id) {
+              next = next.filter((msg) => msg.id !== data.id);
+              continue;
+            }
+
+            if (!data.id) {
+              continue;
+            }
+
+            next = [...next, data];
+            globalThis.dispatchEvent(new CustomEvent('nsv-chat-message', { detail: data }));
+          }
+
+          if (next.length > MAX_LIVE_CHAT_MESSAGES) {
+            return next.slice(-MAX_LIVE_CHAT_MESSAGES);
+          }
+          return next;
         });
 
         const container = chatScrollRef.current;

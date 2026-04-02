@@ -75,6 +75,8 @@ const NotificationToast = ({
   );
 };
 
+const MemoNotificationToast = React.memo(NotificationToast);
+
 const UpdateNotification = ({
   updateInfo,
   onRestart,
@@ -103,6 +105,46 @@ const UpdateNotification = ({
     </div>
   );
 };
+
+const MemoUpdateNotification = React.memo(UpdateNotification);
+
+function NotificationCenter() {
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+
+  const removeNotification = useCallback((id: string) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  }, []);
+
+  const handleNotification = useCallback(
+    (event: { payload: { title: string; message: string } }) => {
+      const id = Math.random().toString(36).substring(7);
+      const newNotif = { id, ...event.payload };
+      setNotifications((prev) => [...prev, newNotif]);
+      globalThis.setTimeout(() => removeNotification(id), 5000);
+    },
+    [removeNotification]
+  );
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    const setupListener = async () => {
+      if (!isTauriRuntime()) return;
+      const { listen } = await import('@tauri-apps/api/event');
+      unlisten = await listen<{ title: string; message: string }>(
+        'nsv-notification',
+        handleNotification
+      );
+    };
+
+    void setupListener();
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [handleNotification]);
+
+  return <MemoNotificationToast notifications={notifications} onClose={removeNotification} />;
+}
 
 const BottomNav = React.memo(({ items }: Readonly<{ items: NavItem[] }>) => {
   const location = useLocation();
@@ -139,12 +181,7 @@ BottomNav.displayName = 'BottomNav';
 function AppContent() {
   const { isAuthenticated } = useAuth();
   const { contributions } = useExtensions();
-  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [installedUpdate, setInstalledUpdate] = useState<{ version: string } | null>(null);
-
-  const removeNotification = useCallback((id: string) => {
-    setNotifications((prev) => prev.filter((n) => n.id !== id));
-  }, []);
 
   const handleRestart = useCallback(async () => {
     try {
@@ -190,35 +227,6 @@ function AppContent() {
     const timer = setTimeout(checkUpdate, 5000);
     return () => clearTimeout(timer);
   }, [isAuthenticated]);
-
-  const handleNotification = useCallback(
-    (event: { payload: { title: string; message: string } }) => {
-      const id = Math.random().toString(36).substring(7);
-      const newNotif = { id, ...event.payload };
-      setNotifications((prev) => [...prev, newNotif]);
-      setTimeout(() => removeNotification(id), 5000);
-    },
-    [removeNotification]
-  );
-
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-
-    const setupListener = async () => {
-      if (isTauriRuntime()) {
-        const { listen } = await import('@tauri-apps/api/event');
-        unlisten = await listen<{ title: string; message: string }>(
-          'nsv-notification',
-          handleNotification
-        );
-      }
-    };
-
-    setupListener();
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, [handleNotification]);
 
   const screenShareState = useMemo(() => ({ active: false }), []);
 
@@ -301,9 +309,9 @@ function AppContent() {
             </div>
           </Suspense>
           <BottomNav items={navItems} />
-          <NotificationToast notifications={notifications} onClose={removeNotification} />
+          <NotificationCenter />
           {installedUpdate && (
-            <UpdateNotification updateInfo={installedUpdate} onRestart={handleRestart} />
+            <MemoUpdateNotification updateInfo={installedUpdate} onRestart={handleRestart} />
           )}
         </div>
       </ErrorBoundary>

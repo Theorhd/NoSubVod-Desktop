@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, instrument};
 use uuid::Uuid;
 
-use super::http_utils::get_text_with_direct_fallback;
+use super::http_utils::{get_text_checked, get_text_with_direct_fallback};
 use super::types::{
     ExperienceSettings, HistoryEntry, LiveBroadcaster, LiveGame, LiveStream, LiveStreamsPage,
     SubEntry, UserInfo, Vod,
@@ -450,15 +450,13 @@ impl TwitchService {
             return c.clone();
         }
 
-        let new_client = match Client::builder()
-            .user_agent(ANDROID_TV_UA)
-            .timeout(Duration::from_secs(15))
-            .proxy(
-                reqwest::Proxy::all(&proxy).unwrap_or_else(|_| reqwest::Proxy::http("").unwrap()),
-            ) // Fallback if proxy url is invalid
-            .build()
-        {
-            Ok(c) => c,
+        let new_client = match reqwest::Proxy::all(&proxy) {
+            Ok(proxy_cfg) => Client::builder()
+                .user_agent(ANDROID_TV_UA)
+                .timeout(Duration::from_secs(15))
+                .proxy(proxy_cfg)
+                .build()
+                .unwrap_or_else(|_| self.android_tv_client.clone()),
             Err(_) => self.android_tv_client.clone(),
         };
 
@@ -571,18 +569,16 @@ fn parse_timecode_seconds(value: &Value) -> Option<f64> {
         return Some(v);
     }
 
-    let parts: Vec<&str> = raw.split(':').collect();
-    if parts.is_empty() {
-        return None;
+    let mut total = 0.0;
+    let mut units = 0_i32;
+    for part in raw.split(':').rev() {
+        let unit = part.trim().parse::<f64>().ok()?;
+        total += unit * 60_f64.powi(units);
+        units += 1;
     }
 
-    let mut total = 0.0;
-    for (idx, part) in parts.iter().rev().enumerate() {
-        let Ok(unit) = part.trim().parse::<f64>() else {
-            return None;
-        };
-        let mul = 60_f64.powi(idx as i32);
-        total += unit * mul;
+    if units == 0 {
+        return None;
     }
 
     Some(total)
@@ -719,40 +715,9 @@ fn validate_variant_target_url(url: &str) -> AppResult<String> {
         return Err(AppError::BadRequest("Disallowed target path".to_string()));
     }
 
-    let allowed_params: std::collections::HashSet<&str> = [
-        "allow_source",
-        "allow_audio_only",
-        "fast_bread",
-        "playlist_include_framerate",
-        "player_backend",
-        "player",
-        "p",
-        "sig",
-        "token",
-    ]
-    .into_iter()
-    .collect();
-
-    let mut sanitized = parsed.clone();
-    {
-        let pairs: Vec<(String, String)> = sanitized
-            .query_pairs()
-            .filter(|(k, _)| allowed_params.contains(k.as_ref()))
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        if pairs.is_empty() {
-            sanitized.set_query(None);
-        } else {
-            let qs = pairs
-                .iter()
-                .map(|(k, v)| format!("{}={}", urlencoding_simple(k), urlencoding_simple(v)))
-                .collect::<Vec<_>>()
-                .join("&");
-            sanitized.set_query(Some(&qs));
-        }
-    }
-
-    Ok(sanitized.to_string())
+    // Keep original query parameters after host/path validation.
+    // Twitch variant and segment URLs can require dynamic parameters not known in advance.
+    Ok(parsed.to_string())
 }
 
 fn urlencoding_simple(s: &str) -> String {
@@ -790,7 +755,7 @@ async fn rewrite_tag_uri_with_proxy(line: &str, base_url: &str, token: &str) -> 
                 let abs_url = if uri.starts_with("http://") || uri.starts_with("https://") {
                     uri.to_string()
                 } else {
-                    format!("{base_url}{uri}")
+                    resolve_url(uri, &extract_origin(base_url), base_url).into_owned()
                 };
 
                 let rewritten = match validate_variant_target_url(&abs_url) {
@@ -912,6 +877,23 @@ async fn resolve_variant_proxy_target(
         .get(&format!("variant_proxy_{normalized}"))
         .await
         .ok_or_else(|| AppError::NotFound("Variant proxy target not found or expired".to_string()))
+}
+
+async fn fetch_variant_playlist_text(
+    primary_client: &Client,
+    fallback_client: &Client,
+    shared_client: &Client,
+    url: &str,
+) -> AppResult<String> {
+    match get_text_with_direct_fallback(primary_client, fallback_client, url, "variant").await {
+        Ok(text) => Ok(text),
+        Err(primary_error) => {
+            eprintln!(
+                "[adblock] variant fallback (android-tv) failed ({primary_error}), retrying shared client"
+            );
+            get_text_checked(shared_client, url).await
+        }
+    }
 }
 
 async fn rewrite_master_with_proxy(
@@ -1982,10 +1964,17 @@ impl TwitchService {
         Ok(Value::Array(combined))
     }
 
-    pub async fn fetch_video_chat(&self, vod_id: &str, offset: f64) -> AppResult<Value> {
+    pub async fn fetch_video_chat(
+        &self,
+        vod_id: &str,
+        offset: f64,
+        limit: usize,
+    ) -> AppResult<Value> {
+        let safe_limit = limit.clamp(20, 200);
         let body = format!(
-            r#"{{"query":"query {{ video(id: \"{}\") {{ comments(contentOffsetSeconds: {}) {{ edges {{ node {{ id, commenter {{ displayName, login, profileImageURL(width: 50) }}, message {{ fragments {{ text, emote {{ id, setID }} }} }}, contentOffsetSeconds, createdAt }} }}, pageInfo {{ hasNextPage }} }} }} }}"}}"#,
+            r#"{{"query":"query {{ video(id: \"{}\") {{ comments(first: {}, contentOffsetSeconds: {}) {{ edges {{ node {{ id, commenter {{ displayName, login, profileImageURL(width: 50) }}, message {{ fragments {{ text, emote {{ id, setID }} }} }}, contentOffsetSeconds, createdAt }} }}, pageInfo {{ hasNextPage }} }} }} }}"}}"#,
             gql_escape(vod_id),
+            safe_limit,
             offset.floor() as i64
         );
 
@@ -2551,6 +2540,7 @@ impl TwitchService {
         let mut playlist = format!(
             "#EXTM3U\n#EXT-X-TWITCH-INFO:ORIGIN=\"s3\",B=\"false\",REGION=\"EU\",USER-IP=\"127.0.0.1\",SERVING-ID=\"{serving_id}\",CLUSTER=\"cloudfront_vod\",USER-COUNTRY=\"BE\",MANIFEST-CLUSTER=\"cloudfront_vod\""
         );
+        let mut inserted_variants = 0usize;
 
         for (res_key, resolution, fps) in &resolutions {
             let stream_url = build_stream_url(
@@ -2563,9 +2553,13 @@ impl TwitchService {
                 channel_login,
             );
 
-            let codec = is_valid_quality(&self.android_tv_client, &stream_url)
-                .await
-                .unwrap_or_else(|| "avc1.4D001E".to_string());
+            let codec = match is_valid_quality(&self.android_tv_client, &stream_url).await {
+                Some(c) => Some(c),
+                None => is_valid_quality(&self.shared_client, &stream_url).await,
+            };
+            let Some(codec) = codec else {
+                continue;
+            };
 
             let quality = if *res_key == "chunked" {
                 let height = resolution.split('x').nth(1).unwrap_or("1080");
@@ -2589,6 +2583,13 @@ impl TwitchService {
 
             playlist.push_str(&format!(
                 "\n#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID=\"{quality}\",NAME=\"{quality}\",AUTOSELECT={enabled},DEFAULT={enabled}\n#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},CODECS=\"{codec},mp4a.40.2\",RESOLUTION={resolution},VIDEO=\"{quality}\",FRAME-RATE={fps}\n{proxy_url}"
+            ));
+            inserted_variants += 1;
+        }
+
+        if inserted_variants == 0 {
+            return Err(AppError::NotFound(
+                "No playable VOD qualities available for this video".to_string(),
             ));
         }
 
@@ -2758,9 +2759,13 @@ impl TwitchService {
 
         let client = self.get_client(settings).await;
 
-        let mut body =
-            get_text_with_direct_fallback(&client, &self.android_tv_client, &target_url, "variant")
-                .await?;
+        let mut body = fetch_variant_playlist_text(
+            &client,
+            &self.android_tv_client,
+            &self.shared_client,
+            &target_url,
+        )
+        .await?;
 
         body = filter_live_playlist(&body);
         body = body.replace("-unmuted", "-muted");
@@ -2784,7 +2789,7 @@ impl TwitchService {
             }
 
             let abs_url = if !l.starts_with("http") {
-                format!("{base_url}{l}")
+                resolve_url(l, &extract_origin(&base_url), &base_url).into_owned()
             } else {
                 l.to_string()
             };

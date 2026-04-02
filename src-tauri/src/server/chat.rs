@@ -2,11 +2,60 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::Path;
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
+use serde::Serialize;
 use std::collections::VecDeque;
 use std::time::Duration;
 use twitch_irc::login::StaticLoginCredentials;
 use twitch_irc::message::ServerMessage;
 use twitch_irc::{ClientConfig, SecureTCPTransport, TwitchIRCClient};
+
+const CHAT_BUFFER_CAPACITY: usize = 220;
+const CHAT_FLUSH_INTERVAL_MS: u64 = 150;
+const CHAT_FLUSH_THRESHOLD: usize = 90;
+const CHAT_DROP_ON_PRESSURE: usize = 30;
+const CHAT_MAX_BATCH_SIZE: usize = 140;
+
+#[derive(Serialize)]
+struct ChatBadge {
+    name: String,
+    version: String,
+}
+
+#[derive(Serialize)]
+struct ChatEmote {
+    id: String,
+    #[serde(rename = "startIndex")]
+    start_index: usize,
+    #[serde(rename = "endIndex")]
+    end_index: usize,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ChatEvent {
+    Msg {
+        id: String,
+        sender: String,
+        #[serde(rename = "displayName")]
+        display_name: String,
+        color: Option<String>,
+        message: String,
+        badges: Vec<ChatBadge>,
+        emotes: Vec<ChatEmote>,
+        timestamp: i64,
+    },
+    ClearChat,
+    ClearMsg {
+        id: String,
+    },
+}
+
+#[derive(Serialize)]
+struct ChatBatch {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    messages: Vec<ChatEvent>,
+}
 
 pub async fn handle_chat_ws(ws: WebSocketUpgrade, Path(login): Path<String>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, login))
@@ -39,10 +88,11 @@ async fn handle_socket(socket: WebSocket, login: String) {
     let mut twitch_read_task = tokio::spawn(async move {
         // Ring buffer to hold processed messages before they are batched/flushed.
         // Reusing the same allocation to avoid repeated memory allocations.
-        let mut ring_buffer: VecDeque<serde_json::Value> = VecDeque::with_capacity(200);
+        let mut ring_buffer: VecDeque<ChatEvent> = VecDeque::with_capacity(CHAT_BUFFER_CAPACITY);
 
         // Interval for batching messages (e.g., every 150ms)
-        let mut flush_interval = tokio::time::interval(Duration::from_millis(150));
+        let mut flush_interval =
+            tokio::time::interval(Duration::from_millis(CHAT_FLUSH_INTERVAL_MS));
         // Avoid immediate tick
         flush_interval.tick().await;
 
@@ -56,54 +106,55 @@ async fn handle_socket(socket: WebSocket, login: String) {
                                 .name_color
                                 .map(|c| format!("#{:02X}{:02X}{:02X}", c.r, c.g, c.b));
 
-                            let badges: Vec<_> = msg.badges.iter().map(|b| serde_json::json!({
-                                "name": b.name,
-                                "version": b.version,
-                            })).collect();
-
-                            let emotes: Vec<_> = msg.emotes.iter().map(|e| serde_json::json!({
-                                "id": e.id,
-                                "startIndex": e.char_range.start,
-                                "endIndex": e.char_range.end,
-                            })).collect();
-
-                            let out = serde_json::json!({
-                                "type": "msg",
-                                "id": msg.message_id,
-                                "sender": msg.sender.login,
-                                "displayName": msg.sender.name,
-                                "color": color_str,
-                                "message": msg.message_text,
-                                "badges": badges,
-                                "emotes": emotes,
-                                "timestamp": msg.server_timestamp.timestamp_millis(),
-                            });
-
-                            if ring_buffer.len() < ring_buffer.capacity() {
-                                ring_buffer.push_back(out);
-                            } else {
-                                // If buffer is full, we could drop oldest or flush immediately.
-                                // Here we flush to keep the chat responsive.
-                                if flush_messages(&mut sender, &mut ring_buffer).await.is_err() {
-                                    break;
-                                }
-                                ring_buffer.push_back(out);
+                            let mut badges = Vec::with_capacity(msg.badges.len());
+                            for b in msg.badges {
+                                badges.push(ChatBadge {
+                                    name: b.name,
+                                    version: b.version,
+                                });
                             }
+
+                            let mut emotes = Vec::with_capacity(msg.emotes.len());
+                            for e in msg.emotes {
+                                emotes.push(ChatEmote {
+                                    id: e.id,
+                                    start_index: e.char_range.start,
+                                    end_index: e.char_range.end,
+                                });
+                            }
+
+                            let out = ChatEvent::Msg {
+                                id: msg.message_id,
+                                sender: msg.sender.login,
+                                display_name: msg.sender.name,
+                                color: color_str,
+                                message: msg.message_text,
+                                badges,
+                                emotes,
+                                timestamp: msg.server_timestamp.timestamp_millis(),
+                            };
+
+                            if ring_buffer.len() >= ring_buffer.capacity() {
+                                // Slow websocket or burst: keep recent messages, drop oldest.
+                                for _ in 0..CHAT_DROP_ON_PRESSURE {
+                                    if ring_buffer.pop_front().is_none() {
+                                        break;
+                                    }
+                                }
+                            }
+                            ring_buffer.push_back(out);
                         }
                         ServerMessage::ClearChat(_msg) => {
-                            ring_buffer.push_back(serde_json::json!({ "type": "clear_chat" }));
+                            ring_buffer.push_back(ChatEvent::ClearChat);
                         }
                         ServerMessage::ClearMsg(msg) => {
-                            ring_buffer.push_back(serde_json::json!({
-                                "type": "clear_msg",
-                                "id": msg.message_id,
-                            }));
+                            ring_buffer.push_back(ChatEvent::ClearMsg { id: msg.message_id });
                         }
                         _ => {}
                     }
 
                     // If we have a lot of messages, flush immediately without waiting for the timer
-                    if ring_buffer.len() >= 100
+                    if ring_buffer.len() >= CHAT_FLUSH_THRESHOLD
                         && flush_messages(&mut sender, &mut ring_buffer).await.is_err()
                     {
                         break;
@@ -138,17 +189,19 @@ async fn handle_socket(socket: WebSocket, login: String) {
 /// Helper to flush messages from the ring buffer to the WebSocket as a batch.
 async fn flush_messages(
     sender: &mut futures::stream::SplitSink<WebSocket, Message>,
-    buffer: &mut VecDeque<serde_json::Value>,
+    buffer: &mut VecDeque<ChatEvent>,
 ) -> Result<(), ()> {
     if buffer.is_empty() {
         return Ok(());
     }
 
     // We send a batch to reduce the number of messages sent over the WebSocket.
-    let batch = serde_json::json!({
-        "type": "batch",
-        "messages": buffer.drain(..).collect::<Vec<_>>()
-    });
+    let batch = ChatBatch {
+        kind: "batch",
+        messages: buffer
+            .drain(..CHAT_MAX_BATCH_SIZE.min(buffer.len()))
+            .collect(),
+    };
 
     if let Ok(json_str) = serde_json::to_string(&batch) {
         if sender.send(Message::Text(json_str)).await.is_err() {
