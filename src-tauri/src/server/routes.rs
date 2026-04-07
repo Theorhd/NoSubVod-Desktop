@@ -29,8 +29,8 @@ use super::{
     },
     dto::{
         ChatQuery, ChatSendBody, DownloadRequest, DownloadedFile, HistoryBody, HistoryListQuery,
-        LiveCategoryQuery, LiveQuery, LiveSearchQuery, LiveStatusQuery, PairingRegisterBody,
-        PairingRemotePushBody, PairingUnregisterBody, PagedQuery, SearchCategoryQuery,
+        LiveCategoryQuery, LiveQuery, LiveSearchQuery, LiveStatusQuery, PagedQuery,
+        PairingRegisterBody, PairingRemotePushBody, PairingUnregisterBody, SearchCategoryQuery,
         SearchQuery, SettingsPatch, TrustedDevicePatch, VariantProxyQuery,
     },
     error::{AppError, AppResult},
