@@ -188,6 +188,12 @@ pub struct TrustedDevice {
     pub last_ip: Option<String>,
     #[serde(rename = "userAgent", default)]
     pub user_agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+    #[serde(rename = "apnsToken", default, skip_serializing_if = "Option::is_none")]
+    pub apns_token: Option<String>,
+    #[serde(rename = "pushEnabled", default)]
+    pub push_enabled: bool,
     #[serde(default)]
     pub trusted: bool,
 }

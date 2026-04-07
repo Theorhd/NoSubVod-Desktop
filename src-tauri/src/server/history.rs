@@ -559,6 +559,9 @@ impl HistoryStore {
                     last_seen_at: now,
                     last_ip: ip,
                     user_agent: ua,
+                    platform: None,
+                    apns_token: None,
+                    push_enabled: false,
                     trusted: false,
                 });
                 should_save = true;
@@ -617,6 +620,139 @@ impl HistoryStore {
         }
 
         Ok(updated)
+    }
+
+    pub async fn register_pairing_device(
+        &self,
+        device_id: &str,
+        platform: Option<String>,
+        apns_token: Option<String>,
+        push_enabled: bool,
+    ) -> AppResult<TrustedDevice> {
+        if device_id.trim().is_empty() {
+            return Err(AppError::BadRequest("Invalid device id".to_string()));
+        }
+
+        let normalized_platform = platform.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_lowercase())
+            }
+        });
+
+        let normalized_apns_token = apns_token.and_then(|value| {
+            let trimmed = value.trim().replace(' ', "");
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| AppError::Internal(e.to_string()))?
+            .as_millis() as u64;
+
+        let updated = {
+            let mut data = self.data.write().await;
+            if let Some(existing) = data
+                .trusted_devices
+                .iter_mut()
+                .find(|device| device.device_id == device_id)
+            {
+                existing.last_seen_at = now;
+                existing.trusted = true;
+                if normalized_platform.is_some() {
+                    existing.platform = normalized_platform.clone();
+                }
+                existing.apns_token = normalized_apns_token;
+                existing.push_enabled = push_enabled;
+                existing.clone()
+            } else {
+                let created = TrustedDevice {
+                    device_id: device_id.to_string(),
+                    first_seen_at: now,
+                    last_seen_at: now,
+                    last_ip: None,
+                    user_agent: None,
+                    platform: normalized_platform,
+                    apns_token: normalized_apns_token,
+                    push_enabled,
+                    trusted: true,
+                };
+                data.trusted_devices.push(created.clone());
+                created
+            }
+        };
+
+        self.schedule_save();
+        Ok(updated)
+    }
+
+    pub async fn unregister_pairing_device(
+        &self,
+        device_id: &str,
+    ) -> AppResult<Option<TrustedDevice>> {
+        if device_id.trim().is_empty() {
+            return Ok(None);
+        }
+
+        let mut updated = None;
+        {
+            let mut data = self.data.write().await;
+            if let Some(device) = data
+                .trusted_devices
+                .iter_mut()
+                .find(|entry| entry.device_id == device_id)
+            {
+                device.trusted = false;
+                device.push_enabled = false;
+                device.apns_token = None;
+                updated = Some(device.clone());
+            }
+        }
+
+        if updated.is_some() {
+            self.schedule_save();
+        }
+
+        Ok(updated)
+    }
+
+    pub async fn get_apns_push_targets(&self, device_id: Option<&str>) -> Vec<TrustedDevice> {
+        let filter_id = device_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+
+        let mut targets: Vec<TrustedDevice> = self
+            .data
+            .read()
+            .await
+            .trusted_devices
+            .iter()
+            .filter(|device| {
+                let id_matches = filter_id
+                    .as_deref()
+                    .map(|value| device.device_id == value)
+                    .unwrap_or(true);
+                let has_apns_token = device
+                    .apns_token
+                    .as_deref()
+                    .map(str::trim)
+                    .map(|value| !value.is_empty())
+                    .unwrap_or(false);
+
+                id_matches && device.trusted && device.push_enabled && has_apns_token
+            })
+            .cloned()
+            .collect();
+
+        targets.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
+        targets
     }
 }
 

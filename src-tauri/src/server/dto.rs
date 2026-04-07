@@ -74,6 +74,31 @@ pub struct TrustedDevicePatch {
 }
 
 #[derive(Deserialize)]
+pub struct PairingRegisterBody {
+    #[serde(rename = "deviceId")]
+    pub device_id: String,
+    pub platform: Option<String>,
+    #[serde(rename = "apnsToken")]
+    pub apns_token: Option<String>,
+    #[serde(rename = "pushEnabled")]
+    pub push_enabled: Option<bool>,
+}
+
+#[derive(Deserialize)]
+pub struct PairingUnregisterBody {
+    #[serde(rename = "deviceId")]
+    pub device_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct PairingRemotePushBody {
+    pub title: String,
+    pub message: String,
+    #[serde(rename = "deviceId")]
+    pub device_id: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub struct SettingsPatch {
     #[serde(rename = "oneSync")]
     pub one_sync: Option<bool>,

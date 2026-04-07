@@ -29,20 +29,21 @@ use super::{
     },
     dto::{
         ChatQuery, ChatSendBody, DownloadRequest, DownloadedFile, HistoryBody, HistoryListQuery,
-        LiveCategoryQuery, LiveQuery, LiveSearchQuery, LiveStatusQuery, PagedQuery,
-        SearchCategoryQuery, SearchQuery, SettingsPatch, TrustedDevicePatch, VariantProxyQuery,
+        LiveCategoryQuery, LiveQuery, LiveSearchQuery, LiveStatusQuery, PairingRegisterBody,
+        PairingRemotePushBody, PairingUnregisterBody, PagedQuery, SearchCategoryQuery,
+        SearchQuery, SettingsPatch, TrustedDevicePatch, VariantProxyQuery,
     },
     error::{AppError, AppResult},
     middleware::{auth_middleware, security_headers_middleware},
     screenshare::StartScreenShareRequest,
     state::ApiState,
-    types::{SubEntry, WatchlistEntry},
+    types::{SubEntry, TrustedDevice, WatchlistEntry},
     validation::{
         filter_hevc_variants_for_ios, is_legacy_ios_request, is_valid_id, is_valid_login,
     },
 };
 use moka::future::Cache;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 async fn handle_get_extensions(State(state): State<ApiState>) -> impl IntoResponse {
     Json(state.extensions.list().await)
@@ -532,6 +533,287 @@ async fn handle_update_settings(
             )
             .await?,
     )
+    .into_response())
+}
+
+fn normalize_pairing_device_id(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.len() > 128 {
+        return None;
+    }
+
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return None;
+    }
+
+    Some(trimmed.to_string())
+}
+
+#[derive(Clone)]
+struct ApnsConfig {
+    team_id: String,
+    key_id: String,
+    bundle_id: String,
+    private_key_pem: String,
+    use_sandbox: bool,
+}
+
+#[derive(Serialize)]
+struct ApnsClaims<'a> {
+    iss: &'a str,
+    iat: usize,
+}
+
+fn read_env_required(name: &str) -> Result<String, String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("Missing environment variable: {name}"))
+}
+
+fn read_apns_config() -> Result<ApnsConfig, String> {
+    let raw_private_key = read_env_required("NSV_APNS_PRIVATE_KEY")?;
+    let private_key_pem = raw_private_key.replace("\\n", "\n");
+    if !private_key_pem.contains("BEGIN PRIVATE KEY") {
+        return Err("NSV_APNS_PRIVATE_KEY must contain a PEM private key".to_string());
+    }
+
+    let use_sandbox = std::env::var("NSV_APNS_SANDBOX")
+        .ok()
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes"
+        })
+        .unwrap_or(false);
+
+    Ok(ApnsConfig {
+        team_id: read_env_required("NSV_APNS_TEAM_ID")?,
+        key_id: read_env_required("NSV_APNS_KEY_ID")?,
+        bundle_id: read_env_required("NSV_APNS_BUNDLE_ID")?,
+        private_key_pem,
+        use_sandbox,
+    })
+}
+
+fn build_apns_jwt(config: &ApnsConfig) -> Result<String, String> {
+    let iat = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| format!("System clock error: {e}"))?
+        .as_secs() as usize;
+
+    let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
+    header.kid = Some(config.key_id.clone());
+
+    let claims = ApnsClaims {
+        iss: &config.team_id,
+        iat,
+    };
+
+    let key = jsonwebtoken::EncodingKey::from_ec_pem(config.private_key_pem.as_bytes())
+        .map_err(|e| format!("Invalid APNs private key: {e}"))?;
+
+    jsonwebtoken::encode(&header, &claims, &key)
+        .map_err(|e| format!("Failed to sign APNs JWT: {e}"))
+}
+
+fn apns_base_url(config: &ApnsConfig) -> &'static str {
+    if config.use_sandbox {
+        "https://api.sandbox.push.apple.com"
+    } else {
+        "https://api.push.apple.com"
+    }
+}
+
+async fn send_apns_push(
+    client: reqwest::Client,
+    config: ApnsConfig,
+    bearer_token: String,
+    device_token: String,
+    title: String,
+    message: String,
+) -> bool {
+    let endpoint = format!("{}/3/device/{}", apns_base_url(&config), device_token);
+    let payload = serde_json::json!({
+        "aps": {
+            "alert": {
+                "title": title,
+                "body": message,
+            },
+            "sound": "default"
+        },
+        "source": "nosubvod-desktop"
+    });
+
+    let response = match client
+        .post(endpoint)
+        .header("authorization", format!("bearer {bearer_token}"))
+        .header("apns-topic", config.bundle_id)
+        .header("apns-push-type", "alert")
+        .header("apns-priority", "10")
+        .json(&payload)
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            tracing::warn!(error = %error, "Failed to reach APNs endpoint");
+            return false;
+        }
+    };
+
+    if response.status().is_success() {
+        return true;
+    }
+
+    let status = response.status();
+    let response_body = response.text().await.unwrap_or_default();
+    tracing::warn!(
+        status = %status,
+        body = %response_body,
+        "APNs push rejected"
+    );
+    false
+}
+
+async fn handle_pairing_register(
+    State(state): State<ApiState>,
+    Json(body): Json<PairingRegisterBody>,
+) -> AppResult<Response> {
+    let device_id = normalize_pairing_device_id(&body.device_id)
+        .ok_or_else(|| AppError::BadRequest("Invalid device id".to_string()))?;
+
+    let updated = state
+        .history
+        .register_pairing_device(
+            &device_id,
+            body.platform,
+            body.apns_token,
+            body.push_enabled.unwrap_or(true),
+        )
+        .await?;
+
+    Ok(Json(serde_json::json!({
+        "paired": true,
+        "device": updated,
+        "hasApnsToken": updated.apns_token.is_some(),
+        "pushEnabled": updated.push_enabled,
+    }))
+    .into_response())
+}
+
+async fn handle_pairing_unregister(
+    State(state): State<ApiState>,
+    Json(body): Json<PairingUnregisterBody>,
+) -> AppResult<Response> {
+    let device_id = normalize_pairing_device_id(&body.device_id)
+        .ok_or_else(|| AppError::BadRequest("Invalid device id".to_string()))?;
+
+    match state.history.unregister_pairing_device(&device_id).await? {
+        Some(updated) => Ok(Json(serde_json::json!({
+            "paired": false,
+            "device": updated,
+        }))
+        .into_response()),
+        None => Err(AppError::NotFound("Device not found".to_string())),
+    }
+}
+
+async fn handle_pairing_remote_push(
+    State(state): State<ApiState>,
+    Json(body): Json<PairingRemotePushBody>,
+) -> AppResult<Response> {
+    let title = body.title.trim();
+    let message = body.message.trim();
+    if title.is_empty() || message.is_empty() {
+        return Err(AppError::BadRequest(
+            "Title and message are required".to_string(),
+        ));
+    }
+
+    let target_device_id = match body.device_id.as_deref() {
+        Some(raw) => Some(
+            normalize_pairing_device_id(raw)
+                .ok_or_else(|| AppError::BadRequest("Invalid device id".to_string()))?,
+        ),
+        None => None,
+    };
+
+    let targets: Vec<TrustedDevice> = state
+        .history
+        .get_apns_push_targets(target_device_id.as_deref())
+        .await;
+
+    if targets.is_empty() {
+        return Ok(Json(serde_json::json!({
+            "delivered": false,
+            "attempted": 0,
+            "sent": 0,
+            "failed": 0,
+            "reason": "no-apns-target",
+        }))
+        .into_response());
+    }
+
+    let config = match read_apns_config() {
+        Ok(config) => config,
+        Err(reason) => {
+            tracing::warn!(reason = %reason, "APNs config missing or invalid");
+            return Ok(Json(serde_json::json!({
+                "delivered": false,
+                "attempted": targets.len(),
+                "sent": 0,
+                "failed": targets.len(),
+                "reason": "apns-config-missing",
+            }))
+            .into_response());
+        }
+    };
+
+    let bearer_token = build_apns_jwt(&config).map_err(AppError::Internal)?;
+    let client = reqwest::Client::builder()
+        .build()
+        .map_err(|e| AppError::Internal(format!("Failed to build APNs client: {e}")))?;
+
+    let mut device_tokens: Vec<String> = Vec::new();
+    for device in &targets {
+        if let Some(token) = device.apns_token.as_deref() {
+            let trimmed = token.trim();
+            if !trimmed.is_empty() {
+                device_tokens.push(trimmed.to_string());
+            }
+        }
+    }
+
+    let attempted = device_tokens.len();
+    let mut sent = 0usize;
+
+    for device_token in device_tokens {
+        if send_apns_push(
+            client.clone(),
+            config.clone(),
+            bearer_token.clone(),
+            device_token,
+            title.to_string(),
+            message.to_string(),
+        )
+        .await
+        {
+            sent += 1;
+        }
+    }
+
+    let failed = attempted.saturating_sub(sent);
+
+    Ok(Json(serde_json::json!({
+        "delivered": sent > 0,
+        "attempted": attempted,
+        "sent": sent,
+        "failed": failed,
+    }))
     .into_response())
 }
 
@@ -1347,6 +1629,9 @@ pub fn build_router(mut state: ApiState, portal_dist: Option<std::path::PathBuf>
             "/trusted-devices/:device_id",
             put(handle_set_trusted_device),
         )
+        .route("/pairing/register", post(handle_pairing_register))
+        .route("/pairing/unregister", post(handle_pairing_unregister))
+        .route("/pairing/remote-push", post(handle_pairing_remote_push))
         .route("/adblock/proxies", get(handle_get_adblock_proxies))
         .route("/adblock/status", get(handle_get_adblock_status))
         // Subs
