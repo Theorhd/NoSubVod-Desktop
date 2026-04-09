@@ -3,26 +3,22 @@ import { MediaPlayer, MediaProvider, useMediaRemote, useMediaStore } from '@vids
 import { defaultLayoutIcons, DefaultVideoLayout } from '@vidstack/react/player/layouts/default';
 import Hls from 'hls.js/dist/hls.light.js';
 import { safeStorageGet } from '../../../shared/utils/storage';
-import { canPlayHlsNatively, canUseHlsJs, isMobileDevice } from '../utils/capabilities';
 
-function getHlsStabilityConfig() {
-  return {
-    enableWorker: true,
-    lowLatencyMode: false,
-    startLevel: -1,
-    capLevelToPlayerSize: true,
-    maxBufferLength: 4,
-    maxMaxBufferLength: 6,
-    backBufferLength: 0,
-    maxBufferSize: 6 * 1000 * 1000,
-    maxBufferHole: 0.5,
-    manifestLoadingTimeOut: 20000,
-    levelLoadingTimeOut: 20000,
-    fragLoadingTimeOut: 25000,
-    nudgeMaxRetry: 8,
-    abrEwmaDefaultEstimate: 24_000_000,
-  };
-}
+const HLS_STABILITY_CONFIG = {
+  enableWorker: true,
+  lowLatencyMode: false,
+  startLevel: -1,
+  capLevelToPlayerSize: false,
+  maxBufferLength: 60,
+  maxMaxBufferLength: 120,
+  backBufferLength: 30,
+  maxBufferHole: 0.5,
+  manifestLoadingTimeOut: 20000,
+  levelLoadingTimeOut: 20000,
+  fragLoadingTimeOut: 25000,
+  nudgeMaxRetry: 8,
+  abrEwmaDefaultEstimate: 12_000_000,
+};
 
 type QualityEntry = {
   idx: number;
@@ -144,8 +140,8 @@ const NSVPlayer = React.memo(
 
     const didSeekOnStartRef = useRef(false);
     const lastExternalSeekRef = useRef<number | null>(null);
-    const didApplyDefaultQualityRef = useRef(false);
-    const hlsInstanceRef = useRef<Hls | null>(null);
+    const didApplyPreferredQualityRef = useRef(false);
+    const userInteractedWithQualityRef = useRef(false);
 
     const src = useMemo(
       () => ({
@@ -155,21 +151,33 @@ const NSVPlayer = React.memo(
       [source.src, source.type]
     );
 
-    const effectiveMuted = muted || (autoPlay && isMobileDevice());
-
+    const lastTimeRef = useRef<number>(0);
     useEffect(() => {
       if (!onTimeUpdate) return;
-      onTimeUpdate(store.currentTime || 0);
+      const next = store.currentTime || 0;
+      // Throttle or guard: only update if change is significant (at least 0.2s)
+      if (Math.abs(lastTimeRef.current - next) < 0.2 && next !== 0) return;
+      lastTimeRef.current = next;
+      onTimeUpdate(next);
     }, [store.currentTime, onTimeUpdate]);
 
+    const lastDurationRef = useRef<number>(0);
     useEffect(() => {
       if (!onDurationChange) return;
-      onDurationChange(store.duration || 0);
+      const next = store.duration || 0;
+      if (Math.abs(lastDurationRef.current - next) < 0.1) return;
+      lastDurationRef.current = next;
+      onDurationChange(next);
     }, [store.duration, onDurationChange]);
+
+    const lastPlayingStateRef = useRef<boolean | null>(null);
 
     useEffect(() => {
       if (!onPlayStateChange) return;
-      onPlayStateChange(!store.paused);
+      const isPlaying = !store.paused;
+      if (lastPlayingStateRef.current === isPlaying) return;
+      lastPlayingStateRef.current = isPlaying;
+      onPlayStateChange(isPlaying);
     }, [store.paused, onPlayStateChange]);
 
     useEffect(() => {
@@ -199,17 +207,8 @@ const NSVPlayer = React.memo(
     useEffect(() => {
       didSeekOnStartRef.current = false;
       lastExternalSeekRef.current = null;
-      didApplyDefaultQualityRef.current = false;
-
-      if (hlsInstanceRef.current) {
-        try {
-          hlsInstanceRef.current.stopLoad();
-          hlsInstanceRef.current.detachMedia();
-        } catch {
-          // Ignore cleanup failures on stale instances.
-        }
-        hlsInstanceRef.current = null;
-      }
+      didApplyPreferredQualityRef.current = false;
+      userInteractedWithQualityRef.current = false;
     }, [src.src]);
 
     useEffect(() => {
@@ -232,35 +231,107 @@ const NSVPlayer = React.memo(
       remote.seek(nextValue);
     }, [seekTo, store.canSeek, store.duration, remote]);
 
+    // Track user quality changes, PiP and background playback
     useEffect(() => {
-      if (didApplyDefaultQualityRef.current) return;
-      if (!store.canSetQuality) return;
-      if (!store.qualities || store.qualities.length === 0) return;
-      if (streamType !== 'on-demand') {
-        didApplyDefaultQualityRef.current = true;
+      const player = playerRef.current;
+      if (!player) return;
+
+      const onQualityChangeRequest = (event: any) => {
+        if (event.origin === 'user' || event.isTrusted) {
+          userInteractedWithQualityRef.current = true;
+        }
+      };
+
+      const onHiddenResume = (event: any) => {
+        if (event.detail === 'hidden') {
+          remoteRef.current.play();
+        }
+      };
+
+      player.addEventListener('quality-change-request', onQualityChangeRequest);
+      player.addEventListener('auto-picture-in-picture-change', onHiddenResume);
+      player.addEventListener('background-playback-change', onHiddenResume);
+
+      return () => {
+        player.removeEventListener('quality-change-request', onQualityChangeRequest);
+        player.removeEventListener('auto-picture-in-picture-change', onHiddenResume);
+        player.removeEventListener('background-playback-change', onHiddenResume);
+      };
+    }, []);
+
+    const determineQualityIndex = useCallback(
+      (
+        qualities: any[],
+        minQuality?: string,
+        preferredQuality?: string,
+        streamType: 'on-demand' | 'live' | 'll-live' = 'on-demand'
+      ): number | null => {
+        const sorted = sortedQualitiesByHeightDesc(qualities);
+        if (sorted.length === 0) return null;
+
+        const minHeight = parseHeight(minQuality);
+        const allowed =
+          minHeight === null ? sorted : sorted.filter((quality) => quality.height >= minHeight);
+
+        // If we have a minHeight requirement but no qualities satisfy it yet, wait.
+        if (minHeight !== null && allowed.length === 0 && sorted.length < 3) {
+          return null;
+        }
+
+        if (allowed.length === 0) return -1;
+
+        if (!preferredQuality || preferredQuality === 'auto') {
+          return streamType === 'on-demand' || minHeight !== null ? allowed[0].idx : -1;
+        }
+
+        const preferredHeight = parseHeight(preferredQuality);
+        if (preferredHeight === null) return -1;
+
+        const exact = allowed.find((q) => q.height === preferredHeight);
+        if (exact) return exact.idx;
+
+        const closestBelow = allowed.find((q) => q.height < preferredHeight);
+        if (closestBelow) return closestBelow.idx;
+
+        const closestAbove = [...allowed].reverse().find((q) => q.height > preferredHeight);
+        if (closestAbove) return closestAbove.idx;
+
+        return -1;
+      },
+      []
+    );
+
+    useEffect(() => {
+      if (
+        userInteractedWithQualityRef.current ||
+        didApplyPreferredQualityRef.current ||
+        !store.canSetQuality ||
+        !store.qualities ||
+        store.qualities.length === 0
+      ) {
         return;
       }
 
-      try {
-        const sorted = sortedQualitiesByHeightDesc(store.qualities as any[]);
-        const qualityIdx = resolveRequestedQuality(sorted, defaultQuality);
+      const qualityIdx = determineQualityIndex(
+        store.qualities as any[],
+        minQuality || undefined,
+        preferredQuality,
+        streamType
+      );
 
-        if (qualityIdx < 0) {
-          didApplyDefaultQualityRef.current = true;
-          return;
-        }
-
+      if (qualityIdx !== null) {
         remote.changeQuality(qualityIdx);
-        didApplyDefaultQualityRef.current = true;
-      } catch (error) {
-        didApplyDefaultQualityRef.current = false;
-        console.error('[NSVPlayer] Failed to apply default quality', error);
+        didApplyPreferredQualityRef.current = true;
       }
-    }, [defaultQuality, remote, store.canSetQuality, store.qualities, streamType]);
-
-    const handleHlsInstance = useCallback((instance: Hls) => {
-      hlsInstanceRef.current = instance;
-    }, []);
+    }, [
+      minQuality,
+      preferredQuality,
+      remote,
+      store.canSetQuality,
+      store.qualities,
+      streamType,
+      determineQualityIndex,
+    ]);
 
     const handleRemoteControl = useCallback((event: any) => {
       const payload = event.payload;
@@ -371,6 +442,7 @@ const NSVPlayer = React.memo(
         autoPlay={autoPlay}
         muted={effectiveMuted}
         playsInline
+        fullscreenOrientation="none"
         keyTarget="player"
         keyShortcuts={{
           togglePaused: 'k Space',
