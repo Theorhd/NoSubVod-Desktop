@@ -2623,7 +2623,7 @@ dependencies = [
  "moka",
  "once_cell",
  "qrcode",
- "rand 0.8.5",
+ "rand 0.9.2",
  "rcgen",
  "regex",
  "reqwest 0.12.28",

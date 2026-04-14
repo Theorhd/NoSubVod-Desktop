@@ -44,7 +44,7 @@ sha2 = "0.10"
 urlencoding = "2"
 dotenvy = "0.15"
 aes-gcm = "0.10.3"
-rand = "0.8"
+rand = "0.9"
 rcgen = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["std", "ring", "aws_lc_rs"] }
 windows = { version = "0.58", features = [
